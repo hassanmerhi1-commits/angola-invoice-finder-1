@@ -52,6 +52,8 @@ import { pt } from 'date-fns/locale';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { enUS } from 'date-fns/locale';
+import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 
 export default function FiscalDocuments() {
   const { t, language } = useTranslation();
@@ -79,6 +81,7 @@ export default function FiscalDocuments() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
+  const focusedTransportId = readFocusId(location, 'transportId', 'transport', 'transportId');
 
   // Dialog states
   const [creditNoteDialog, setCreditNoteDialog] = useState(false);
@@ -249,6 +252,44 @@ export default function FiscalDocuments() {
     openCreditNoteFetchRef.current = lookupKey;
     void refreshCreditNotes();
   }, [location.state, creditNotes, location.pathname, navigate, refreshCreditNotes]);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const creditNoteId = readFocusId(location, 'creditNoteId', 'creditNote', 'creditNoteId');
+    const debitNoteId = readFocusId(location, 'debitNoteId', 'debitNote', 'debitNoteId');
+    const transportId = readFocusId(location, 'transportId', 'transport', 'transportId');
+    if (creditNoteId) {
+      const key = `cn-${creditNoteId}`;
+      if (searchFocusKeyRef.current === key) return;
+      const note = creditNotes.find((n) => n.id === creditNoteId);
+      if (!note) return;
+      searchFocusKeyRef.current = key;
+      setFiscalTab('credit');
+      setViewCreditNote(note);
+      scrollToNexorRow(note.id);
+      return;
+    }
+    if (debitNoteId) {
+      const key = `dn-${debitNoteId}`;
+      if (searchFocusKeyRef.current === key) return;
+      const note = debitNotes.find((n) => n.id === debitNoteId);
+      if (!note) return;
+      searchFocusKeyRef.current = key;
+      setFiscalTab('debit');
+      setViewDebitNote(note);
+      scrollToNexorRow(note.id);
+      return;
+    }
+    if (transportId) {
+      const key = `gt-${transportId}`;
+      if (searchFocusKeyRef.current === key) return;
+      const doc = transportDocs.find((d) => d.id === transportId);
+      if (!doc) return;
+      searchFocusKeyRef.current = key;
+      setFiscalTab('transport');
+      scrollToNexorRow(doc.id);
+    }
+  }, [location.search, location.hash, location.state, creditNotes, debitNotes, transportDocs]);
 
   // Received POs for supplier returns
   const receivedOrders = orders.filter(o => o.status === 'received' || o.status === 'partial');
@@ -734,7 +775,8 @@ export default function FiscalDocuments() {
                     {creditNotes.map(note => (
                       <TableRow
                         key={note.id}
-                        className="hover:bg-muted/50"
+                        data-nexor-id={note.id}
+                        className={cn('hover:bg-muted/50', viewCreditNote?.id === note.id && 'nexor-row-selected')}
                       >
                         <TableCell
                           className="font-medium cursor-pointer"
@@ -877,7 +919,11 @@ export default function FiscalDocuments() {
                   </TableHeader>
                   <TableBody>
                     {debitNotes.map(note => (
-                      <TableRow key={note.id}>
+                      <TableRow
+                        key={note.id}
+                        data-nexor-id={note.id}
+                        className={cn(viewDebitNote?.id === note.id && 'nexor-row-selected')}
+                      >
                         <TableCell className="font-medium">{note.documentNumber}</TableCell>
                         <TableCell>{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}</TableCell>
                         <TableCell>{note.originalInvoiceNumber || '-'}</TableCell>
@@ -1051,7 +1097,11 @@ export default function FiscalDocuments() {
                   </TableHeader>
                   <TableBody>
                     {transportDocs.map(doc => (
-                      <TableRow key={doc.id}>
+                      <TableRow
+                        key={doc.id}
+                        data-nexor-id={doc.id}
+                        className={cn(focusedTransportId === doc.id && 'nexor-row-selected')}
+                      >
                         <TableCell className="font-medium">{doc.documentNumber}</TableCell>
                         <TableCell>
                           <Badge variant="outline">

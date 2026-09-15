@@ -1,7 +1,8 @@
 // NEXOR ERP - Import/Export (Importação) Module
 // Customs, shipping, landed cost, forex
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useAuth, useImportOrders, type ImportOrder } from '@/hooks/useERP';
 import { useTranslation } from '@/i18n';
@@ -21,10 +22,12 @@ import {
   ArrowRight, Calculator,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 
 export default function ImportModule() {
   const { user } = useAuth();
+  const location = useLocation();
   const { currentBranch } = useBranchContext();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -35,6 +38,7 @@ export default function ImportModule() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const searchFocusKeyRef = useRef('');
 
   const [form, setForm] = useState({
     supplierName: '', supplierCountry: '', transportMode: 'sea' as ImportOrder['transportMode'],
@@ -50,6 +54,21 @@ export default function ImportModule() {
     const q = searchTerm.toLowerCase();
     return orders.filter(o => o.orderNumber.toLowerCase().includes(q) || o.supplierName.toLowerCase().includes(q));
   }, [orders, searchTerm]);
+
+  useEffect(() => {
+    const importOrderId = readFocusId(location, 'importOrderId', 'importOrder', 'importOrderId');
+    if (!importOrderId) return;
+    const hit = orders.find((o) => o.id === importOrderId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === importOrderId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = importOrderId;
+    setSearchTerm(hit.orderNumber || '');
+    setSelectedId(hit.id);
+    scrollToNexorRow(hit.id);
+  }, [orders, location.search, location.hash, location.state]);
 
   const summary = useMemo(() => ({
     total: orders.length,
@@ -195,7 +214,10 @@ export default function ImportModule() {
               {filteredOrders.map(order => {
                 const TransportIcon = transportIcon(order.transportMode);
                 return (
-                  <tr key={order.id} className={cn("cursor-pointer hover:bg-accent/50", selectedId === order.id && "nexor-row-selected")}
+                  <tr
+                    key={order.id}
+                    data-nexor-id={order.id}
+                    className={cn("cursor-pointer hover:bg-accent/50", selectedId === order.id && "nexor-row-selected")}
                     onClick={() => setSelectedId(order.id)}>
                     <td className="px-3 py-1.5 font-mono">{order.orderNumber}</td>
                     <td className="px-3 py-1.5 font-medium">{order.supplierName}</td>

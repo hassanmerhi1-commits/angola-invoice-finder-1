@@ -29,6 +29,7 @@ import {
   ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw, Plus, X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { readFocusId, readNexorSearchFocus, readAppSearchParams, scrollToNexorRow } from '@/lib/searchFocus';
 import { NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import AccountLedgerDialog from '@/components/accounting/AccountLedgerDialog';
@@ -219,6 +220,37 @@ export default function ChartOfAccounts() {
     openLedger(match, range);
     navigate('.', { replace: true, state: {} });
   }, [accounts, location.state, navigate, openLedger]);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const accountId = readFocusId(location, 'accountId', 'account', 'accountId');
+    const focus = readNexorSearchFocus(location.state);
+    const code = readAppSearchParams(location.search).get('code')?.trim()
+      || (focus?.kind === 'account' ? focus.code : '')
+      || '';
+    if (!accountId && !code) return;
+    const key = `${accountId}|${code}`;
+    if (searchFocusKeyRef.current === key) return;
+    if (accounts.length === 0) return;
+    const match = (accountId && accounts.find((a) => a.id === accountId))
+      || (code && accounts.find((a) => a.code === code))
+      || (code && accounts.find((a) => a.code.startsWith(code)));
+    if (!match) return;
+    searchFocusKeyRef.current = key;
+    setActiveTab('todos');
+    setSearchTerm(match.code || code);
+    setSelectedAccountId(match.id);
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.add(coaIdKey(match.id));
+      for (const id of ancestorIdsOf(match, new Map(accounts.map((a) => [coaIdKey(a.id), a])))) {
+        next.add(id);
+      }
+      return next;
+    });
+    openLedger(match);
+    scrollToNexorRow(match.id);
+  }, [accounts, location.search, location.hash, location.state, openLedger]);
 
   const handleSelectAccount = useCallback((account: Account) => {
     startTransition(() => setSelectedAccountId(account.id));
@@ -1064,6 +1096,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
   return (
     <>
       <tr
+        data-nexor-id={account.id}
         className={cn(
           "cursor-pointer transition-colors hover:bg-accent/50",
           isSelected && "nexor-row-selected",

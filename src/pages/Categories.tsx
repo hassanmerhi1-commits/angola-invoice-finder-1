@@ -1,7 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useCategories, useProducts } from '@/hooks/useERP';
 import { Category } from '@/types/erp';
+import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -72,6 +75,8 @@ export default function Categories() {
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [formData, setFormData] = useState(initialFormData);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const location = useLocation();
+  const searchFocusKeyRef = useRef('');
 
   // Build tree structure
   const rootCategories = useMemo(() => {
@@ -129,6 +134,24 @@ export default function Categories() {
     }
     setDialogOpen(true);
   };
+
+  useEffect(() => {
+    const categoryId = readFocusId(location, 'categoryId', 'category', 'categoryId');
+    if (!categoryId) return;
+    const hit = categories.find((c) => c.id === categoryId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === categoryId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = categoryId;
+    if (hit.parentId) {
+      setExpandedCategories((prev) => new Set(prev).add(hit.parentId as string));
+    }
+    setSearchTerm(hit.name);
+    handleOpenDialog(hit);
+    scrollToNexorRow(hit.id);
+  }, [categories, location.search, location.hash, location.state]);
 
   const handleAddChild = (parent: Category) => {
     setSelectedCategory(null);
@@ -234,7 +257,10 @@ export default function Categories() {
 
     return (
       <React.Fragment key={category.id}>
-        <TableRow className={depth > 0 ? 'bg-muted/30' : ''}>
+        <TableRow
+          data-nexor-id={category.id}
+          className={cn(depth > 0 ? 'bg-muted/30' : '', selectedCategory?.id === category.id && 'nexor-row-selected')}
+        >
           <TableCell>
             <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 20}px` }}>
               {hasChildren ? (

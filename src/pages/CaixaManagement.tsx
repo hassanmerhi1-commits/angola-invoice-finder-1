@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useAuth, mapSaleRow } from '@/hooks/useERP';
@@ -72,6 +73,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
+import { cn } from '@/lib/utils';
 import { 
   Plus, 
   Wallet,
@@ -136,12 +139,14 @@ function personLabel(value?: string, fallback = ''): string {
 
 export default function CaixaManagement() {
   const { t, language } = useTranslation();
+  const location = useLocation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
   const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { users } = useUsers();
   const { toast } = useToast();
+  const searchFocusKeyRef = useRef('');
 
   const [caixas, setCaixas] = useState<Caixa[]>([]);
   const [sessions, setSessions] = useState<CaixaSession[]>([]);
@@ -512,6 +517,21 @@ export default function CaixaManagement() {
     setIsViewDialogOpen(true);
   };
 
+  useEffect(() => {
+    const caixaId = readFocusId(location, 'caixaId', 'caixa', 'caixaId');
+    if (!caixaId) return;
+    const hit = caixas.find((c) => c.id === caixaId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === caixaId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = caixaId;
+    setBoardCaixaId(hit.id);
+    handleViewCaixa(hit);
+    scrollToNexorRow(hit.id);
+  }, [caixas, location.search, location.hash, location.state]);
+
   // Open edit dialog
   const handleOpenEditDialog = (caixa: Caixa) => {
     setSelectedCaixa(caixa);
@@ -765,7 +785,15 @@ export default function CaixaManagement() {
             const todaySession = getTodaySession(caixa.id);
             
             return (
-              <Card key={caixa.id} className={`relative overflow-hidden ${isOpen ? 'border-primary' : ''}`}>
+              <Card
+                key={caixa.id}
+                data-nexor-id={caixa.id}
+                className={cn(
+                  'relative overflow-hidden',
+                  isOpen ? 'border-primary' : '',
+                  selectedCaixa?.id === caixa.id && 'nexor-row-selected',
+                )}
+              >
                 {isOpen && (
                   <div className="absolute top-0 left-0 right-0 h-1 bg-primary" />
                 )}

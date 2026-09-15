@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useSuppliers } from '@/hooks/useERP';
@@ -33,6 +33,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { exportSuppliersToExcel, parseSuppliersFromExcel, validateImportedSuppliers, downloadSupplierImportTemplate, ExcelSupplier } from '@/lib/excel';
 import { ExcelImportDialog } from '@/components/import/ExcelImportDialog';
+import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 
 const PAYMENT_TERMS = [
   { value: 'immediate', labelKey: 'immediate' },
@@ -54,6 +56,7 @@ export default function Suppliers() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+  const searchFocusKeyRef = useRef('');
 
   const filteredSuppliers = suppliers.filter(supplier =>
     supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -84,6 +87,21 @@ export default function Suppliers() {
     window.addEventListener(NEXOR_SUPPLIERS_NEW, openNew);
     return () => window.removeEventListener(NEXOR_SUPPLIERS_NEW, openNew);
   }, [location.state, navigate]);
+
+  useEffect(() => {
+    const supplierId = readFocusId(location, 'supplierId', 'supplier', 'supplierId');
+    if (!supplierId) return;
+    const hit = suppliers.find((s) => s.id === supplierId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === supplierId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = supplierId;
+    setSearchTerm(hit.name || hit.nif || '');
+    handleOpenDialog(hit);
+    scrollToNexorRow(hit.id);
+  }, [suppliers, location.search, location.hash, location.state]);
 
   useEffect(() => {
     const onEdit = () => {
@@ -326,7 +344,11 @@ export default function Suppliers() {
               </TableHeader>
               <TableBody>
                 {filteredSuppliers.map(supplier => (
-                  <TableRow key={supplier.id}>
+                  <TableRow
+                    key={supplier.id}
+                    data-nexor-id={supplier.id}
+                    className={cn(selectedSupplier?.id === supplier.id && 'nexor-row-selected')}
+                  >
                     <TableCell>
                       <div>
                         <p className="font-medium">{supplier.name}</p>

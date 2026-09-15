@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
@@ -61,6 +62,8 @@ import {
   Banknote,
   ArrowRightLeft
 } from 'lucide-react';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
+import { cn } from '@/lib/utils';
 
 interface AccountFormData {
   bankName: string;
@@ -75,6 +78,7 @@ interface AccountFormData {
 
 export default function BankAccounts() {
   const { t, language } = useTranslation();
+  const location = useLocation();
   const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -146,6 +150,21 @@ export default function BankAccounts() {
     window.addEventListener('nexor:bank-accounts-changed', onBanksChanged);
     return () => window.removeEventListener('nexor:bank-accounts-changed', onBanksChanged);
   }, [apiBranchId, treasuryAllBranches]);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const bankAccountId = readFocusId(location, 'bankAccountId', 'bankAccount', 'bankAccountId');
+    if (!bankAccountId) return;
+    const hit = accounts.find((a) => a.id === bankAccountId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === bankAccountId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = bankAccountId;
+    handleViewAccount(hit);
+    scrollToNexorRow(hit.id);
+  }, [accounts, location.search, location.hash, location.state]);
 
   const accountTransactions = useMemo(() => {
     if (!selectedAccount) return [];
@@ -372,7 +391,11 @@ export default function BankAccounts() {
           </Card>
         ) : (
           accounts.map(account => (
-            <Card key={account.id} className={!account.isActive ? 'opacity-60' : ''}>
+            <Card
+              key={account.id}
+              data-nexor-id={account.id}
+              className={cn(!account.isActive && 'opacity-60', selectedAccount?.id === account.id && 'nexor-row-selected')}
+            >
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2">

@@ -25,6 +25,7 @@ import {
   Banknote, Building2, FileText
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { readFocusId, readNexorSearchFocus, readAppSearchParams, scrollToNexorRow } from '@/lib/searchFocus';
 import { useClients, useSuppliers } from '@/hooks/useERP';
 import type { OpenItem, Payment } from '@/types/erp';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
@@ -172,6 +173,7 @@ export default function Payments() {
   const { suppliers, refreshSuppliers } = useSuppliers(!showNewDialog);
   const { payments, openItems, loading, refresh, createPayment } = usePaymentsData(apiBranchId);
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const focusedPaymentId = readFocusId(location, 'paymentId', 'payment', 'paymentId');
   const [paymentType, setPaymentType] = useState<'receipt' | 'payment'>('receipt');
 
   // New payment form
@@ -563,6 +565,32 @@ export default function Payments() {
     navigate(location.pathname, { replace: true, state: null });
   }, [location.state, location.pathname, navigate]);
 
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const paymentId = readFocusId(location, 'paymentId', 'payment', 'paymentId');
+    const focus = readNexorSearchFocus(location.state);
+    const q = readAppSearchParams(location.search).get('q')?.trim()
+      || (focus?.kind === 'payment' ? focus.q : '')
+      || '';
+    const type = readAppSearchParams(location.search).get('type')?.trim()
+      || (focus?.kind === 'payment' ? focus.type : '')
+      || '';
+    if (!paymentId && !q) return;
+    const key = `${paymentId}|${q}|${type}`;
+    if (searchFocusKeyRef.current === key) return;
+    if (type === 'payment') setActiveTab('payments');
+    else if (type === 'receipt') setActiveTab('receipts');
+    if (q) setSearchTerm(q);
+    const hit = payments.find((p) => p.id === paymentId)
+      || (q ? payments.find((p) => p.paymentNumber.toLowerCase() === q.toLowerCase()) : undefined);
+    if (!hit) return;
+    searchFocusKeyRef.current = key;
+    if (hit.paymentType === 'payment') setActiveTab('payments');
+    else setActiveTab('receipts');
+    setSearchTerm(hit.paymentNumber || q);
+    scrollToNexorRow(hit.id);
+  }, [payments, location.search, location.hash, location.state]);
+
   const totalReceipts = payments.filter(p => p.paymentType === 'receipt').reduce((s, p) => s + p.amount, 0);
   const totalPayments = payments.filter(p => p.paymentType === 'payment').reduce((s, p) => s + p.amount, 0);
   const totalOpenReceivable = openItems
@@ -670,7 +698,14 @@ export default function Payments() {
               </thead>
               <tbody className="divide-y divide-border/50">
                 {filteredPayments.map(p => (
-                  <tr key={p.id} className="hover:bg-accent/50 transition-colors">
+                  <tr
+                    key={p.id}
+                    data-nexor-id={p.id}
+                    className={cn(
+                      'hover:bg-accent/50 transition-colors',
+                      p.id === focusedPaymentId && 'nexor-row-selected',
+                    )}
+                  >
                     <td className="px-3 py-2 font-mono text-xs">{p.paymentNumber}</td>
                     <td className="px-3 py-2 text-muted-foreground">{formatDisplayDate(p.createdAt, locale)}</td>
                     <td className="px-3 py-2 font-medium">

@@ -3415,14 +3415,33 @@ export const api = {
   },
 
   search: {
-    query: (q: string, limit = 8) =>
+    query: (q: string, limit = 6, scope?: 'quick' | 'more' | 'all') =>
       apiFetch<{
         q: string;
         clients: any[];
         products: any[];
+        suppliers: any[];
         sales: any[];
         purchaseInvoices: any[];
-      }>(`/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`),
+        purchaseOrders: any[];
+        salesOrders: any[];
+        proformas: any[];
+        creditNotes: any[];
+        debitNotes: any[];
+        transportDocuments: any[];
+        expenses: any[];
+        payments: any[];
+        journals: any[];
+        accounts: any[];
+        bankAccounts: any[];
+        stockTransfers: any[];
+        importOrders: any[];
+        users: any[];
+        branches: any[];
+        categories: any[];
+        caixas: any[];
+        openItems: any[];
+      }>(`/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}${scope ? `&scope=${encodeURIComponent(scope)}` : ''}`, {}, { timeoutMs: 8000 }),
   },
 
   fiscalDocuments: {

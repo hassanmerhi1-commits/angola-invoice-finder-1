@@ -65,6 +65,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { 
   Plus, 
   MoreHorizontal, 
@@ -194,8 +195,8 @@ export default function Expenses() {
    * filial's till is otherwise absent no matter which status is selected.
    */
   const deepLinkExpenseId = useMemo(
-    () => new URLSearchParams(location.search).get('expenseId')?.trim() || '',
-    [location.search],
+    () => readFocusId(location, 'expenseId', 'expense', 'expenseId'),
+    [location.search, location.hash, location.state],
   );
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
   const [dateFrom, setDateFrom] = useState('');
@@ -317,6 +318,7 @@ export default function Expenses() {
   useTableRefreshListener('expenses', onExpensesChanged);
 
   const fetchedDeepLinkRef = useRef('');
+  const searchFocusKeyRef = useRef('');
   useEffect(() => {
     if (!deepLinkExpenseId || fetchedDeepLinkRef.current === deepLinkExpenseId) return;
     if (expenses.some((e) => e.id === deepLinkExpenseId)) return;
@@ -396,6 +398,21 @@ export default function Expenses() {
     void refreshCaixasForExpense(true);
     void refreshBanksForExpense();
   };
+
+  useEffect(() => {
+    if (!deepLinkExpenseId) return;
+    const hit = expenses.find((e) => e.id === deepLinkExpenseId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === deepLinkExpenseId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = deepLinkExpenseId;
+    setDateFrom('');
+    setDateTo('');
+    handleOpenDialog(hit);
+    scrollToNexorRow(hit.id);
+  }, [deepLinkExpenseId, expenses]);
 
   const resetFormForNew = useCallback(() => {
     setEditingId(null);
@@ -859,7 +876,11 @@ export default function Expenses() {
                     || (expense.status === 'approved' && (canPayFromBank || expense.paymentSource !== 'bank'))
                     || (expense.status === 'paid' && canRepostGl);
                   return (
-                    <TableRow key={expense.id}>
+                    <TableRow
+                      key={expense.id}
+                      data-nexor-id={expense.id}
+                      className={cn(deepLinkExpenseId === expense.id && 'nexor-row-selected')}
+                    >
                       <TableCell className="font-mono text-sm">
                         {canEditThis ? (
                           <button

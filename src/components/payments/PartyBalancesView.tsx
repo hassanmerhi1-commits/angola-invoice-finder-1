@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { format, differenceInDays, parseISO, isValid } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import {
@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 
 export type PartyBalanceMode = 'receivables' | 'payables';
 
@@ -127,10 +128,12 @@ function groupPartyRows(
 export function PartyBalancesView({ mode }: { mode: PartyBalanceMode }) {
   const { t, language } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { apiBranchId } = useBranchScope();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const dfLocale = language === 'pt' ? pt : enUS;
   const ui = t.partyBalancesUi;
+  const searchFocusKeyRef = useRef('');
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<any[]>([]);
@@ -171,6 +174,32 @@ export function PartyBalancesView({ mode }: { mode: PartyBalanceMode }) {
         || p.lines.some((l) => l.documentNumber.toLowerCase().includes(term)),
     );
   }, [parties, search]);
+
+  useEffect(() => {
+    const openItemId = readFocusId(location, 'openItemId', 'openItem', 'openItemId');
+    const q = readFocusId(location, 'q', 'openItem', 'q');
+    if (!openItemId && !q) return;
+    const key = `${openItemId}|${q}`;
+    if (searchFocusKeyRef.current === key) return;
+    if (loading || parties.length === 0) return;
+    if (q && search !== q) {
+      setSearch(q);
+      return;
+    }
+    const party = parties.find((p) =>
+      p.lines.some((l) => l.id === openItemId)
+      || (q && (
+        p.lines.some((l) => l.documentNumber.toLowerCase() === q.toLowerCase())
+        || p.name.toLowerCase().includes(q.toLowerCase())
+      )),
+    );
+    if (!party) return;
+    searchFocusKeyRef.current = key;
+    setExpandedId(party.entityId);
+    const line = party.lines.find((l) => l.id === openItemId)
+      || party.lines.find((l) => q && l.documentNumber.toLowerCase() === q.toLowerCase());
+    scrollToNexorRow(line?.id || party.entityId);
+  }, [location.search, location.hash, location.state, loading, parties, search]);
 
   const totals = useMemo(() => {
     const total = filtered.reduce((s, p) => s + p.total, 0);
@@ -363,7 +392,10 @@ function PartyTableRows({
 }) {
   return (
     <>
-      <tr className="hover:bg-accent/40">
+      <tr
+        data-nexor-id={party.entityId}
+        className={cn('hover:bg-accent/40', open && 'nexor-row-selected')}
+      >
         <td className="px-2 py-2">
           <button type="button" className="rounded p-1 hover:bg-accent" onClick={onToggle} aria-label={open ? 'Collapse' : 'Expand'}>
             {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -401,7 +433,7 @@ function PartyTableRows({
                 {party.lines.map((line) => {
                   const overdue = line.daysUntilDue < 0;
                   return (
-                    <tr key={line.id}>
+                    <tr key={line.id} data-nexor-id={line.id}>
                       <td className="py-1.5 pr-3 font-mono">{line.documentNumber}</td>
                       <td className="py-1.5 pr-3">{formatDate(line.documentDate)}</td>
                       <td className="py-1.5 pr-3">{formatDate(line.dueDate)}</td>

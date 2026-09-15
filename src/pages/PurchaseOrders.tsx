@@ -36,6 +36,8 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { navigateThenStartPurchaseCreate } from '@/lib/nexorPurchaseCreate';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
+import { cn } from '@/lib/utils';
 import { purchaseOrderNeedsApproval } from '@/lib/purchaseOrderApproval';
 import { Search, Plus, Eye, CheckCircle, Package, ShoppingCart, Trash2, Barcode, ScanLine, Truck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -77,6 +79,7 @@ export default function PurchaseOrders() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [receiveDialogOpen, setReceiveDialogOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null);
+  const searchFocusKeyRef = useRef('');
   const activeSuppliers = useMemo(() => suppliers.filter((s) => s.isActive), [suppliers]);
   const [receivedQuantities, setReceivedQuantities] = useState<Record<string, number>>({});
 
@@ -446,6 +449,21 @@ export default function PurchaseOrders() {
     setViewDialogOpen(true);
   };
 
+  useEffect(() => {
+    const orderId = readFocusId(location, 'orderId', 'purchaseOrder', 'orderId');
+    if (!orderId) return;
+    const hit = orders.find((o) => o.id === orderId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === orderId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = orderId;
+    setSearchTerm(hit.orderNumber || '');
+    handleViewOrder(hit);
+    scrollToNexorRow(hit.id);
+  }, [orders, location.search, location.hash, location.state]);
+
   const orderItemsTotal = orderForm.items.reduce((sum, item) => {
     return sum + (item.quantity * item.unitCost);
   }, 0);
@@ -578,7 +596,11 @@ export default function PurchaseOrders() {
               </TableHeader>
               <TableBody>
                 {filteredOrders.map(order => (
-                  <TableRow key={order.id}>
+                  <TableRow
+                    key={order.id}
+                    data-nexor-id={order.id}
+                    className={cn(selectedOrder?.id === order.id && 'nexor-row-selected')}
+                  >
                     <TableCell className="font-mono">{order.orderNumber}</TableCell>
                     <TableCell>{order.supplierName}</TableCell>
                     <TableCell>{order.branchName}</TableCell>

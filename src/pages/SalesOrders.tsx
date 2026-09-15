@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth, useProducts, useClients } from '@/hooks/useERP';
 import { api } from '@/lib/api/client';
-import { generateId } from '@/lib/utils';
+import { generateId, cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { SalesOrder, SalesOrderItem } from '@/lib/salesOrderToDocument';
 import { Product, Client } from '@/types/erp';
 import { Button } from '@/components/ui/button';
@@ -91,6 +92,7 @@ function orderTotals(items: SalesOrderItem[]) {
 export default function SalesOrdersPage() {
   const { t, language } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { currentBranch, apiBranchId } = useBranchScope();
   const { user } = useAuth();
@@ -298,6 +300,25 @@ export default function SalesOrdersPage() {
     setEditClientPickerOpen(false);
     setEditOpen(true);
   };
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const orderId = readFocusId(location, 'orderId', 'salesOrder', 'orderId');
+    if (!orderId) return;
+    if (searchFocusKeyRef.current === orderId) return;
+    const hit = orders.find((o) => o.id === orderId);
+    if (hit) {
+      searchFocusKeyRef.current = orderId;
+      openEdit(hit);
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = orderId;
+    void api.salesOrders.get(orderId).then((res) => {
+      if (!res.data) return;
+      openEdit(res.data as SalesOrder);
+    }).catch(() => undefined);
+  }, [orders, location.search, location.hash, location.state]);
 
   const addProduct = (product: Product) => {
     setEditItems((prev) => {
@@ -576,7 +597,11 @@ export default function SalesOrdersPage() {
                 </TableRow>
               ) : (
                 activeOrders.map((order) => (
-                  <TableRow key={order.id}>
+                  <TableRow
+                    key={order.id}
+                    data-nexor-id={order.id}
+                    className={cn(editing?.id === order.id && 'nexor-row-selected')}
+                  >
                     <TableCell className="font-medium">{order.orderNumber}</TableCell>
                     <TableCell>{order.customerName}</TableCell>
                     <TableCell>{order.items?.length || 0}</TableCell>

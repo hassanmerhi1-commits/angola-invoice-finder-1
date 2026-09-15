@@ -1,5 +1,6 @@
-import { generateId } from '@/lib/utils';
-import { useState } from 'react';
+import { generateId, cn } from '@/lib/utils';
+import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { Branch } from '@/types/erp';
 import { Button } from '@/components/ui/button';
@@ -25,11 +26,13 @@ import {
 import { Plus, Pencil, Trash2, Building2, MapPin, Phone } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { api } from '@/lib/api/client';
 import { WarehousesCard } from '@/components/branches/WarehousesCard';
 
 export default function Branches() {
   const { t } = useTranslation();
+  const location = useLocation();
   const { branches, refreshBranches } = useBranchContext();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -57,6 +60,21 @@ export default function Branches() {
     });
     setDialogOpen(true);
   };
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const branchId = readFocusId(location, 'branchId', 'branch', 'branchId');
+    if (!branchId) return;
+    const hit = branches.find((b) => b.id === branchId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === branchId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = branchId;
+    openEditDialog(hit);
+    scrollToNexorRow(hit.id);
+  }, [branches, location.search, location.hash, location.state]);
 
   const openDeleteDialog = (branch: Branch) => {
     setBranchToDelete(branch);
@@ -177,7 +195,11 @@ export default function Branches() {
               </TableHeader>
               <TableBody>
                 {branches.map((branch) => (
-                  <TableRow key={branch.id}>
+                  <TableRow
+                    key={branch.id}
+                    data-nexor-id={branch.id}
+                    className={cn(editingBranch?.id === branch.id && 'nexor-row-selected')}
+                  >
                     <TableCell className="font-medium">{branch.name}</TableCell>
                     <TableCell>{branch.code || '-'}</TableCell>
                     <TableCell>

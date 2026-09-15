@@ -1,8 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useERP';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useUsers } from '@/hooks/useUsers';
 import { useTranslation } from '@/i18n';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
+import { cn } from '@/lib/utils';
 import { User } from '@/types/erp';
 import { 
   UserRole, 
@@ -96,6 +99,8 @@ export default function UserManagement() {
   const [useCustomPerms, setUseCustomPerms] = useState(false);
   const [editPassword, setEditPassword] = useState('');
   const [editPasswordConfirm, setEditPasswordConfirm] = useState('');
+  const location = useLocation();
+  const searchFocusKeyRef = useRef('');
   const [editFormData, setEditFormData] = useState({
     name: '',
     email: '',
@@ -132,6 +137,21 @@ export default function UserManagement() {
     setEditPasswordConfirm('');
     setEditDialogOpen(true);
   };
+
+  useEffect(() => {
+    const userId = readFocusId(location, 'userId', 'user', 'userId');
+    if (!userId) return;
+    const hit = users.find((u) => u.id === userId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === userId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = userId;
+    setSearchTerm(hit.name || hit.email || '');
+    handleEditUser(hit);
+    scrollToNexorRow(hit.id);
+  }, [users, location.search, location.hash, location.state]);
 
   const handleCreateUser = async () => {
     if (!formData.name || !formData.email || !formData.branchId) {
@@ -354,7 +374,11 @@ export default function UserManagement() {
                       const branch = branches.find(b => b.id === user.branchId);
                       
                       return (
-                        <TableRow key={user.id} className={!user.isActive ? 'opacity-50' : ''}>
+                        <TableRow
+                          key={user.id}
+                          data-nexor-id={user.id}
+                          className={cn(!user.isActive ? 'opacity-50' : '', selectedUser?.id === user.id && 'nexor-row-selected')}
+                        >
                           <TableCell>
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">

@@ -1,4 +1,5 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useStockTransfers, useAuth, useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
@@ -17,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowRightLeft, Plus, Package, Check, X, Truck, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { userHasPermission } from '@/lib/permissions';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { TransferLineGrid, type TransferLineItem } from '@/components/inventory/TransferLineGrid';
@@ -49,6 +51,7 @@ function parseNonNegativeQty(raw: string, fallback: number, max: number): number
 
 export default function StockTransfer() {
   const { t, language } = useTranslation();
+  const location = useLocation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
   const { branches, currentBranch, scopeId, canSwitchBranch, userBranch } = useBranchScope();
@@ -63,6 +66,7 @@ export default function StockTransfer() {
   const [createdOverlay, setCreatedOverlay] = useState<Product[]>([]);
   const [receiveDialogOpen, setReceiveDialogOpen] = useState(false);
   const [selectedTransfer, setSelectedTransfer] = useState<StockTransferType | null>(null);
+  const [transferTab, setTransferTab] = useState('pending');
   const [fromBranchId, setFromBranchId] = useState(currentBranch?.id || '');
   const [toBranchId, setToBranchId] = useState('');
   const [fromWarehouseId, setFromWarehouseId] = useState('');
@@ -85,8 +89,26 @@ export default function StockTransfer() {
       setSelectedTransfer(null);
     };
     window.addEventListener(NEXOR_TOOLBAR.ALL, onAll);
-    return () => window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
+    return () =>     window.removeEventListener(NEXOR_TOOLBAR.ALL, onAll);
   }, []);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const transferId = readFocusId(location, 'transferId', 'stockTransfer', 'transferId');
+    if (!transferId) return;
+    const hit = transfers.find((t) => t.id === transferId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === transferId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = transferId;
+    if (hit.status === 'in_transit') setTransferTab('transit');
+    else if (hit.status === 'received' || hit.status === 'cancelled') setTransferTab('completed');
+    else setTransferTab('pending');
+    setSelectedTransfer(hit);
+    scrollToNexorRow(hit.id);
+  }, [transfers, location.search, location.hash, location.state]);
 
   useEffect(() => {
     if (currentBranch?.id) setFromBranchId(currentBranch.id);
@@ -412,7 +434,7 @@ export default function StockTransfer() {
       </div>
 
       {/* Transfers Tabs */}
-      <Tabs defaultValue="pending" className="space-y-4">
+      <Tabs value={transferTab} onValueChange={setTransferTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="pending">
             {t.stockTransferUi.pending} ({pendingTransfers.length})
@@ -434,6 +456,7 @@ export default function StockTransfer() {
             <CardContent>
               <TransferTable
                 transfers={pendingTransfers}
+                selectedId={selectedTransfer?.id}
                 getStatusBadge={getStatusBadge}
                 onApprove={canTransfer ? handleApprove : undefined}
                 onCancel={canTransfer ? handleCancel : undefined}
@@ -454,6 +477,7 @@ export default function StockTransfer() {
             <CardContent>
               <TransferTable
                 transfers={inTransitTransfers}
+                selectedId={selectedTransfer?.id}
                 getStatusBadge={getStatusBadge}
                 onReceive={canTransfer ? handleOpenReceiveDialog : undefined}
                 branchTransferActions={branchTransferActions}
@@ -473,6 +497,7 @@ export default function StockTransfer() {
             <CardContent>
               <TransferTable
                 transfers={completedTransfers}
+                selectedId={selectedTransfer?.id}
                 getStatusBadge={getStatusBadge}
                 branchTransferActions={branchTransferActions}
                 t={t}
@@ -755,6 +780,7 @@ export default function StockTransfer() {
 // Transfer Table Component
 function TransferTable({
   transfers,
+  selectedId,
   getStatusBadge,
   onApprove,
   onReceive,
@@ -764,6 +790,7 @@ function TransferTable({
   dateLocale,
 }: {
   transfers: StockTransferType[];
+  selectedId?: string;
   getStatusBadge: (status: StockTransferType['status']) => React.ReactNode;
   onApprove?: (transfer: StockTransferType) => void;
   onReceive?: (transfer: StockTransferType) => void;
@@ -800,7 +827,11 @@ function TransferTable({
       </TableHeader>
       <TableBody>
         {transfers.map(transfer => (
-          <TableRow key={transfer.id}>
+          <TableRow
+            key={transfer.id}
+            data-nexor-id={transfer.id}
+            className={cn(selectedId === transfer.id && 'nexor-row-selected')}
+          >
             <TableCell className="font-medium">{transfer.transferNumber}</TableCell>
             <TableCell>{transfer.fromBranchName}</TableCell>
             <TableCell>{transfer.toBranchName}</TableCell>

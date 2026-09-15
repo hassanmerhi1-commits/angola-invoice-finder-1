@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -17,6 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import {
   Plus,
   FileText,
@@ -74,6 +76,24 @@ export default function ProFormaPage() {
     setShowCreateDialog(true);
     navigate(location.pathname, { replace: true, state: null });
   }, [location.state, location.pathname, navigate]);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const proformaId = readFocusId(location, 'proformaId', 'proforma', 'proformaId');
+    if (!proformaId) return;
+    const hit = proformas.find((p) => p.id === proformaId);
+    if (!hit) return;
+    if (searchFocusKeyRef.current === proformaId) {
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    searchFocusKeyRef.current = proformaId;
+    setStatusFilter('all');
+    setSearchTerm(hit.documentNumber || '');
+    setSelectedProforma(hit);
+    setShowViewDialog(true);
+    scrollToNexorRow(hit.id);
+  }, [proformas, location.search, location.hash, location.state]);
 
   const openSalesInvoiceFromProforma = (proforma: ProForma) => {
     navigate('/invoices', {
@@ -264,7 +284,11 @@ export default function ProFormaPage() {
                 </TableRow>
               ) : (
                 filteredProformas.map((proforma) => (
-                  <TableRow key={proforma.id}>
+                  <TableRow
+                    key={proforma.id}
+                    data-nexor-id={proforma.id}
+                    className={cn(selectedProforma?.id === proforma.id && 'nexor-row-selected')}
+                  >
                     <TableCell className="font-medium">{proforma.documentNumber}</TableCell>
                     <TableCell>
                       <div>

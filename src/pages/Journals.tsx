@@ -31,6 +31,7 @@ import {
 } from '@/lib/journalEntryDisplay';
 import { JournalEntryDetailDialog } from '@/components/accounting/JournalEntryDetailDialog';
 import { cn, generateId } from '@/lib/utils';
+import { readFocusId, readNexorSearchFocus, readAppSearchParams, scrollToNexorRow } from '@/lib/searchFocus';
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList, unwrapListPayload, markCachedListStale } from '@/lib/listCache';
@@ -661,6 +662,7 @@ export default function Journals() {
   const [dateTo, setDateTo] = useState(() => localISODate());
   const [filterType, setFilterType] = useState('all');
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const [focusedEntry, setFocusedEntry] = useState<JournalDisplayEntry | null>(null);
   const [debouncedQ, setDebouncedQ] = useState('');
   const [exporting, setExporting] = useState(false);
 
@@ -731,7 +733,53 @@ export default function Journals() {
     }
   }, [newEntryOpen, refetchChartAccounts]);
 
-  const selectedEntry = entries.find(e => e.id === selectedEntryId);
+  const selectedEntry = (focusedEntry && focusedEntry.id === selectedEntryId)
+    ? focusedEntry
+    : entries.find(e => e.id === selectedEntryId);
+
+  const searchFocusKeyRef = useRef('');
+  useEffect(() => {
+    const journalId = readFocusId(location, 'journalId', 'journal', 'journalId');
+    const focus = readNexorSearchFocus(location.state);
+    const q = readAppSearchParams(location.search).get('q')?.trim()
+      || (focus?.kind === 'journal' ? focus.q : '')
+      || '';
+    if (!journalId && !q) return;
+    const key = `${journalId}|${q}`;
+    if (searchFocusKeyRef.current === key) return;
+
+    setActiveTab('diarios');
+    if (dateFrom || dateTo) {
+      setDateFrom('');
+      setDateTo('');
+      return;
+    }
+    if (q && searchTerm !== q) {
+      setSearchTerm(q);
+      return;
+    }
+    if (listLoading) return;
+
+    const hit = entries.find((e) => e.id === journalId)
+      || (q ? entries.find((e) => String(e.entryNumber || '').toLowerCase() === q.toLowerCase()) : undefined);
+    if (hit) {
+      searchFocusKeyRef.current = key;
+      setFocusedEntry(null);
+      setSelectedEntryId(hit.id);
+      setViewEntryOpen(true);
+      scrollToNexorRow(hit.id);
+      return;
+    }
+    if (!journalId) return;
+    searchFocusKeyRef.current = key;
+    void api.journalEntries.get(journalId).then((res) => {
+      if (!res.data) return;
+      const mapped = mapJournalEntryFromApi(res.data as Record<string, unknown>, journalLabels);
+      setFocusedEntry(mapped);
+      setSelectedEntryId(mapped.id);
+      setViewEntryOpen(true);
+    }).catch(() => undefined);
+  }, [location.search, location.hash, location.state, entries, dateFrom, dateTo, searchTerm, journalLabels, listLoading]);
 
   // New entry line calculations
   const newEntryTotalDebit = newEntryLines.reduce((sum, l) => sum + (parseFloat(l.debit) || 0), 0);
@@ -1550,6 +1598,7 @@ export default function Journals() {
                   : entry.type;
                 return (
                   <tr key={entry.id}
+                    data-nexor-id={entry.id}
                     className={cn("cursor-pointer hover:bg-accent/50 transition-colors",
                       selectedEntryId === entry.id && "nexor-row-selected")}
                     onClick={() => setSelectedEntryId(entry.id)}
