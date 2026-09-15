@@ -29,6 +29,7 @@ import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } fro
 import { useProducts } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 
 export default function StockValuationReport() {
   const { t, language } = useTranslation();
@@ -107,7 +108,7 @@ export default function StockValuationReport() {
   const excelData = productsWithValues.map((p) => ({
     SKU: p.sku,
     [t.common.product]: p.name,
-    [t.stockValuationUi.category]: p.category,
+    [t.stockValuationUi.category]: inventoryFoodCategoryLabel(p.category, language),
     [t.stockValuationUi.stock]: p.stock,
     [t.stockValuationUi.unitCost]: p.unitCost,
     [t.stockValuationUi.unitPrice]: p.price,
@@ -166,7 +167,7 @@ export default function StockValuationReport() {
                 <SelectContent>
                   <SelectItem value="all">{t.common.all}</SelectItem>
                   {categories.map(cat => (
-                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    <SelectItem key={cat} value={cat}>{inventoryFoodCategoryLabel(cat, language)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -251,7 +252,7 @@ export default function StockValuationReport() {
           <div className="flex flex-wrap gap-2">
             {categoryBreakdown.map(cat => (
               <div key={cat.category} className="px-3 py-2 bg-muted rounded-lg text-sm">
-                <p className="font-medium">{cat.category}</p>
+                <p className="font-medium">{inventoryFoodCategoryLabel(cat.category, language)}</p>
                 <p className="text-xs text-muted-foreground">
                   {t.stockValuationUi.categoryProductsValue.replace('{count}', String(cat.count)).replace('{value}', `${formatMoney(cat.value)} ${t.common.currency}`)}
                 </p>
@@ -294,7 +295,7 @@ export default function StockValuationReport() {
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{product.category}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{inventoryFoodCategoryLabel(product.category, language)}</TableCell>
                     <TableCell className="text-right font-mono">
                       {product.stock} {product.unit}
                     </TableCell>

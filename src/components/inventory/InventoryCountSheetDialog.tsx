@@ -12,6 +12,7 @@ import { Product, Branch } from '@/types/erp';
 import { readProductStock } from '@/lib/inventoryGrid';
 import * as XLSX from 'xlsx';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 import { toast } from 'sonner';
 
 interface InventoryCountSheetDialogProps {
@@ -245,7 +246,7 @@ export function InventoryCountSheetDialog({
               <SelectContent className="bg-background border shadow-lg z-50">
                 <SelectItem value="all">{t.countSheetUi.allCategories}</SelectItem>
                 {categories.map((cat) => (
-                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  <SelectItem key={cat} value={cat}>{inventoryFoodCategoryLabel(cat, language)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

@@ -1,4 +1,4 @@
-import { resolveProductCategoryName } from '@/lib/inventoryFoodCategories';
+import { resolveProductCategoryName, inventoryFoodCategoryLabel, type InventoryUiLanguage } from '@/lib/inventoryFoodCategories';
 import { digitProductCodeForMatch } from '@/components/inventory/productLineSearch';
 import type { Category, Product } from '@/types/erp';
 
@@ -62,6 +62,7 @@ export function getPosNavigableSearchResults(
   searchTerm: string,
   selectedCategory: string | null,
   categories: Category[],
+  language: InventoryUiLanguage = 'pt',
 ): Product[] {
   const term = searchTerm.trim();
   if (!term) return [];
@@ -70,7 +71,7 @@ export function getPosNavigableSearchResults(
     return filterPosProductsBySearch(products, term);
   }
 
-  const bucket = buildPosCategoryBuckets(products, categories).find((b) => b.name === selectedCategory);
+  const bucket = buildPosCategoryBuckets(products, categories, language).find((b) => b.name === selectedCategory);
   if (!bucket) return filterPosProductsBySearch(products, term);
 
   return bucket.products
@@ -113,14 +114,16 @@ export type PosCategoryBucket = {
 export function buildPosCategoryBuckets(
   products: Product[],
   categories: Category[],
+  language: InventoryUiLanguage = 'pt',
 ): PosCategoryBucket[] {
   const inStock = products.filter((p) => p.isActive && (Number(p.stock) || 0) > 0);
   const map = new Map<string, PosCategoryBucket>();
 
   for (const product of inStock) {
-    const name = resolveProductCategoryName(product.category, categories);
+    const resolved = resolveProductCategoryName(product.category, categories, language);
+    const name = inventoryFoodCategoryLabel(resolved, language);
     if (!map.has(name)) {
-      const cat = categories.find((c) => c.name === name);
+      const cat = categories.find((c) => c.name === resolved || c.name === name);
       map.set(name, { name, color: cat?.color, products: [] });
     }
     map.get(name)!.products.push(product);

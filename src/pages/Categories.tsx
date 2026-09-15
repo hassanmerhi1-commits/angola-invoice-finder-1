@@ -37,6 +37,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Search, Plus, Edit, Trash2, Tags, Package, ChevronRight, FolderOpen, Folder } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,7 +64,7 @@ const initialFormData = {
 };
 
 export default function Categories() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { apiBranchId } = useBranchScope();
   const { categories, saveCategory, deleteCategory, createCategory } = useCategories();
   // Branch-scoped light list for counts only — avoid company-wide catalog on this tab.
@@ -98,11 +99,16 @@ export default function Categories() {
 
   const filteredCategories = useMemo(() => {
     if (!searchTerm) return null; // use tree view
-    return categories.filter(category =>
-      category.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      category.description?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [categories, searchTerm]);
+    return categories.filter(category => {
+      const q = searchTerm.toLowerCase();
+      const label = inventoryFoodCategoryLabel(category.name, language).toLowerCase();
+      return (
+        category.name.toLowerCase().includes(q) ||
+        label.includes(q) ||
+        category.description?.toLowerCase().includes(q)
+      );
+    });
+  }, [categories, searchTerm, language]);
 
   const getProductCount = (categoryName: string) => {
     return products.filter(p => p.category === categoryName).length;
@@ -279,7 +285,7 @@ export default function Categories() {
           <TableCell className="font-medium">
             <div className="flex items-center gap-2">
               {hasChildren ? <FolderOpen className="w-4 h-4 text-muted-foreground" /> : depth > 0 ? null : <Folder className="w-4 h-4 text-muted-foreground" />}
-              {category.name}
+              {inventoryFoodCategoryLabel(category.name, language)}
               {!category.parentId && <Badge variant="outline" className="text-[10px] ml-1">{t.categoriesUi.familyBadge}</Badge>}
             </div>
           </TableCell>
@@ -444,7 +450,7 @@ export default function Categories() {
                 <SelectContent className="bg-popover border shadow-lg z-50">
                   <SelectItem value="__root__">{t.categoriesUi.rootOption}</SelectItem>
                   {parentOptions.map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    <SelectItem key={c.id} value={c.id}>{inventoryFoodCategoryLabel(c.name, language)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

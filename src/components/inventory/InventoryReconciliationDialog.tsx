@@ -14,6 +14,7 @@ import { Product, Branch } from '@/types/erp';
 import { toast } from 'sonner';
 import { logTransaction } from '@/lib/transactionHistory';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 
 // Generate reconciliation number
 function generateReconciliationNumber(branchCode: string): string {
@@ -274,7 +275,7 @@ export function InventoryReconciliationDialog({
                   <SelectContent className="bg-background border shadow-lg z-50">
                     <SelectItem value="all">{t.reconcileUi.all}</SelectItem>
                     {categories.map(cat => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                      <SelectItem key={cat} value={cat}>{inventoryFoodCategoryLabel(cat, language)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

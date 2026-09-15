@@ -93,13 +93,13 @@ export function PosCategoryBrowser({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const buckets = useMemo(
-    () => buildPosCategoryBuckets(products, categories),
-    [products, categories],
+    () => buildPosCategoryBuckets(products, categories, language),
+    [products, categories, language],
   );
 
   const searchResults = useMemo(
-    () => getPosNavigableSearchResults(products, searchTerm, null, categories),
-    [products, searchTerm, categories],
+    () => getPosNavigableSearchResults(products, searchTerm, null, categories, language),
+    [products, searchTerm, categories, language],
   );
 
   const isSearching = searchTerm.trim().length > 0;
@@ -111,8 +111,8 @@ export function PosCategoryBrowser({
   const categoryProducts = useMemo(() => {
     if (!activeBucket) return [];
     if (!isSearching) return activeBucket.products;
-    return getPosNavigableSearchResults(products, searchTerm, selectedCategory, categories);
-  }, [activeBucket, isSearching, searchTerm, selectedCategory, products, categories]);
+    return getPosNavigableSearchResults(products, searchTerm, selectedCategory, categories, language);
+  }, [activeBucket, isSearching, searchTerm, selectedCategory, products, categories, language]);
 
   useEffect(() => {
     if (!highlightedProductId || !scrollRef.current) return;

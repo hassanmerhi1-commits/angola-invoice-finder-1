@@ -160,7 +160,7 @@ export function ProductDetailDialog({
   const { categories } = useCategories();
   const { suppliers, refreshSuppliers } = useSuppliers();
   const { currentBranch } = useBranchContext();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
 
   const [loadedProduct, setLoadedProduct] = useState<Product | null>(null);
 
@@ -210,8 +210,8 @@ export function ProductDetailDialog({
     return base;
   }, [suppliers, effectiveProduct]);
   const categorySelectOptions = useMemo(
-    () => mergeInventoryFoodCategorySelectOptions(activeCategories),
-    [activeCategories]
+    () => mergeInventoryFoodCategorySelectOptions(activeCategories, language),
+    [activeCategories, language]
   );
 
   useEffect(() => {
@@ -319,7 +319,7 @@ export function ProductDetailDialog({
         id: src.id,
         sku: src.sku,
         name: src.name,
-        category: resolveProductCategoryName(src.category, activeCategories),
+        category: resolveProductCategoryName(src.category, activeCategories, language),
         unit: src.unit,
         iva: parseTaxRateOrNull(src.taxRate),
         vatOverride: !!src.vatOverride,
@@ -359,7 +359,7 @@ export function ProductDetailDialog({
           : [{ barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }],
       };
     },
-    [activeCategories, supplierSelectOptions, scopeBranchId],
+    [activeCategories, supplierSelectOptions, scopeBranchId, language],
   );
 
   const [saveAsNew, setSaveAsNew] = useState(false);
@@ -429,7 +429,7 @@ export function ProductDetailDialog({
         id: '',
         sku: '',
         name: '',
-        category: defaultProductCategoryName(activeCategories),
+        category: defaultProductCategoryName(activeCategories, language),
         unit: 'un',
         iva: null,
         vatOverride: false,
@@ -468,6 +468,8 @@ export function ProductDetailDialog({
     defaultSupplierName,
     scopeBranchId,
     usedSkuKeys,
+    activeCategories,
+    language,
   ]);
 
   // Keep a ref mirror of the latest committed form so the hydration effect can read it without
@@ -702,7 +704,7 @@ export function ProductDetailDialog({
       name: formData.name,
       sku: skuTrim,
       barcode: formData.barcode || formData.barcodes[0]?.barPrice || undefined,
-      category: resolveProductCategoryName(formData.category, activeCategories),
+      category: resolveProductCategoryName(formData.category, activeCategories, language),
       price: formData.price,
       price2: formData.price2 || undefined,
       price3: formData.price3 || undefined,
@@ -858,11 +860,11 @@ export function ProductDetailDialog({
                   <Input value={formData.name} onChange={e => set('name', e.target.value)} className="h-7 text-xs" />
                 </Row>
                 <Row label={t.inventory.category}>
-                  <Select value={resolveProductCategoryName(formData.category, activeCategories)} onValueChange={v => set('category', v)}>
+                  <Select value={resolveProductCategoryName(formData.category, activeCategories, language)} onValueChange={v => set('category', v)}>
                     <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-popover border shadow-lg z-[80] max-h-[min(60vh,320px)]">
                       {categorySelectOptions.map((c) => (
-                        <SelectItem key={c.key} value={c.name}>{c.name}</SelectItem>
+                        <SelectItem key={c.key} value={c.name}>{c.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

@@ -12,6 +12,7 @@ import { ChevronDown, ChevronUp, Filter, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
 import { readProductStock } from '@/lib/inventoryGrid';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 import {
   CustomFilterDialog,
   CustomFilterState,
@@ -77,7 +78,7 @@ export function AdvancedDataGrid({
   products, onSelectProduct, onDoubleClickProduct, selectedProductId, hideStock = false,
   isHeadOffice = false, allBranchProducts = {}, reservedQty = {}, preSorted = false,
 }: AdvancedDataGridProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
 
   const COLUMNS: ColumnDef[] = useMemo(() => ([
     { key: 'sku', label: t.inventoryGridUi.sku, minWidth: 100 },
@@ -226,6 +227,9 @@ export function AdvancedDataGrid({
   };
 
   const formatValue = (product: Product, key: string) => {
+    if (key === 'category') {
+      return inventoryFoodCategoryLabel(String(product.category || ''), language);
+    }
     if (key === 'priceWithIVA') {
       const val = Number((product.price * (1 + (product.taxRate || 0) / 100)).toFixed(2));
       return (val || 0).toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -388,7 +392,7 @@ export function AdvancedDataGrid({
                             <div className="max-h-48 overflow-y-auto">
                               {uniqueValues[col.key].map(val => (
                                 <DropdownMenuItem key={val} onClick={() => setSimpleFilters(prev => ({ ...prev, [col.key]: { type: 'value', value: val } }))}>
-                                  {val}
+                                  {col.key === 'category' ? inventoryFoodCategoryLabel(val, language) : val}
                                 </DropdownMenuItem>
                               ))}
                             </div>

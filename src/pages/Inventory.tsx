@@ -80,6 +80,7 @@ import { logTransaction } from '@/lib/transactionHistory';
 import { saveStockMovement } from '@/lib/storage';
 import { applyStockAdjustmentLines } from '@/lib/inventoryStockAdjust';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 import type { StockEntryReason } from '@/components/inventory/StockEntryDialog';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 import type { StockExitReasonCode } from '@/components/inventory/StockExitDialog';
@@ -663,7 +664,8 @@ export default function Inventory() {
       const sku = (p.sku || '').toLowerCase();
       const name = (p.name || '').toLowerCase();
       const barcode = (p.barcode || '').toLowerCase();
-      const category = (p.category || '').toLowerCase();
+      const category = inventoryFoodCategoryLabel(p.category || '', language).toLowerCase();
+      const categoryRaw = (p.category || '').toLowerCase();
       const supplier = (p.supplierName || '').toLowerCase();
       const qDigits = digitProductCodeForMatch(q);
       const skuDigits = digitProductCodeForMatch(p.sku);
@@ -673,6 +675,7 @@ export default function Inventory() {
         || name.includes(q)
         || barcode.includes(q)
         || category.includes(q)
+        || categoryRaw.includes(q)
         || supplier.includes(q)
         || (qDigits.length >= 6 && (
           skuDigits === qDigits
@@ -685,7 +688,7 @@ export default function Inventory() {
     return [...matched].sort((a, b) =>
       sortProductSearchResults(a, b, listSearch, listBranchId || currentBranch?.id || ''),
     );
-  }, [displayProducts, stockListFilter, listSearch, listBranchId, currentBranch?.id]);
+  }, [displayProducts, stockListFilter, listSearch, listBranchId, currentBranch?.id, language]);
 
   // Keep the row the user clicked. Only jump to another hit when the current product
   // no longer matches the search (or there is no selection yet).
@@ -1926,7 +1929,7 @@ export default function Inventory() {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div><strong>SKU:</strong> {selectedProduct.sku}</div>
                   <div><strong>{t.inventoryPageUi.productInfo.name}</strong> {selectedProduct.name}</div>
-                  <div><strong>{t.inventoryPageUi.productInfo.category}</strong> {selectedProduct.category}</div>
+                  <div><strong>{t.inventoryPageUi.productInfo.category}</strong> {inventoryFoodCategoryLabel(selectedProduct.category, language)}</div>
                   <div><strong>{t.inventoryPageUi.productInfo.price}</strong> {selectedProduct.price.toLocaleString(uiLocale)} Kz</div>
                   <div><strong>{t.inventoryPageUi.productInfo.cost}</strong> {(selectedProduct.avgCost || selectedProduct.lastCost || selectedProduct.cost || 0).toLocaleString(uiLocale)} Kz</div>
                   <div><strong>{t.inventoryPageUi.productInfo.stock}</strong> {selectedProduct.stock} {selectedProduct.unit}</div>

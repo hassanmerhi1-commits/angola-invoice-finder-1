@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Package } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 
 interface ProductGridProps {
   products: Product[];
@@ -36,7 +37,9 @@ export function ProductGrid({ products, onProductSelect, searchTerm }: ProductGr
     <div className="space-y-6">
       {categories.map(category => (
         <div key={category}>
-          <h3 className="text-sm font-medium text-muted-foreground mb-3">{category}</h3>
+          <h3 className="text-sm font-medium text-muted-foreground mb-3">
+            {inventoryFoodCategoryLabel(category, language)}
+          </h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {filteredProducts
               .filter(p => p.category === category && (Number(p.stock) || 0) > 0)

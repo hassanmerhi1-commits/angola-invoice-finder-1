@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import * as XLSX from 'xlsx';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 
 interface AdjustmentItem {
   productId: string;
@@ -73,7 +74,7 @@ export function InventoryAdjustmentDialog({
   onApplyAdjustments,
 }: InventoryAdjustmentDialogProps) {
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [adjustmentReason, setAdjustmentReason] = useState('physical_count');
@@ -368,7 +369,7 @@ export function InventoryAdjustmentDialog({
               <SelectContent className="bg-background border shadow-lg z-50">
                 <SelectItem value="all">{t.inventoryAdjustUi.allCategories}</SelectItem>
                 {categories.map(cat => (
-                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  <SelectItem key={cat} value={cat}>{inventoryFoodCategoryLabel(cat, language)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

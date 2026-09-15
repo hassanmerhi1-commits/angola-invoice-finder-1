@@ -35,6 +35,7 @@ import { Printer, FileDown, Eye, TrendingUp, DollarSign, Package, Filter, X } fr
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
+import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 import { printReport, saveReportPdf } from '@/lib/reportExport';
 
 interface SaleItemDetail extends SaleItem {
@@ -450,7 +451,7 @@ export function DailySalesDetailReport({
                       <SelectItem value="all">{t.reportsUi.allCategories}</SelectItem>
                       {uniqueCategories.map(cat => (
                         <SelectItem key={cat} value={cat}>
-                          {cat}
+                          {inventoryFoodCategoryLabel(cat, language)}
                         </SelectItem>
                       ))}
                     </SelectContent>

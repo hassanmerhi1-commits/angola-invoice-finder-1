@@ -57,12 +57,12 @@ export function ProductFormDialog({
   const { categories } = useCategories();
   const { suppliers, refreshSuppliers } = useSuppliers();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
   const categorySelectOptions = useMemo(
-    () => mergeInventoryFoodCategorySelectOptions(activeCategories),
-    [activeCategories]
+    () => mergeInventoryFoodCategorySelectOptions(activeCategories, language),
+    [activeCategories, language]
   );
 
   const [formData, setFormData] = useState({
@@ -92,7 +92,7 @@ export function ProductFormDialog({
         name: product.name,
         sku: product.sku,
         barcode: product.barcode || '',
-        category: resolveProductCategoryName(product.category, activeCategories),
+        category: resolveProductCategoryName(product.category, activeCategories, language),
         price: product.price,
         cost: product.cost,
         stock: product.stock,
@@ -109,7 +109,7 @@ export function ProductFormDialog({
         name: '',
         sku: '',
         barcode: '',
-        category: defaultProductCategoryName(activeCategories),
+        category: defaultProductCategoryName(activeCategories, language),
         price: 0,
         cost: 0,
         stock: 0,
@@ -122,7 +122,7 @@ export function ProductFormDialog({
         isActive: true,
       });
     }
-  }, [product, open, activeCategories]);
+  }, [product, open, activeCategories, language]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,7 +161,7 @@ export function ProductFormDialog({
       name: formData.name.trim(),
       sku: formData.sku.trim().toUpperCase(),
       barcode: formData.barcode.trim() || undefined,
-      category: resolveProductCategoryName(formData.category, activeCategories),
+      category: resolveProductCategoryName(formData.category, activeCategories, language),
       price: formData.price,
       cost: formData.cost,
       firstCost: product?.firstCost || formData.cost,
@@ -243,9 +243,9 @@ export function ProductFormDialog({
               </div>
 
               <div>
-                <Label htmlFor="category">Categoria</Label>
+                <Label htmlFor="category">{t.inventory.category}</Label>
                 <Select
-                  value={resolveProductCategoryName(formData.category, activeCategories)}
+                  value={resolveProductCategoryName(formData.category, activeCategories, language)}
                   onValueChange={(value) => setFormData({ ...formData, category: value })}
                 >
                   <SelectTrigger>
@@ -261,7 +261,7 @@ export function ProductFormDialog({
                               className="w-3 h-3 rounded-full shrink-0"
                               style={{ backgroundColor: cat?.color || '#6b7280' }}
                             />
-                            {opt.name}
+                            {opt.label}
                           </div>
                         </SelectItem>
                       );
