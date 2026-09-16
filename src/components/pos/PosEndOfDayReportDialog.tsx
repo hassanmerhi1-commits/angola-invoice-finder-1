@@ -24,7 +24,6 @@ import { mapSaleRow } from '@/hooks/useERP';
 import { toast } from 'sonner';
 import {
   filterShiftCashRefunds,
-  filterShiftCashExpenses,
   todayLocalDate,
   shiftBusinessDate,
   withRecoveredShiftStart,
@@ -71,7 +70,7 @@ export function PosEndOfDayReportDialog({
   onOpenChange,
   sales,
   creditNotes = [],
-  expenses = [],
+  expenses: _expenses = [],
   cashier,
   branch,
   caixaName,
@@ -220,13 +219,6 @@ export function PosEndOfDayReportDialog({
     [creditNotes, reportSales, session, effectiveSession, reportDay],
   );
 
-  // Caixa expenses are shared (payment picks a cash box, not a cashier).
-  // Show them once as info — do not fold into each cashier's net or expected drawer.
-  const shiftCaixaExpenses = useMemo(
-    () => filterShiftCashExpenses(expenses, effectiveSession || session, reportSales, null, session?.caixaId, reportDay),
-    [expenses, session, effectiveSession, reportSales, reportDay],
-  );
-
   const totals = useMemo(() => {
     const byPayment: Record<string, number> = { cash: 0, card: 0, transfer: 0, mixed: 0, credit: 0 };
     let subtotal = 0;
@@ -240,7 +232,6 @@ export function PosEndOfDayReportDialog({
       byPayment[key] = (byPayment[key] || 0) + sale.total;
     }
     const cashRefundsTotal = shiftCashRefunds.reduce((sum, note) => sum + note.total, 0);
-    const cashExpensesTotal = shiftCaixaExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
     // If invoices did not load, still show cash the register already booked.
     if (cashierSales.length === 0) {
       const sessionCash = Math.max(
@@ -261,21 +252,15 @@ export function PosEndOfDayReportDialog({
       total,
       count: cashierSales.length,
       cashRefundsTotal,
-      cashExpensesTotal,
       netCash,
       refundCount: shiftCashRefunds.length,
-      expenseCount: shiftCaixaExpenses.length,
     };
-  }, [cashierSales, shiftCashRefunds, shiftCaixaExpenses, session, glRecon]);
+  }, [cashierSales, shiftCashRefunds, session, glRecon]);
 
   const buildPrintHtml = () => {
     const money = (value: number) => `${value.toLocaleString(locale)} Kz`;
     const row = (label: string, value: string) =>
       `<div class="row"><span class="lbl">${label}</span><span class="amt">${value}</span></div>`;
-    const expenseLabel = t.posUi.endOfDaySharedCaixaExpensesPrint.replace(
-      '{count}',
-      String(totals.expenseCount),
-    );
     return `
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${t.posUi.endOfDayTitle}</title>
@@ -302,7 +287,6 @@ export function PosEndOfDayReportDialog({
     ${row(t.posUi.endOfDaySalesCount, String(totals.count))}
     ${row(t.pos.cash, money(totals.byPayment.cash || 0))}
     ${totals.cashRefundsTotal > 0 ? row(t.posUi.endOfDayCashRefunds.replace('{count}', String(totals.refundCount)), `-${money(totals.cashRefundsTotal)}`) : ''}
-    ${totals.cashExpensesTotal > 0 ? row(expenseLabel, `-${money(totals.cashExpensesTotal)}`) : ''}
     ${totals.cashRefundsTotal > 0 ? row(t.posUi.endOfDayNetCash, money(totals.netCash)) : ''}
     ${row(t.pos.card, money(totals.byPayment.card || 0))}
     ${row(t.pos.transfer, money(totals.byPayment.transfer || 0))}
@@ -325,7 +309,6 @@ export function PosEndOfDayReportDialog({
     const cashSales = totals.byPayment.cash || 0;
     const cashRefunds = totals.cashRefundsTotal;
     const cashExpenses = 0;
-    const sharedExpenses = totals.cashExpensesTotal;
     // Non-sale inflows the session recorded (manual deposits / reforços).
     const sessionSalesCash = Math.min(session?.salesTotal || 0, session?.totalIn || 0);
     const manualIn = Math.max(0, (session?.totalIn || 0) - sessionSalesCash);
@@ -335,7 +318,7 @@ export function PosEndOfDayReportDialog({
     );
     const cashIn = cashSales + manualIn;
     const expected = opening + cashIn - cashRefunds - manualOut;
-    return { opening, cashSales, cashRefunds, cashExpenses, sharedExpenses, manualIn, manualOut, cashIn, expected };
+    return { opening, cashSales, cashRefunds, cashExpenses, manualIn, manualOut, cashIn, expected };
   }, [session, totals, allCaixaCashRefundsTotal]);
   const expectedCash = drawer.expected;
   const counted = parseFloat(countedCash);
@@ -419,54 +402,20 @@ export function PosEndOfDayReportDialog({
           </div>
         </div>
 
-        {(totals.cashRefundsTotal > 0 || totals.cashExpensesTotal > 0) && (
+        {totals.cashRefundsTotal > 0 && (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-1 text-sm">
-            {totals.cashRefundsTotal > 0 && (
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">
-                  {t.posUi.endOfDayCashRefunds.replace('{count}', String(totals.refundCount))}
-                </span>
-                <span className="font-mono font-semibold text-amber-700">
-                  -{totals.cashRefundsTotal.toLocaleString(locale)} Kz
-                </span>
-              </div>
-            )}
-            {totals.cashExpensesTotal > 0 && (
-              <>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">
-                    {t.posUi.endOfDaySharedCaixaExpenses.replace('{count}', String(totals.expenseCount))}
-                  </span>
-                  <span className="font-mono font-semibold text-amber-700">
-                    -{totals.cashExpensesTotal.toLocaleString(locale)} Kz
-                  </span>
-                </div>
-                <ul className="space-y-0.5 pt-1">
-                  {shiftCaixaExpenses.map((exp) => (
-                    <li
-                      key={exp.id}
-                      className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
-                    >
-                      <span className="truncate">
-                        {exp.description || exp.expenseNumber || exp.id}
-                      </span>
-                      <span className="font-mono tabular-nums shrink-0">
-                        {exp.totalAmount.toLocaleString(locale)} Kz
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {totals.cashRefundsTotal > 0 && (
-              <div className="flex items-center justify-between font-medium pt-1 border-t border-amber-500/20">
-                <span>{t.posUi.endOfDayNetCash}</span>
-                <span className="font-mono">{totals.netCash.toLocaleString(locale)} Kz</span>
-              </div>
-            )}
-            {totals.cashExpensesTotal > 0 && (
-              <p className="text-xs text-muted-foreground pt-1">{t.posUi.endOfDaySharedCaixaExpensesHint}</p>
-            )}
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">
+                {t.posUi.endOfDayCashRefunds.replace('{count}', String(totals.refundCount))}
+              </span>
+              <span className="font-mono font-semibold text-amber-700">
+                -{totals.cashRefundsTotal.toLocaleString(locale)} Kz
+              </span>
+            </div>
+            <div className="flex items-center justify-between font-medium pt-1 border-t border-amber-500/20">
+              <span>{t.posUi.endOfDayNetCash}</span>
+              <span className="font-mono">{totals.netCash.toLocaleString(locale)} Kz</span>
+            </div>
           </div>
         )}
 
@@ -486,14 +435,6 @@ export function PosEndOfDayReportDialog({
                   <span className="text-muted-foreground pl-2">{t.posUi.caixa.cashOutRefundsLabel}</span>
                   <span className="text-right font-mono text-amber-700">
                     -{drawer.cashRefunds.toLocaleString(locale)} Kz
-                  </span>
-                </>
-              )}
-              {drawer.sharedExpenses > 0 && (
-                <>
-                  <span className="text-muted-foreground pl-2">{t.posUi.caixa.sharedExpensesLabel}</span>
-                  <span className="text-right font-mono text-muted-foreground">
-                    (-{drawer.sharedExpenses.toLocaleString(locale)} Kz)
                   </span>
                 </>
               )}
