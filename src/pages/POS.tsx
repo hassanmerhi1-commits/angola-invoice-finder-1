@@ -41,7 +41,7 @@ import { PosPayExpenseDialog } from '@/components/pos/PosPayExpenseDialog';
 import { PosShiftInvoicesPanel } from '@/components/pos/PosShiftInvoicesPanel';
 import { PosUpdateMenu } from '@/components/pos/PosUpdateMenu';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { filterShiftSalesForCashier, todayLocalDate, recoveredShiftOpenedAt } from '@/lib/posShiftSales';
+import { filterShiftSalesForCashier, todayLocalDate, recoveredShiftOpenedAt, shiftBusinessDate } from '@/lib/posShiftSales';
 import {
   appendShiftIssue,
   clearSaleIssueKind,
@@ -60,13 +60,26 @@ export default function POS() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const cart = useCart();
+  const {
+    caixa,
+    session: caixaSession,
+    loading: caixaLoading,
+    openSession: openCaixaSessionForBranch,
+    closeSession: closeCaixaSessionForBranch,
+    recordCashSale,
+    recordCashRefund,
+    recordCashExpense,
+    refresh: refreshCaixa,
+    adoptOpenedAt,
+  } = usePosCaixa(branchId, currentBranch?.name || branchId);
   const today = todayLocalDate();
+  const salesDay = shiftBusinessDate(caixaSession, today);
   const { completeSale, sales, refreshSales } = useSales(branchId, {
     deferInitialLoad: true,
     light: true,
-    dateFrom: today,
-    dateTo: today,
-    limit: 500,
+    dateFrom: salesDay,
+    dateTo: salesDay,
+    limit: 5000,
   });
   const { creditNotes, refreshCreditNotes } = useCreditNotes(branchId, true);
   const { clients, refreshClients } = useClients(true);
@@ -163,22 +176,10 @@ export default function POS() {
   const [shiftIssuesVersion, setShiftIssuesVersion] = useState(0);
   const [shiftExpenses, setShiftExpenses] = useState<Expense[]>([]);
   const bumpShiftIssues = useCallback(() => setShiftIssuesVersion((v) => v + 1), []);
-  const {
-    caixa,
-    session: caixaSession,
-    loading: caixaLoading,
-    openSession: openCaixaSessionForBranch,
-    closeSession: closeCaixaSessionForBranch,
-    recordCashSale,
-    recordCashRefund,
-    recordCashExpense,
-    refresh: refreshCaixa,
-    adoptOpenedAt,
-  } = usePosCaixa(branchId, currentBranch?.name || branchId);
   const [openingCaixa, setOpeningCaixa] = useState(false);
   const shiftInvoiceCount = useMemo(
-    () => filterShiftSalesForCashier(sales, user, caixaSession).length,
-    [sales, user, caixaSession],
+    () => filterShiftSalesForCashier(sales, user, caixaSession, salesDay).length,
+    [sales, user, caixaSession, salesDay],
   );
 
   const recordShiftIssue = useCallback(
@@ -195,21 +196,21 @@ export default function POS() {
   // sale of the day so shift invoices / end-of-day include the morning work.
   useEffect(() => {
     if (!caixaSession || !user || sales.length === 0) return;
-    const recovered = recoveredShiftOpenedAt(sales, user, caixaSession, today);
+    const recovered = recoveredShiftOpenedAt(sales, user, caixaSession, salesDay);
     if (!recovered || recovered === caixaSession.openedAt) return;
     const recoveredMs = new Date(recovered).getTime();
     const openedMs = new Date(caixaSession.openedAt).getTime();
     if (!Number.isFinite(recoveredMs) || recoveredMs >= openedMs) return;
     adoptOpenedAt(recovered);
-  }, [caixaSession, user, sales, today, adoptOpenedAt]);
+  }, [caixaSession, user, sales, salesDay, adoptOpenedAt]);
 
   // Defer non-critical POS data until the cash register is open (faster entry + open-caixa dialog).
   useEffect(() => {
     if (!caixaOpen || !branchId) return;
-    void refreshSales();
+    void refreshSales({ force: true });
     void refreshCreditNotes(branchId);
     void refreshClients();
-  }, [caixaOpen, branchId, refreshSales, refreshCreditNotes, refreshClients]);
+  }, [caixaOpen, branchId, salesDay, refreshSales, refreshCreditNotes, refreshClients]);
 
   useEffect(() => {
     if (!clientPickerOpen) return;
@@ -231,7 +232,7 @@ export default function POS() {
     // server so items created on another PC (e.g. a credit note issued elsewhere) are
     // reflected in this register's close.
     if (endOfDayOpen) {
-      void refreshSales();
+      void refreshSales({ force: true });
       void refreshCreditNotes(currentBranch.id);
       void getExpenses(currentBranch.id).then((rows) => {
         if (!cancelled) setShiftExpenses(rows);
@@ -1043,6 +1044,7 @@ export default function POS() {
         expenses={shiftExpenses}
         cashier={user}
         branch={currentBranch}
+        caixaName={caixa?.name}
         session={caixaSession}
         onCloseCaixa={async (countedCash, notes) => {
           if (!user) return;

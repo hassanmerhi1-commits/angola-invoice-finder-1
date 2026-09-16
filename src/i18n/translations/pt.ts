@@ -418,6 +418,7 @@ export const pt: TranslationKeys = {
     endOfDayCashRefunds: "Devoluções em dinheiro ({count})",
     endOfDayCashExpenses: "Despesas em dinheiro ({count})",
     endOfDaySharedCaixaExpenses: "Despesas da caixa — partilhadas ({count})",
+    endOfDaySharedCaixaExpensesPrint: "Despesas caixa ({count})",
     endOfDaySharedCaixaExpensesHint:
       "Pagas da caixa (não ligadas a um caixa). Só para referência — não são descontadas do líquido nem do esperado deste operador.",
     endOfDayNetCash: "Dinheiro líquido (vendas − devoluções)",

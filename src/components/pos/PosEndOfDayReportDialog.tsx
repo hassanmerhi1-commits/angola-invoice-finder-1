@@ -20,8 +20,17 @@ import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { api } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
+import { mapSaleRow } from '@/hooks/useERP';
 import { toast } from 'sonner';
-import { filterShiftSalesForCashier, filterShiftCashRefunds, filterShiftCashExpenses, todayLocalDate, shiftBusinessDate, withRecoveredShiftStart } from '@/lib/posShiftSales';
+import {
+  filterShiftCashRefunds,
+  filterShiftCashExpenses,
+  todayLocalDate,
+  shiftBusinessDate,
+  withRecoveredShiftStart,
+  selectEndOfDaySales,
+  normalizePosPaymentMethod,
+} from '@/lib/posShiftSales';
 
 interface CaixaGlReconciliation {
   caixaAccountCode: string;
@@ -52,6 +61,7 @@ interface PosEndOfDayReportDialogProps {
   expenses?: Expense[];
   cashier: User | null;
   branch: Branch | null;
+  caixaName?: string;
   session?: CaixaSession | null;
   onCloseCaixa?: (countedCash: number, notes?: string) => void | Promise<void>;
 }
@@ -64,6 +74,7 @@ export function PosEndOfDayReportDialog({
   expenses = [],
   cashier,
   branch,
+  caixaName,
   session,
   onCloseCaixa,
 }: PosEndOfDayReportDialogProps) {
@@ -80,6 +91,8 @@ export function PosEndOfDayReportDialog({
   const [glRecon, setGlRecon] = useState<CaixaGlReconciliation | null>(null);
   const [glLoading, setGlLoading] = useState(false);
   const [glError, setGlError] = useState<string | null>(null);
+  const [fetchedSales, setFetchedSales] = useState<Sale[] | null>(null);
+  const [salesLoading, setSalesLoading] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -87,8 +100,41 @@ export function PosEndOfDayReportDialog({
       setCloseNotes('');
       setGlRecon(null);
       setGlError(null);
+      setFetchedSales(null);
+      setSalesLoading(true);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !branch?.id || !reportDay) return;
+    let cancelled = false;
+    setSalesLoading(true);
+    void api.sales
+      .list(branch.id, {
+        light: true,
+        dateFrom: reportDay,
+        dateTo: reportDay,
+        limit: 5000,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        if (res.data === undefined) {
+          setFetchedSales(null);
+          return;
+        }
+        const rows = (Array.isArray(res.data) ? res.data : []).map(mapSaleRow);
+        setFetchedSales(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setFetchedSales(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSalesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, branch?.id, reportDay]);
 
   useEffect(() => {
     if (!open || !branch?.id) return;
@@ -133,15 +179,22 @@ export function PosEndOfDayReportDialog({
     };
   }, [open, branch?.id, session, reportDay, t.posUi.caixa.glUnavailable]);
 
+  const reportSales = fetchedSales ?? sales;
+
   const effectiveSession = useMemo(
-    () => (session ? withRecoveredShiftStart(session, sales, cashier, reportDay) : null),
-    [session, sales, cashier, reportDay],
+    () => (session ? withRecoveredShiftStart(session, reportSales, null, reportDay) : null),
+    [session, reportSales, reportDay],
   );
 
   const cashierSales = useMemo(() => {
-    const rows = filterShiftSalesForCashier(sales, cashier, effectiveSession || session, reportDay);
+    const rows = selectEndOfDaySales(
+      reportSales,
+      cashier,
+      effectiveSession || session,
+      reportDay,
+    ).rows;
     return [...rows].reverse();
-  }, [sales, cashier, reportDay, session, effectiveSession]);
+  }, [reportSales, cashier, reportDay, session, effectiveSession]);
 
   const shiftOpenedLabel = useMemo(() => {
     const openedAt = effectiveSession?.openedAt || session?.openedAt;
@@ -155,27 +208,27 @@ export function PosEndOfDayReportDialog({
   }, [effectiveSession?.openedAt, session?.openedAt, locale, t.posUi.endOfDayShiftSince]);
 
   const shiftCashRefunds = useMemo(
-    () => filterShiftCashRefunds(creditNotes, sales, cashier, effectiveSession || session, reportDay),
-    [creditNotes, sales, cashier, session, effectiveSession, reportDay],
+    () => filterShiftCashRefunds(creditNotes, reportSales, cashier, effectiveSession || session, reportDay),
+    [creditNotes, reportSales, cashier, session, effectiveSession, reportDay],
   );
 
   // All cashiers on this caixa — used only to peel refunds out of session.totalOut
   // so another cashier's refund does not land as "manual cash out" on this report.
   const allCaixaCashRefundsTotal = useMemo(
-    () => filterShiftCashRefunds(creditNotes, sales, null, effectiveSession || session, reportDay)
+    () => filterShiftCashRefunds(creditNotes, reportSales, null, effectiveSession || session, reportDay)
       .reduce((sum, note) => sum + note.total, 0),
-    [creditNotes, sales, session, effectiveSession, reportDay],
+    [creditNotes, reportSales, session, effectiveSession, reportDay],
   );
 
   // Caixa expenses are shared (payment picks a cash box, not a cashier).
   // Show them once as info — do not fold into each cashier's net or expected drawer.
   const shiftCaixaExpenses = useMemo(
-    () => filterShiftCashExpenses(expenses, effectiveSession || session, sales, null, session?.caixaId, reportDay),
-    [expenses, session, effectiveSession, sales, reportDay],
+    () => filterShiftCashExpenses(expenses, effectiveSession || session, reportSales, null, session?.caixaId, reportDay),
+    [expenses, session, effectiveSession, reportSales, reportDay],
   );
 
   const totals = useMemo(() => {
-    const byPayment: Record<string, number> = { cash: 0, card: 0, transfer: 0, mixed: 0 };
+    const byPayment: Record<string, number> = { cash: 0, card: 0, transfer: 0, mixed: 0, credit: 0 };
     let subtotal = 0;
     let tax = 0;
     let total = 0;
@@ -183,12 +236,23 @@ export function PosEndOfDayReportDialog({
       subtotal += sale.subtotal;
       tax += sale.taxAmount;
       total += sale.total;
-      const key = sale.paymentMethod || 'cash';
+      const key = normalizePosPaymentMethod(sale.paymentMethod);
       byPayment[key] = (byPayment[key] || 0) + sale.total;
     }
     const cashRefundsTotal = shiftCashRefunds.reduce((sum, note) => sum + note.total, 0);
     const cashExpensesTotal = shiftCaixaExpenses.reduce((sum, exp) => sum + exp.totalAmount, 0);
-    // Personal net: this cashier's cash sales − their refunds only.
+    // If invoices did not load, still show cash the register already booked.
+    if (cashierSales.length === 0) {
+      const sessionCash = Math.max(
+        Number(session?.salesTotal || 0),
+        Number(glRecon?.erpCashSalesTotal || 0),
+        Number(glRecon?.erpNetCashTotal || 0),
+      );
+      if (sessionCash > 0) {
+        byPayment.cash = sessionCash;
+        total = sessionCash;
+      }
+    }
     const netCash = (byPayment.cash || 0) - cashRefundsTotal;
     return {
       byPayment,
@@ -202,37 +266,49 @@ export function PosEndOfDayReportDialog({
       refundCount: shiftCashRefunds.length,
       expenseCount: shiftCaixaExpenses.length,
     };
-  }, [cashierSales, shiftCashRefunds, shiftCaixaExpenses]);
+  }, [cashierSales, shiftCashRefunds, shiftCaixaExpenses, session, glRecon]);
 
   const buildPrintHtml = () => {
+    const money = (value: number) => `${value.toLocaleString(locale)} Kz`;
+    const row = (label: string, value: string) =>
+      `<div class="row"><span class="lbl">${label}</span><span class="amt">${value}</span></div>`;
+    const expenseLabel = t.posUi.endOfDaySharedCaixaExpensesPrint.replace(
+      '{count}',
+      String(totals.expenseCount),
+    );
     return `
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${t.posUi.endOfDayTitle}</title>
 <style>
-  body { font-family: Arial, sans-serif; font-size: 12px; padding: 16px; color: #111; }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-  .meta { color: #444; margin-bottom: 12px; }
-  .totals { margin-top: 16px; }
-  .totals div { display: flex; justify-content: space-between; margin: 4px 0; }
-  .grand { font-size: 16px; font-weight: bold; margin-top: 8px; }
+  @page { size: 80mm auto; margin: 3mm; }
+  body { font-family: Arial, sans-serif; font-size: 12px; padding: 4px; color: #111; width: 72mm; }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  .meta { color: #444; margin-bottom: 10px; }
+  .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin: 4px 0; }
+  .lbl { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+  .amt { flex: 0 0 auto; white-space: nowrap; text-align: right; }
+  .grand { font-size: 14px; font-weight: bold; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #111; }
 </style></head><body>
   <h1>${t.posUi.endOfDayTitle}</h1>
   <div class="meta">
     <div>${company.tradeName || company.name}</div>
     <div>${branch?.name || ''}</div>
-    <div>${t.posUi.endOfDayCashier}: <strong>${cashier?.name || cashier?.username || '—'}</strong></div>
-    <div>${t.posUi.endOfDayDate}: <strong>${format(reportDayDate, 'PPP', { locale: dfLocale })}</strong></div>
+    ${caixaName ? `<div>${t.posUi.endOfDayCashier}: <strong>${caixaName}</strong></div>` : ''}
+    <div>${cashier?.name || cashier?.username || '—'}</div>
+    <div>${t.posUi.endOfDayDate}: <strong>${format(reportDayDate, 'dd/MM/yyyy')}</strong></div>
     ${shiftOpenedLabel ? `<div>${shiftOpenedLabel}</div>` : ''}
   </div>
   <div class="totals">
-    <div><span>${t.posUi.endOfDaySalesCount}</span><span>${totals.count}</span></div>
-    <div><span>${t.pos.cash}</span><span>${(totals.byPayment.cash || 0).toLocaleString(locale)} Kz</span></div>
-    ${totals.cashRefundsTotal > 0 ? `<div><span>${t.posUi.endOfDayCashRefunds.replace('{count}', String(totals.refundCount))}</span><span>-${totals.cashRefundsTotal.toLocaleString(locale)} Kz</span></div>` : ''}
-    ${totals.cashExpensesTotal > 0 ? `<div><span>${t.posUi.endOfDaySharedCaixaExpenses.replace('{count}', String(totals.expenseCount))}</span><span>-${totals.cashExpensesTotal.toLocaleString(locale)} Kz</span></div>` : ''}
-    ${totals.cashRefundsTotal > 0 ? `<div><span>${t.posUi.endOfDayNetCash}</span><span>${totals.netCash.toLocaleString(locale)} Kz</span></div>` : ''}
-    <div><span>${t.pos.card}</span><span>${(totals.byPayment.card || 0).toLocaleString(locale)} Kz</span></div>
-    <div><span>${t.pos.transfer}</span><span>${(totals.byPayment.transfer || 0).toLocaleString(locale)} Kz</span></div>
-    <div class="grand"><span>${t.common.total}</span><span>${totals.total.toLocaleString(locale)} Kz</span></div>
+    ${row(t.posUi.endOfDaySalesCount, String(totals.count))}
+    ${row(t.pos.cash, money(totals.byPayment.cash || 0))}
+    ${totals.cashRefundsTotal > 0 ? row(t.posUi.endOfDayCashRefunds.replace('{count}', String(totals.refundCount)), `-${money(totals.cashRefundsTotal)}`) : ''}
+    ${totals.cashExpensesTotal > 0 ? row(expenseLabel, `-${money(totals.cashExpensesTotal)}`) : ''}
+    ${totals.cashRefundsTotal > 0 ? row(t.posUi.endOfDayNetCash, money(totals.netCash)) : ''}
+    ${row(t.pos.card, money(totals.byPayment.card || 0))}
+    ${row(t.pos.transfer, money(totals.byPayment.transfer || 0))}
+    ${(totals.byPayment.mixed || 0) > 0 ? row(t.pos.mixed, money(totals.byPayment.mixed || 0)) : ''}
+    ${(totals.byPayment.credit || 0) > 0 ? row(t.pos.credit, money(totals.byPayment.credit || 0)) : ''}
+    <div class="row grand"><span class="lbl">${t.common.total}</span><span class="amt">${money(totals.total)}</span></div>
   </div>
 </body></html>`;
   };
@@ -315,7 +391,13 @@ export function PosEndOfDayReportDialog({
             <span className="font-semibold">{t.common.total}</span>
             <span className="font-mono font-bold tabular-nums">{totals.total.toLocaleString(locale)} Kz</span>
           </div>
-          {cashierSales.length === 0 && (
+          {salesLoading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              {t.posUi.caixa.glLoading}
+            </div>
+          )}
+          {cashierSales.length === 0 && totals.total <= 0 && !salesLoading && (
             <p className="text-xs text-muted-foreground pt-1">
               {!session ? t.posUi.endOfDayNoOpenShift : t.posUi.endOfDayNoSales}
             </p>
@@ -562,8 +644,12 @@ export function PosEndOfDayReportDialog({
           </div>
         )}
 
-        <Button className="w-full" onClick={() => void handlePrint()}>
-          <Printer className="w-4 h-4 mr-2" />
+        <Button className="w-full" disabled={salesLoading} onClick={() => void handlePrint()}>
+          {salesLoading ? (
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          ) : (
+            <Printer className="w-4 h-4 mr-2" />
+          )}
           {t.posUi.endOfDayPrint}
         </Button>
       </DialogContent>

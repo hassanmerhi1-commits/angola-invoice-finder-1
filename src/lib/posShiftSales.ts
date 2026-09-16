@@ -39,7 +39,14 @@ export function getPosCaixaLastClosedAt(branchId: string | null | undefined): st
 }
 
 export function saleLocalDate(createdAt: string): string {
-  const d = new Date(createdAt);
+  const raw = String(createdAt || '').trim();
+  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  // Date-only or naive timestamps keep the stored calendar day (no UTC shift).
+  if (ymd && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw.slice(10))) {
+    return ymd[1];
+  }
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) return ymd?.[1] || '';
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -73,23 +80,46 @@ function expensePaidTimestamp(expense: Expense): string | undefined {
   return text || undefined;
 }
 
+function personKeys(...values: Array<string | null | undefined>): string[] {
+  const keys = values
+    .map((value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' '))
+    .filter(Boolean);
+  return [...new Set(keys)];
+}
+
 export function isSameShiftCashier(
   sale: Sale,
   cashier: User | null | undefined,
+  extraIds: string[] = [],
 ): boolean {
   if (!cashier) return false;
-  const id = String(cashier.id || '').trim().toLowerCase();
-  const name = String(cashier.name || '').trim().toLowerCase();
-  const username = String(cashier.username || '').trim().toLowerCase();
-  const saleCashierId = String(sale.cashierId || '').trim().toLowerCase();
-  const saleCashierName = String(sale.cashierName || '').trim().toLowerCase();
-  if (id && saleCashierId && saleCashierId === id) return true;
-  if (name && saleCashierName && saleCashierName === name) return true;
-  if (username && saleCashierName && saleCashierName === username) return true;
-  // Some POS builds store username in cashierId when the UUID was unavailable offline.
-  if (username && saleCashierId && saleCashierId === username) return true;
-  if (name && saleCashierId && saleCashierId === name) return true;
-  return false;
+  const keys = personKeys(cashier.id, cashier.name, cashier.username, ...extraIds);
+  const saleKeys = personKeys(sale.cashierId, sale.cashierName);
+  if (keys.length === 0 || saleKeys.length === 0) return false;
+  return saleKeys.some((key) => keys.includes(key));
+}
+
+/** Map POS / DB payment labels onto cash | card | transfer | mixed | credit. */
+export function normalizePosPaymentMethod(raw: string | undefined | null): string {
+  const k = String(raw || 'cash')
+    .trim()
+    .toLowerCase()
+    .replace(/[áàâã]/g, 'a')
+    .replace(/[éê]/g, 'e')
+    .replace(/[í]/g, 'i')
+    .replace(/[óôõ]/g, 'o')
+    .replace(/[ú]/g, 'u')
+    .replace(/ç/g, 'c');
+  if (!k || k === 'cash' || k === 'dinheiro' || k === 'numerario') return 'cash';
+  if (k === 'card' || k === 'cartao' || k === 'tpa' || k === 'multicaixa' || k === 'debit' || k === 'debito') {
+    return 'card';
+  }
+  if (k === 'transfer' || k === 'transferencia' || k === 'tb' || k === 'iban') return 'transfer';
+  if (k === 'mixed' || k === 'misto') return 'mixed';
+  if (k === 'credit' || k === 'credito' || k === 'conta' || k === 'on_account' || k === 'on-account') {
+    return 'credit';
+  }
+  return k;
 }
 
 /**
@@ -117,6 +147,7 @@ export function recoveredShiftOpenedAt(
   let earliestIso = session.openedAt;
 
   const consider = (sale: Sale) => {
+    if (String(sale.status || '').toLowerCase() === 'voided') return;
     if (saleLocalDate(sale.createdAt) !== day) return;
     if (session.branchId && sale.branchId && !branchIdsEquivalent(sale.branchId, session.branchId)) {
       return;
@@ -133,7 +164,7 @@ export function recoveredShiftOpenedAt(
 
   if (cashier) {
     for (const sale of sales) {
-      if (!isSameShiftCashier(sale, cashier)) continue;
+      if (!isSameShiftCashier(sale, cashier, session.openedBy ? [session.openedBy] : [])) continue;
       consider(sale);
     }
     // Never fall back to another cashier's earliest sale — that mixes shifts on EOD.
@@ -192,13 +223,13 @@ export function dedupeShiftSales(rows: Sale[]): Sale[] {
   return deduped;
 }
 
-export function filterShiftSalesForCashier(
+export function filterShiftSalesInWindow(
   sales: Sale[],
-  cashier: User | null | undefined,
   session: CaixaSession | null | undefined,
   day = todayLocalDate(),
+  cashier: User | null | undefined = null,
 ): Sale[] {
-  if (!cashier || !session) return [];
+  if (!session) return [];
   const effective = withRecoveredShiftStart(session, sales, cashier, day);
 
   const matchesBranch = (sale: Sale) =>
@@ -206,17 +237,46 @@ export function filterShiftSalesForCashier(
     || !sale.branchId
     || branchIdsEquivalent(sale.branchId, session.branchId);
 
-  // Strict: only this cashier's sales. Never expand to the whole branch —
-  // that made every Soyo-02 cashier see combined EOD totals.
   const filtered = sales.filter((sale) => {
+    if (String(sale.status || '').toLowerCase() === 'voided') return false;
     const sameDay = saleLocalDate(sale.createdAt) === day;
-    const sameCashier = isSameShiftCashier(sale, cashier);
-    return sameDay && sameCashier && matchesBranch(sale) && saleInShift(sale, effective);
+    return sameDay && matchesBranch(sale) && saleInShift(sale, effective);
   });
 
   return dedupeShiftSales(filtered).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
+}
+
+export function filterShiftSalesForCashier(
+  sales: Sale[],
+  cashier: User | null | undefined,
+  session: CaixaSession | null | undefined,
+  day = todayLocalDate(),
+): Sale[] {
+  if (!cashier || !session) return [];
+  const extra = session.openedBy ? [session.openedBy] : [];
+  return filterShiftSalesInWindow(sales, session, day, cashier).filter((sale) =>
+    isSameShiftCashier(sale, cashier, extra),
+  );
+}
+
+/**
+ * Caixa close report: prefer this cashier's sales, but if none match (offline
+ * ids, missing cashier_name, or the closer is not the seller) fall back to
+ * every sale on the open register for that business day.
+ */
+export function selectEndOfDaySales(
+  sales: Sale[],
+  cashier: User | null | undefined,
+  session: CaixaSession | null | undefined,
+  day = todayLocalDate(),
+): { rows: Sale[]; scopedToCashier: boolean } {
+  const windowRows = filterShiftSalesInWindow(sales, session, day, null);
+  if (!cashier) return { rows: windowRows, scopedToCashier: false };
+  const mine = filterShiftSalesForCashier(sales, cashier, session, day);
+  if (mine.length > 0) return { rows: mine, scopedToCashier: true };
+  return { rows: windowRows, scopedToCashier: false };
 }
 
 function eventInShift(isoTimestamp: string | undefined, session: CaixaSession | null | undefined): boolean {

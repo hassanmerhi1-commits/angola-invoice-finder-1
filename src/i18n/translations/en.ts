@@ -416,6 +416,7 @@ export const en = {
     endOfDayCashRefunds: "Cash refunds ({count})",
     endOfDayCashExpenses: "Cash expenses ({count})",
     endOfDaySharedCaixaExpenses: "Caixa expenses — shared ({count})",
+    endOfDaySharedCaixaExpensesPrint: "Caixa expenses ({count})",
     endOfDaySharedCaixaExpensesHint:
       "Paid from the cash box (not tied to a cashier). Shown for reference only — not deducted from this cashier’s net or expected drawer.",
     endOfDayNetCash: "Net cash (sales − refunds)",

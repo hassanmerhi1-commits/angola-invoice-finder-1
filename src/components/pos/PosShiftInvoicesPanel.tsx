@@ -14,7 +14,7 @@ import {
 import { Eye, RefreshCw, AlertTriangle, Printer, ListOrdered } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { filterShiftSalesForCashier, withRecoveredShiftStart } from '@/lib/posShiftSales';
+import { withRecoveredShiftStart, shiftBusinessDate, selectEndOfDaySales } from '@/lib/posShiftSales';
 import {
   listCheckoutFailures,
   readShiftIssues,
@@ -68,9 +68,10 @@ export function PosShiftInvoicesPanel({
   const [printingAll, setPrintingAll] = useState(false);
   const [printingList, setPrintingList] = useState(false);
 
+  const shiftDay = shiftBusinessDate(session);
   const shiftSales = useMemo(
-    () => filterShiftSalesForCashier(sales, cashier, session),
-    [sales, cashier, session],
+    () => selectEndOfDaySales(sales, cashier, session, shiftDay).rows,
+    [sales, cashier, session, shiftDay],
   );
 
   const printableSales = useMemo(
