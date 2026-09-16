@@ -32,8 +32,12 @@ test.describe('Stock transfer E2E', () => {
     await createDialog.locator('label', { hasText: /to \(destination|para \(destino\)/i }).locator('..').getByRole('combobox').click();
     await page.getByRole('option', { name: new RegExp(scenario.destBranchName, 'i') }).click();
 
-    await createDialog.getByPlaceholder(/search|code|product/i).first().fill(scenario.sku);
-    await createDialog.getByRole('button', { name: new RegExp(scenario.sku) }).click();
+    // Product suggestions are portaled as listbox options, not buttons inside the dialog.
+    const productSearch = createDialog.getByPlaceholder(/search|code|product/i).first();
+    await productSearch.fill(scenario.sku);
+    const skuOption = page.getByRole('option', { name: new RegExp(scenario.sku, 'i') });
+    await expect(skuOption).toBeVisible({ timeout: 15_000 });
+    await skuOption.click();
 
     const qtyInput = createDialog.locator('tbody input').first();
     await qtyInput.fill(String(scenario.transferQty));

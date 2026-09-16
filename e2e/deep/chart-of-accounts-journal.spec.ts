@@ -54,15 +54,19 @@ test.describe('Chart of accounts + journal E2E', () => {
 
     const accountInputs = journalDialog.getByPlaceholder(/e\.g\., 451|ex:\s*451/i);
     await accountInputs.nth(0).fill(accountCode);
-    await page.getByRole('button', { name: new RegExp(`^${accountCode}\\s`) }).click();
+    await expect(page.getByRole('button', { name: new RegExp(`^${accountCode}\\s`) })).toBeVisible({
+      timeout: 15_000,
+    });
+    await accountInputs.nth(0).press('Enter');
 
     const amountInputs = journalDialog.locator('input[placeholder="0.00"]');
     await amountInputs.nth(0).fill(String(amount));
 
     await accountInputs.nth(1).fill('451');
     // Account picker is portaled to document.body — do not scope to the dialog.
-    // Anchor to the code so we don't also match 3451 (IVA dedutível).
-    await page.getByRole('button', { name: /^451\s/ }).click();
+    // Confirm with Enter so the overlay cannot intercept the pointer click.
+    await expect(page.getByRole('button', { name: /^451\s/ })).toBeVisible({ timeout: 15_000 });
+    await accountInputs.nth(1).press('Enter');
 
     // Re-assert title after account picks (some flows rewrite line text).
     await journalDialog
