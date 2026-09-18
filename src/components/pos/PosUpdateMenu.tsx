@@ -163,24 +163,24 @@ export function PosUpdateMenu() {
   const handleReloadUi = useCallback(async () => {
     setReloadingUi(true);
     try {
-      const result = await window.electronAPI?.hotUpdate?.reload();
-      if (result?.success) {
+      const { switchTillToCityUi } = await import('@/lib/sync/cityUi');
+      const result = await switchTillToCityUi();
+      if (result.ok) {
         toast.success(
           t.hotUpdateUi.reloadingFrom.replace('{source}', result.source || 'server'),
         );
       } else {
-        toast.error(result?.error || t.hotUpdateUi.reloadFailed);
+        toast.error(result.error === 'no-url' ? ui.useCityUiNoUrl : (result.error || t.hotUpdateUi.reloadFailed));
       }
     } catch {
       toast.error(t.hotUpdateUi.reloadFailed);
     } finally {
       setReloadingUi(false);
     }
-  }, [t]);
+  }, [t, ui.useCityUiNoUrl]);
 
   if (!isElectron) return null;
 
-  const hotUpdateEnabled = !!hotUpdateConfig?.enabled && !!hotUpdateConfig.serverUrl?.trim();
   const showDownload =
     updateStatus?.status === 'available' && !isDownloading;
   const showInstall =
@@ -296,35 +296,31 @@ export function PosUpdateMenu() {
               )}
             </div>
 
-            {hotUpdateEnabled && (
-              <>
-                <Separator />
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">{ui.uiSource}</span>
-                    <Badge variant={loadSource === 'server' ? 'default' : 'secondary'}>
-                      {loadSource === 'server' ? ui.fromServer : ui.fromLocal}
-                    </Badge>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="w-full justify-start gap-2"
-                    disabled={reloadingUi}
-                    onClick={() => void handleReloadUi()}
-                  >
-                    {reloadingUi ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Zap className="w-4 h-4" />
-                    )}
-                    {ui.reloadUiFromServer}
-                  </Button>
-                  <p className="text-[10px] text-muted-foreground">{ui.reloadUiHint}</p>
-                </div>
-              </>
-            )}
+            <Separator />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{ui.uiSource}</span>
+                <Badge variant={loadSource === 'server' ? 'default' : 'destructive'}>
+                  {loadSource === 'server' ? ui.fromServer : ui.fromLocal}
+                </Badge>
+              </div>
+              <Button
+                type="button"
+                variant={loadSource === 'server' ? 'secondary' : 'default'}
+                size="sm"
+                className="w-full justify-start gap-2"
+                disabled={reloadingUi}
+                onClick={() => void handleReloadUi()}
+              >
+                {reloadingUi ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Zap className="w-4 h-4" />
+                )}
+                {loadSource === 'server' ? ui.reloadUiFromServer : ui.useCityUi}
+              </Button>
+              <p className="text-[10px] text-muted-foreground">{ui.reloadUiHint}</p>
+            </div>
           </div>
         </PopoverContent>
       </Popover>

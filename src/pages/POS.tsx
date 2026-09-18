@@ -40,8 +40,9 @@ import { PosOpenCaixaDialog } from '@/components/pos/PosOpenCaixaDialog';
 import { PosPayExpenseDialog } from '@/components/pos/PosPayExpenseDialog';
 import { PosShiftInvoicesPanel } from '@/components/pos/PosShiftInvoicesPanel';
 import { PosUpdateMenu } from '@/components/pos/PosUpdateMenu';
+import { TillCityUiBanner } from '@/components/pos/TillCityUiBanner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { filterShiftSalesForCashier, todayLocalDate, recoveredShiftOpenedAt, shiftBusinessDate } from '@/lib/posShiftSales';
+import { selectPosShiftInvoices, todayLocalDate, recoveredShiftOpenedAt, shiftBusinessDate } from '@/lib/posShiftSales';
 import {
   appendShiftIssue,
   clearSaleIssueKind,
@@ -74,11 +75,13 @@ export default function POS() {
   } = usePosCaixa(branchId, currentBranch?.name || branchId);
   const today = todayLocalDate();
   const salesDay = shiftBusinessDate(caixaSession, today);
+  const salesDateFrom = salesDay <= today ? salesDay : today;
+  const salesDateTo = salesDay <= today ? today : salesDay;
   const { completeSale, sales, refreshSales } = useSales(branchId, {
     deferInitialLoad: true,
     light: true,
-    dateFrom: salesDay,
-    dateTo: salesDay,
+    dateFrom: salesDateFrom,
+    dateTo: salesDateTo,
     limit: 5000,
   });
   const { creditNotes, refreshCreditNotes } = useCreditNotes(branchId, true);
@@ -178,7 +181,7 @@ export default function POS() {
   const bumpShiftIssues = useCallback(() => setShiftIssuesVersion((v) => v + 1), []);
   const [openingCaixa, setOpeningCaixa] = useState(false);
   const shiftInvoiceCount = useMemo(
-    () => filterShiftSalesForCashier(sales, user, caixaSession, salesDay).length,
+    () => selectPosShiftInvoices(sales, user, caixaSession, salesDay).rows.length,
     [sales, user, caixaSession, salesDay],
   );
 
@@ -195,8 +198,13 @@ export default function POS() {
   // If the register was re-opened after an update, pull shift start back to the first
   // sale of the day so shift invoices / end-of-day include the morning work.
   useEffect(() => {
-    if (!caixaSession || !user || sales.length === 0) return;
-    const recovered = recoveredShiftOpenedAt(sales, user, caixaSession, salesDay);
+    if (!caixaSession || sales.length === 0) return;
+    const fromCashier = user
+      ? recoveredShiftOpenedAt(sales, user, caixaSession, salesDay)
+      : caixaSession.openedAt;
+    const fromBranch = recoveredShiftOpenedAt(sales, null, caixaSession, salesDay);
+    const recovered =
+      fromCashier && fromCashier !== caixaSession.openedAt ? fromCashier : fromBranch;
     if (!recovered || recovered === caixaSession.openedAt) return;
     const recoveredMs = new Date(recovered).getTime();
     const openedMs = new Date(caixaSession.openedAt).getTime();
@@ -204,13 +212,20 @@ export default function POS() {
     adoptOpenedAt(recovered);
   }, [caixaSession, user, sales, salesDay, adoptOpenedAt]);
 
-  // Defer non-critical POS data until the cash register is open (faster entry + open-caixa dialog).
+  // Load today's sales as soon as the till branch is known (not only after caixa opens),
+  // so Shift invoices is not empty while the dashboard already has the tickets.
   useEffect(() => {
-    if (!caixaOpen || !branchId) return;
+    if (!branchId) return;
     void refreshSales({ force: true });
+    if (!caixaOpen) return;
     void refreshCreditNotes(branchId);
     void refreshClients();
   }, [caixaOpen, branchId, salesDay, refreshSales, refreshCreditNotes, refreshClients]);
+
+  useEffect(() => {
+    if (posMainTab !== 'invoices' || !branchId) return;
+    void refreshSales({ force: true });
+  }, [posMainTab, branchId, refreshSales]);
 
   useEffect(() => {
     if (!clientPickerOpen) return;
@@ -734,7 +749,8 @@ export default function POS() {
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <TillCityUiBanner />
       {/* Top: cart list */}
       <div className="flex-1 min-h-0 flex flex-col bg-card border-b">
         <div className="px-3 py-1.5 border-b shrink-0 flex items-center justify-between gap-2">
@@ -942,7 +958,7 @@ export default function POS() {
             type="button"
             variant="outline"
             size="sm"
-            className="h-9 text-xs gap-1.5 md:hidden shrink-0"
+            className="h-9 text-xs gap-1.5 sm:hidden shrink-0"
             onClick={() =>
               navigate(
                 { pathname: location.pathname, search: location.search, hash: location.hash },

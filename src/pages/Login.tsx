@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { LogIn, Shield, RefreshCw, AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { TillCityUiBanner } from '@/components/pos/TillCityUiBanner';
 import { z } from 'zod';
 import defaultLogo from '/icon.png?url';
 import { useTranslation } from '@/i18n';
@@ -211,6 +212,7 @@ export default function Login() {
 
       <div className="flex-1 flex items-center justify-center p-6 bg-background">
         <div className="w-full max-w-sm space-y-8">
+          <TillCityUiBanner />
           <div className="lg:hidden text-center">
             <div className="mx-auto w-16 h-16 rounded-2xl bg-white border border-slate-200/80 flex items-center justify-center mb-4 shadow-sm overflow-hidden">
               <img src={logoSrc} alt={companyName} className="w-10 h-10 object-contain" />

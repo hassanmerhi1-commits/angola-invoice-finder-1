@@ -50,23 +50,23 @@ export const mediumPreset: ThemePreset = {
   },
   chrome: {
     navRow1:
-      'h-10 px-3 bg-gradient-to-r from-sky-50 via-sidebar to-emerald-50/60 text-sidebar-foreground hidden md:flex items-center justify-between border-b border-sky-100 shadow-sm',
+      'h-10 px-3 bg-gradient-to-r from-sky-50 via-sidebar to-emerald-50/60 text-sidebar-foreground hidden sm:flex items-center justify-between border-b border-sky-100 shadow-sm',
     navRow1Mobile:
-      'h-14 px-4 flex md:hidden items-center justify-between bg-gradient-to-r from-sky-50 via-sidebar to-emerald-50/60 text-sidebar-foreground border-b border-sky-100 shadow-sm',
+      'h-14 px-4 flex sm:hidden items-center justify-between bg-gradient-to-r from-sky-50 via-sidebar to-emerald-50/60 text-sidebar-foreground border-b border-sky-100 shadow-sm',
     navBrandBorder: 'flex items-center gap-2 pr-4 mr-2 border-r border-sky-200/60',
     navLogoRing: 'w-6 h-6 rounded-lg overflow-hidden bg-white/80 ring-2 ring-sky-200/70 flex items-center justify-center',
     navBrand: 'font-bold text-sm tracking-tight text-teal-800',
     navMenuBtn:
       'h-7 px-2.5 text-xs font-medium text-teal-900/75 hover:text-teal-950 hover:bg-white/60 rounded-md',
     navTabsRow:
-      'h-10 px-2 bg-gradient-to-r from-card via-sky-50/40 to-card hidden md:flex items-end justify-between gap-2 border-b border-sky-100 overflow-x-auto',
+      'h-10 px-2 bg-gradient-to-r from-card via-sky-50/40 to-card hidden sm:flex items-end justify-between gap-2 border-b border-sky-100 overflow-x-auto',
     navTabActive:
       'bg-white text-teal-800 border-t-[3px] border-x border-t-teal-500 border-x-sky-100 -mb-px shadow-sm',
     navTabIdle: 'text-teal-800/65 hover:text-teal-950 hover:bg-sky-50/80',
     checklistTab:
       'flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-amber-800 bg-amber-50 hover:bg-amber-100 ml-0.5 border border-amber-200/60 border-b-0',
     toolbarRow:
-      'h-10 px-3 bg-gradient-to-r from-sky-50/60 via-background to-emerald-50/30 hidden md:flex items-center gap-1.5 border-b border-sky-100 overflow-x-auto',
+      'h-10 px-3 bg-gradient-to-r from-sky-50/60 via-background to-emerald-50/30 hidden sm:flex items-center gap-1.5 border-b border-sky-100 overflow-x-auto',
     dashboardSurface: 'flex-1 p-6 overflow-auto space-y-6 bg-gradient-to-b from-sky-50/40 via-transparent to-emerald-50/15',
     documentFlowCard:
       'border-sky-200/60 bg-gradient-to-br from-white via-sky-50/30 to-emerald-50/30 shadow-sm overflow-hidden',

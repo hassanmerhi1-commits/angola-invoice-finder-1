@@ -50,23 +50,23 @@ export const lightPreset: ThemePreset = {
   },
   chrome: {
     navRow1:
-      'h-10 px-3 bg-white text-sidebar-foreground hidden md:flex items-center justify-between border-b border-slate-200 shadow-sm',
+      'h-10 px-3 bg-white text-sidebar-foreground hidden sm:flex items-center justify-between border-b border-slate-200 shadow-sm',
     navRow1Mobile:
-      'h-14 px-4 flex md:hidden items-center justify-between bg-white text-sidebar-foreground border-b border-slate-200 shadow-sm',
+      'h-14 px-4 flex sm:hidden items-center justify-between bg-white text-sidebar-foreground border-b border-slate-200 shadow-sm',
     navBrandBorder: 'flex items-center gap-2 pr-4 mr-2 border-r border-slate-200',
     navLogoRing: 'w-6 h-6 rounded-lg overflow-hidden bg-slate-50 ring-1 ring-slate-200 flex items-center justify-center',
     navBrand: 'font-bold text-sm tracking-tight text-slate-800',
     navMenuBtn:
       'h-7 px-2.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md',
     navTabsRow:
-      'h-10 px-2 bg-slate-50/80 hidden md:flex items-end justify-between gap-2 border-b border-slate-200 overflow-x-auto',
+      'h-10 px-2 bg-slate-50/80 hidden sm:flex items-end justify-between gap-2 border-b border-slate-200 overflow-x-auto',
     navTabActive:
       'bg-white text-sky-800 border-t-[3px] border-x border-t-sky-500 border-x-slate-200 -mb-px shadow-sm',
     navTabIdle: 'text-slate-500 hover:text-slate-800 hover:bg-white/80',
     checklistTab:
       'flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-slate-600 hover:text-slate-900 hover:bg-white/80 ml-0.5',
     toolbarRow:
-      'h-10 px-3 bg-white hidden md:flex items-center gap-1.5 border-b border-slate-100 overflow-x-auto',
+      'h-10 px-3 bg-white hidden sm:flex items-center gap-1.5 border-b border-slate-100 overflow-x-auto',
     dashboardSurface: 'flex-1 p-6 overflow-auto space-y-6 bg-slate-50/40',
     documentFlowCard: 'border-slate-200/80 bg-white shadow-sm overflow-hidden',
     documentFlowArrow: 'w-4 h-4 text-slate-300 flex-shrink-0',

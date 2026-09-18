@@ -7,6 +7,7 @@ import { normalizeTaxRate } from '@/lib/taxUtils';
 import {
   getApiUrl,
   getApiUrlAsync,
+  apiBaseFromWindowOrigin,
   invalidateElectronApiBaseCache,
   isDemoMode,
   isThinClientMode,
@@ -21,6 +22,20 @@ import {
 import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
 import { isNetworkErrorMessage } from '@/lib/networkErrors';
 import { isCreditPaymentMethod } from '@/lib/saleOfflineGuard';
+
+/** Local calendar day for sale timestamps — ISO `Z` must not be sliced as UTC date. */
+function saleCreatedCalendarDay(createdAt: unknown): string {
+  const raw = String(createdAt ?? '').trim();
+  if (!raw) return '';
+  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (ymd && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw.slice(10))) return ymd[1];
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) return ymd?.[1] || '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export type LoginErrorKind = 'credentials' | 'connection';
 
@@ -296,10 +311,8 @@ async function apiFetch<T>(
 
   const buildUrl = (base: string) => `${base}/api${endpoint}`;
   const el = typeof window !== 'undefined' ? (window as any).electronAPI : null;
-  let baseUrl =
-    el?.isElectron
-      ? await getApiUrlAsync()
-      : getApiUrl();
+  const cityPage = apiBaseFromWindowOrigin();
+  let baseUrl = cityPage || (el?.isElectron ? await getApiUrlAsync() : getApiUrl());
   let url = buildUrl(baseUrl);
   const token = getAuthToken();
 
@@ -1015,7 +1028,7 @@ export const api = {
             const to = opts?.dateTo?.slice(0, 10);
             if (from || to) {
               rows = rows.filter((sale: any) => {
-                const day = String(sale.created_at || sale.createdAt || '').slice(0, 10);
+                const day = saleCreatedCalendarDay(sale.created_at || sale.createdAt);
                 if (from && day && day < from) return false;
                 if (to && day && day > to) return false;
                 return true;
@@ -1055,7 +1068,7 @@ export const api = {
       const to = opts?.dateTo?.slice(0, 10);
       if ((from || to) && merged.length > 0) {
         merged = merged.filter((sale: any) => {
-          const day = String(sale.created_at || sale.createdAt || '').slice(0, 10);
+          const day = saleCreatedCalendarDay(sale.created_at || sale.createdAt);
           if (from && day && day < from) return false;
           if (to && day && day > to) return false;
           return true;
@@ -1188,39 +1201,12 @@ export const api = {
       };
 
       if (typeof window !== 'undefined' && (await isOfflineFirstEnabled())) {
-        // When the city server is reachable, post live like the other tills.
-        // Offline-first local save is the fallback — not the only path — otherwise
-        // one PC with a broken outbox URL keeps every sale "pending" forever.
+        // Always try the city server first. A stale "LAN down" flag or localhost
+        // health probe used to skip this and leave every sale pending on one till.
         if (!isOfflineModeActive()) {
-          const { getLanServerReachable } = await import('@/lib/lanReachability');
-          let canLive = getLanServerReachable() === true;
-          if (!canLive && hasOutbox) {
-            const elApi = (window as any).electronAPI;
-            if (elApi?.isElectron) {
-              const lanClient = await isElectronLanClient();
-              if (lanClient && elApi?.network?.httpJson) {
-                const baseUrl = await getApiUrlAsync();
-                const authToken = getAuthToken();
-                const health = await electronHttpJson(`${baseUrl}/api/health?lite=1`, {
-                  method: 'GET',
-                  headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-                  timeoutMs: 5000,
-                });
-                canLive = !!health.ok;
-              } else {
-                canLive = true;
-              }
-            } else {
-              canLive = true;
-            }
-          } else if (!hasOutbox) {
-            canLive = true;
-          }
-          if (canLive) {
-            const live = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
-            if (!live.error && live.data) return finalizeCreatedSale(live);
-            if (live.error && !isNetworkErrorMessage(live.error)) return live;
-          }
+          const live = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
+          if (!live.error && live.data) return finalizeCreatedSale(live);
+          if (live.error && !isNetworkErrorMessage(live.error)) return live;
         }
         const local = await saveSaleLocally(body);
         if (local.ok && local.sale) {

@@ -5,6 +5,15 @@ import "./index.css";
 import { applyColorTheme } from "./themes/colorTheme";
 import { applyTextSize } from "./themes/textSize";
 import { applyUiFit } from "./lib/uiFit";
+import { pinCityApiFromPageOrigin } from "./lib/api/config";
+
+pinCityApiFromPageOrigin();
+applyColorTheme();
+applyTextSize();
+applyUiFit();
+if (typeof window !== "undefined") {
+  window.setInterval(() => pinCityApiFromPageOrigin(), 1500);
+}
 
 applyColorTheme();
 applyTextSize();

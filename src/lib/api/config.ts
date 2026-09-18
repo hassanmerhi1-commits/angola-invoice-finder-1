@@ -194,11 +194,72 @@ export function isDemoMode(): boolean {
   return _isDemoMode;
 }
 
+function isLoopbackApiBase(url: string | null | undefined): boolean {
+  return /127\.0\.0\.1|localhost|\[::1\]/i.test(String(url || ''));
+}
+
+/** When Electron loads `${city}/app`, the API is that origin — not a local backend port. */
+export function apiBaseFromWindowOrigin(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const proto = window.location.protocol;
+    if (proto !== 'http:' && proto !== 'https:') return null;
+    const host = window.location.hostname.toLowerCase();
+    if (!host || host === 'localhost' || host === '127.0.0.1' || host === '::1') return null;
+    if (window.location.port === '18080' || window.location.port === '5173') return null;
+    return window.location.origin.replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hot-update tills still run the *installed* Electron main process, which injects
+ * `__KWANZA_BACKEND_PORT__` (localhost). Sales then stay pending on this PC.
+ * If the window is the city `/app`, force every API call onto that origin.
+ */
+export function pinCityApiFromPageOrigin(): string | null {
+  const fromPage = apiBaseFromWindowOrigin();
+  if (!fromPage || typeof window === 'undefined') return fromPage;
+  try {
+    delete (window as any).__KWANZA_BACKEND_PORT__;
+  } catch {
+    try {
+      (window as any).__KWANZA_BACKEND_PORT__ = undefined;
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    const parsed = new URL(fromPage);
+    const port = Number(parsed.port || 3000);
+    localStorage.setItem('kwanza_api_url', fromPage);
+    localStorage.setItem('kwanza_is_server', 'false');
+    localStorage.setItem(
+      'kwanza_client_config',
+      JSON.stringify({
+        serverIp: parsed.hostname,
+        httpPort: Number.isFinite(port) && port > 0 ? port : 3000,
+        useSocketIo: true,
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
+  electronResolvedBase = fromPage;
+  electronCacheVerifiedAt = Date.now();
+  lanDiscoveryRequired = false;
+  return fromPage;
+}
+
 // Get API URL from localStorage or use default.
 // In Electron, prefer the dynamic port chosen by backendManager (3000..3009),
 // injected as window.__KWANZA_BACKEND_PORT__ before the React app loads.
 export function getApiUrl(): string {
   if (typeof window !== 'undefined') {
+    const fromPage = apiBaseFromWindowOrigin();
+    if (fromPage) return fromPage;
+
     const isElectron = !!(window as any).electronAPI?.isElectron;
     if (isElectron) {
       if (ipFileSaysServerMachine()) {
@@ -698,6 +759,9 @@ async function waitForEmbeddedExpressBase(api: NonNullable<typeof window.electro
  * late injection — that breaks API calls if another port was chosen.
  */
 export async function getApiUrlAsync(options?: { waitForPortMs?: number }): Promise<string> {
+  const fromPage = pinCityApiFromPageOrigin() || apiBaseFromWindowOrigin();
+  if (fromPage) return fromPage;
+
   const apiPre = typeof window !== 'undefined' ? (window as any).electronAPI : null;
   try {
     if (apiPre?.isElectron && apiPre?.ipfile?.parseSync && electronResolvedBase) {

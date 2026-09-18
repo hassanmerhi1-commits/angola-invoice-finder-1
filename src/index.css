@@ -290,9 +290,14 @@
 
   /* Fit tills + resized windows: scale the whole shell down, never up. */
   #root {
-    zoom: var(--nexor-ui-fit, 1);
+    transform: scale(var(--nexor-ui-fit, 1));
+    transform-origin: top left;
     width: calc(100% / var(--nexor-ui-fit, 1));
     height: calc(100% / var(--nexor-ui-fit, 1));
+  }
+  html[data-nexor-electron='1'] #root {
+    transform: none;
+    zoom: var(--nexor-ui-fit, 1);
   }
 
   /* Text size: zoom page content only — keeps TopNav chrome from wrapping/crushing. */

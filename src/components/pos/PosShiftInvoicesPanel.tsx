@@ -14,7 +14,7 @@ import {
 import { Eye, RefreshCw, AlertTriangle, Printer, ListOrdered } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { withRecoveredShiftStart, shiftBusinessDate, selectEndOfDaySales } from '@/lib/posShiftSales';
+import { withRecoveredShiftStart, shiftBusinessDate, selectPosShiftInvoices } from '@/lib/posShiftSales';
 import {
   listCheckoutFailures,
   readShiftIssues,
@@ -70,7 +70,7 @@ export function PosShiftInvoicesPanel({
 
   const shiftDay = shiftBusinessDate(session);
   const shiftSales = useMemo(
-    () => selectEndOfDaySales(sales, cashier, session, shiftDay).rows,
+    () => selectPosShiftInvoices(sales, cashier, session, shiftDay).rows,
     [sales, cashier, session, shiftDay],
   );
 
@@ -283,7 +283,7 @@ export function PosShiftInvoicesPanel({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto border rounded-md">
+      <div className="flex-1 min-h-[12rem] overflow-auto border rounded-md">
         {shiftSales.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-10 px-4">
             {t.posUi.shiftInvoices.empty}

@@ -390,6 +390,28 @@ const App = () => {
       stop?.();
     };
   }, []);
+
+  // Installed tills often keep Hot Updates off and stay on the packaged UI.
+  // Once this newer screen is loaded, pin the till to the city /app.
+  React.useEffect(() => {
+    if (!isElectron) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (sessionStorage.getItem('nexor:auto-city-ui')) return;
+        const { getTillUiSource, switchTillToCityUi } = await import('@/lib/sync/cityUi');
+        const source = await getTillUiSource();
+        if (cancelled || source !== 'local') return;
+        sessionStorage.setItem('nexor:auto-city-ui', '1');
+        await switchTillToCityUi();
+      } catch {
+        /* old Electron or no city URL */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isElectron]);
   const browserBasename = !isElectron && typeof window !== 'undefined' && window.location.pathname.startsWith('/app')
     ? '/app'
     : undefined;

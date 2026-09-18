@@ -741,7 +741,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         // Do not backdate across a successful EOD close watermark.
         const lastClosed = getPosCaixaLastClosedAt(prev.branchId || branchId);
         const lastClosedMs = lastClosed ? new Date(lastClosed).getTime() : NaN;
-        if (Number.isFinite(lastClosedMs) && nextMs < lastClosedMs) return prev;
+        if (Number.isFinite(lastClosedMs) && lastClosedMs < prevMs && nextMs < lastClosedMs) return prev;
         const next = { ...prev, openedAt };
         writePosCaixaCache(branchId, next);
         return next;

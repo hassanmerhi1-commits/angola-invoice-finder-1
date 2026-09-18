@@ -933,7 +933,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
 
       {/* Mobile Navigation */}
       {mobileMenuOpen && (
-        <nav className="md:hidden border-t bg-card p-3 max-h-[70vh] overflow-y-auto animate-fade-in">
+        <nav className="sm:hidden border-t bg-card p-3 max-h-[70vh] overflow-y-auto animate-fade-in">
           <div className="grid grid-cols-4 gap-2">
             {visibleMainTabs.map((tab) => (
               <NavLink

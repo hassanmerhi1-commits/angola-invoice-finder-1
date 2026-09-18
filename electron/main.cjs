@@ -1367,6 +1367,8 @@ function sendToAllWindows(channel, payload) {
 
 /** Inject the embedded backend port into every window so getApiUrl() resolves in all of them. */
 function injectBackendPortToAllWindows() {
+  // Remote /app must talk to that origin — a local port here sends till sales to localhost.
+  if (getRendererSource().type === 'server') return;
   const p = backendManager.getPort();
   if (typeof p !== 'number' || p <= 0 || p >= 65536) return;
   for (const win of BrowserWindow.getAllWindows()) {
@@ -3029,10 +3031,68 @@ function getLocalRendererSource() {
   return { type: 'local', path: possiblePaths[0] };
 }
 
+function isLoopbackHttpUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return !host || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('127.');
+  } catch {
+    return true;
+  }
+}
+
+/** City ERP URL this till already knows (hot-update, outbox, setup, or IP file). */
+function resolveCityServerUrl() {
+  const hot = loadHotUpdateConfig();
+  const fromHot = normalizeServerUrl(hot.serverUrl);
+  if (fromHot && !isLoopbackHttpUrl(fromHot)) return fromHot;
+  try {
+    const preferred = syncOutbox.getPreferredApiBase?.();
+    if (preferred && !isLoopbackHttpUrl(preferred)) return normalizeServerUrl(preferred);
+  } catch (_) {}
+  try {
+    const cfg = readSetupConfigFromDisk();
+    const ip = cfg?.clientConfig?.serverIp;
+    const port = cfg?.clientConfig?.httpPort || cfg?.clientConfig?.apiPort || 3000;
+    const parsed = parseClientHostFromIpContent(String(ip || ''));
+    if (parsed?.host && !isLoopbackOrLocalHost(parsed.host)) {
+      return `http://${parsed.host}:${parsed.httpPort ?? port}`;
+    }
+  } catch (_) {}
+  try {
+    const ip = parseIPFile();
+    if (ip?.valid && !ip.isServer && ip.serverAddress) {
+      const parsed = parseClientHostFromIpContent(String(ip.serverAddress));
+      if (parsed?.host && !isLoopbackOrLocalHost(parsed.host)) {
+        return `http://${parsed.host}:${ip.httpPort ?? parsed.httpPort ?? 3000}`;
+      }
+    }
+  } catch (_) {}
+  return '';
+}
+
+function persistClientCityUi(serverUrl) {
+  if (!serverUrl || isServerMode) return;
+  try {
+    const cur = loadHotUpdateConfig();
+    if (cur.enabled && normalizeServerUrl(cur.serverUrl) === serverUrl) return;
+    saveHotUpdateConfig({ enabled: true, serverUrl, autoConnect: true });
+  } catch (_) {}
+}
+
 function getRendererSource() {
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
   if (isDev) {
     return { type: 'dev', url: 'http://localhost:18080' };
+  }
+
+  // Shop tills must load ${city}/app. The installer copy never receives pending/layout
+  // fixes — Hot Updates left disabled (or emptied) on cashier PCs.
+  if (!isServerMode) {
+    const cityUrl = resolveCityServerUrl();
+    if (cityUrl) {
+      persistClientCityUi(cityUrl);
+      return { type: 'server', url: `${cityUrl}/app`, baseUrl: cityUrl };
+    }
   }
 
   const hotUpdate = loadHotUpdateConfig();
@@ -3379,6 +3439,7 @@ function createWindow() {
   // so getApiUrl() in src/lib/api/config.ts picks it up on first call.
   // We re-inject on every load (handles hot-update reloads + navigation).
   const injectBackendPort = () => {
+    if (getRendererSource().type === 'server') return;
     const port = backendManager.getPort();
     if (port == null) return;
     mainWindow?.webContents
@@ -3442,6 +3503,7 @@ function createSecondaryWindow() {
   if (isDev) win.webContents.openDevTools();
 
   const inject = () => {
+    if (getRendererSource().type === 'server') return;
     const port = backendManager.getPort();
     if (port == null || win.isDestroyed()) return;
     win.webContents

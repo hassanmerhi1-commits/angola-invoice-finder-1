@@ -52,23 +52,23 @@ export const coolToolbar = {
 
 export const coolChrome = {
   navRow1:
-    'h-10 px-3 bg-gradient-to-r from-sky-200/80 via-cyan-100 to-emerald-200/70 text-sidebar-foreground hidden md:flex items-center justify-between border-b border-teal-200/80 shadow-md shadow-sky-200/40',
+    'h-10 px-3 bg-gradient-to-r from-sky-200/80 via-cyan-100 to-emerald-200/70 text-sidebar-foreground hidden sm:flex items-center justify-between border-b border-teal-200/80 shadow-md shadow-sky-200/40',
   navRow1Mobile:
-    'h-14 px-4 flex md:hidden items-center justify-between bg-gradient-to-r from-sky-200/80 via-cyan-100 to-emerald-200/70 text-sidebar-foreground border-b border-teal-200/80 shadow-md shadow-sky-200/40',
+    'h-14 px-4 flex sm:hidden items-center justify-between bg-gradient-to-r from-sky-200/80 via-cyan-100 to-emerald-200/70 text-sidebar-foreground border-b border-teal-200/80 shadow-md shadow-sky-200/40',
   navBrandBorder: 'flex items-center gap-2 pr-4 mr-2 border-r border-teal-300/50',
   navLogoRing: 'w-6 h-6 rounded-lg overflow-hidden bg-white/80 ring-2 ring-sky-300/60 flex items-center justify-center',
   navBrand: 'font-bold text-sm tracking-tight text-teal-800',
   navMenuBtn:
     'h-7 px-2.5 text-xs font-medium text-teal-900/80 hover:text-teal-950 hover:bg-white/60 rounded-md',
   navTabsRow:
-    'h-10 px-2 bg-gradient-to-r from-sky-100 via-cyan-50 to-emerald-100/80 hidden md:flex items-end justify-between gap-2 border-b border-teal-200/60 overflow-x-auto',
+    'h-10 px-2 bg-gradient-to-r from-sky-100 via-cyan-50 to-emerald-100/80 hidden sm:flex items-end justify-between gap-2 border-b border-teal-200/60 overflow-x-auto',
   navTabActive:
     'bg-white text-teal-800 border-t-[3px] border-x border-t-teal-500 border-x-teal-200 -mb-px shadow-sm',
   navTabIdle: 'text-teal-800/70 hover:text-teal-950 hover:bg-white/70',
   checklistTab:
     'flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-amber-800 bg-amber-100/70 hover:bg-amber-200/80 ml-0.5 border border-amber-200/80 border-b-0',
   toolbarRow:
-    'h-10 px-3 bg-gradient-to-r from-cyan-50/80 via-sky-50/50 to-amber-50/40 hidden md:flex items-center gap-1.5 border-b border-sky-100 overflow-x-auto',
+    'h-10 px-3 bg-gradient-to-r from-cyan-50/80 via-sky-50/50 to-amber-50/40 hidden sm:flex items-center gap-1.5 border-b border-sky-100 overflow-x-auto',
   dashboardSurface: 'flex-1 p-6 overflow-auto space-y-6 bg-gradient-to-b from-cyan-50/50 via-sky-50/25 to-amber-50/20',
   documentFlowCard:
     'border-teal-200/70 bg-gradient-to-br from-white via-cyan-50/40 to-emerald-50/50 shadow-md shadow-teal-100/40 overflow-hidden',

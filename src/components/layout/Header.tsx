@@ -54,7 +54,7 @@ export function Header({
     <header className="h-16 border-b bg-card px-4 flex items-center justify-between">
       <div className="flex items-center gap-4">
         {onMenuClick && (
-          <Button variant="ghost" size="icon" className="md:hidden" onClick={onMenuClick}>
+          <Button variant="ghost" size="icon" className="sm:hidden" onClick={onMenuClick}>
             <Menu className="w-5 h-5" />
           </Button>
         )}

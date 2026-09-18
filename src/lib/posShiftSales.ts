@@ -17,6 +17,20 @@ export function markPosCaixaClosed(branchId: string, closedAt = new Date().toISO
   }
 }
 
+/**
+ * Last successful EOD close that is actually before this session opened.
+ * Ignores a leftover close stamp from another PC / failed reopen (close >= open).
+ */
+function priorShiftClosedAtMs(session: CaixaSession | null | undefined): number {
+  if (!session) return NaN;
+  const lastClosedIso = getPosCaixaLastClosedAt(session.branchId);
+  const lastClosedMs = lastClosedIso ? new Date(lastClosedIso).getTime() : NaN;
+  if (!Number.isFinite(lastClosedMs)) return NaN;
+  const openedMs = session.openedAt ? new Date(session.openedAt).getTime() : NaN;
+  if (Number.isFinite(openedMs) && lastClosedMs >= openedMs) return NaN;
+  return lastClosedMs;
+}
+
 export function getPosCaixaLastClosedAt(branchId: string | null | undefined): string | null {
   const key = String(branchId || '').trim();
   if (!key) return null;
@@ -140,8 +154,7 @@ export function recoveredShiftOpenedAt(
   const openedMs = new Date(session.openedAt).getTime();
   if (!Number.isFinite(openedMs)) return session.openedAt;
 
-  const lastClosedIso = getPosCaixaLastClosedAt(session.branchId);
-  const lastClosedMs = lastClosedIso ? new Date(lastClosedIso).getTime() : NaN;
+  const lastClosedMs = priorShiftClosedAtMs(session);
 
   let earliestMs = openedMs;
   let earliestIso = session.openedAt;
@@ -193,13 +206,11 @@ export function withRecoveredShiftStart(
 
 export function saleInShift(sale: Sale, session: CaixaSession | null | undefined): boolean {
   if (!session?.openedAt) return false;
-  const shiftStart = new Date(session.openedAt).getTime();
-  if (!Number.isFinite(shiftStart)) return false;
   const saleTime = new Date(sale.createdAt).getTime();
-  if (!Number.isFinite(saleTime) || saleTime < shiftStart) return false;
-  // Belt-and-suspenders vs dual-window sticky: never show sales from before last EOD.
-  const lastClosedIso = getPosCaixaLastClosedAt(session.branchId);
-  const lastClosedMs = lastClosedIso ? new Date(lastClosedIso).getTime() : NaN;
+  if (!Number.isFinite(saleTime)) return false;
+  // Do not require createdAt >= openedAt: a late reopen after an update would hide
+  // the morning's invoices. Same-day filtering happens in the caller.
+  const lastClosedMs = priorShiftClosedAtMs(session);
   if (Number.isFinite(lastClosedMs) && saleTime <= lastClosedMs) return false;
   return true;
 }
@@ -279,14 +290,37 @@ export function selectEndOfDaySales(
   return { rows: windowRows, scopedToCashier: false };
 }
 
+/**
+ * POS Shift invoices tab: prefer this cashier's shift, then the register window,
+ * then every same-day sale already loaded for this till (API is branch-scoped).
+ * Late caixa open, leftover last-closed stamps, or cashier-id mismatch must not
+ * blank the list while Invoices/dashboard still shows the day's tickets.
+ */
+export function selectPosShiftInvoices(
+  sales: Sale[],
+  cashier: User | null | undefined,
+  session: CaixaSession | null | undefined,
+  day = todayLocalDate(),
+): { rows: Sale[]; scopedToCashier: boolean } {
+  const selected = selectEndOfDaySales(sales, cashier, session, day);
+  if (selected.rows.length > 0) return selected;
+  const today = todayLocalDate();
+  const rows = dedupeShiftSales(
+    sales.filter((sale) => {
+      if (String(sale.status || '').toLowerCase() === 'voided') return false;
+      const saleDay = saleLocalDate(sale.createdAt);
+      if (saleDay && saleDay !== day && saleDay !== today) return false;
+      return true;
+    }),
+  ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return { rows, scopedToCashier: false };
+}
+
 function eventInShift(isoTimestamp: string | undefined, session: CaixaSession | null | undefined): boolean {
   if (!session?.openedAt || !isoTimestamp) return false;
-  const shiftStart = new Date(session.openedAt).getTime();
-  if (!Number.isFinite(shiftStart)) return false;
   const eventTime = new Date(isoTimestamp).getTime();
-  if (!Number.isFinite(eventTime) || eventTime < shiftStart) return false;
-  const lastClosedIso = getPosCaixaLastClosedAt(session.branchId);
-  const lastClosedMs = lastClosedIso ? new Date(lastClosedIso).getTime() : NaN;
+  if (!Number.isFinite(eventTime)) return false;
+  const lastClosedMs = priorShiftClosedAtMs(session);
   if (Number.isFinite(lastClosedMs) && eventTime <= lastClosedMs) return false;
   return true;
 }
