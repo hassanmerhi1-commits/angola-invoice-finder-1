@@ -1107,7 +1107,7 @@ export const api = {
         body: JSON.stringify(meta || {}),
       }),
     create: async (data: any) => {
-      const { newClientRequestId, enqueueOfflineSale, dispatchSalesChanged } = await import('@/lib/sync/offlineSales');
+      const { newClientRequestId, enqueueOfflineSale, dispatchSalesChanged, flushOfflineOutbox } = await import('@/lib/sync/offlineSales');
       const { isOfflineFirstEnabled, saveSaleLocally } = await import('@/lib/sync/offlineFirst');
       const { savePendingSaleCache } = await import('@/lib/sync/pendingSalesCache');
       const { isOfflineModeActive } = await import('@/lib/offlineAuth');
@@ -1183,14 +1183,50 @@ export const api = {
         };
         savePendingSaleCache(stub);
         dispatchSalesChanged(String(body.branchId || ''));
+        void flushOfflineOutbox().catch(() => {});
         return { data: stub, error: null };
       };
 
       if (typeof window !== 'undefined' && (await isOfflineFirstEnabled())) {
+        // When the city server is reachable, post live like the other tills.
+        // Offline-first local save is the fallback — not the only path — otherwise
+        // one PC with a broken outbox URL keeps every sale "pending" forever.
+        if (!isOfflineModeActive()) {
+          const { getLanServerReachable } = await import('@/lib/lanReachability');
+          let canLive = getLanServerReachable() === true;
+          if (!canLive && hasOutbox) {
+            const elApi = (window as any).electronAPI;
+            if (elApi?.isElectron) {
+              const lanClient = await isElectronLanClient();
+              if (lanClient && elApi?.network?.httpJson) {
+                const baseUrl = await getApiUrlAsync();
+                const authToken = getAuthToken();
+                const health = await electronHttpJson(`${baseUrl}/api/health?lite=1`, {
+                  method: 'GET',
+                  headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+                  timeoutMs: 5000,
+                });
+                canLive = !!health.ok;
+              } else {
+                canLive = true;
+              }
+            } else {
+              canLive = true;
+            }
+          } else if (!hasOutbox) {
+            canLive = true;
+          }
+          if (canLive) {
+            const live = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
+            if (!live.error && live.data) return finalizeCreatedSale(live);
+            if (live.error && !isNetworkErrorMessage(live.error)) return live;
+          }
+        }
         const local = await saveSaleLocally(body);
         if (local.ok && local.sale) {
           const sale = local.sale as Record<string, unknown>;
           dispatchSalesChanged(String(body.branchId || ''));
+          void flushOfflineOutbox().catch(() => {});
           return {
             data: {
               ...sale,

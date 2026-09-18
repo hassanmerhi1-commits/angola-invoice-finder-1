@@ -2290,7 +2290,13 @@ async function sendToServer(request) {
 }
 
 // ============= OFFLINE SYNC OUTBOX =============
+let clientFlushAuth = { userBearer: null };
+
 function getCityApiBaseForClient() {
+  try {
+    const preferred = syncOutbox.getPreferredApiBase?.();
+    if (preferred) return preferred;
+  } catch (_) {}
   try {
     const cfgPath = path.join(INSTALL_DIR, 'setup-config.json');
     if (fs.existsSync(cfgPath)) {
@@ -2330,10 +2336,15 @@ function startSyncOutboxWorker() {
     if (isServerMode) return;
     try {
       const apiBase = getCityApiBaseForClient();
-      const r = await syncOutbox.flushToServer(apiBase);
+      const r = await syncOutbox.flushToServer(apiBase, {
+        persist: false,
+        userBearer: clientFlushAuth.userBearer,
+      });
       if (r.flushed > 0) {
         console.log(`[SYNC OUTBOX] Flushed ${r.flushed} event(s)`);
         sendToAllWindows('sync:outbox-flushed', r);
+      } else if (r.pending > 0 && r.error) {
+        console.warn(`[SYNC OUTBOX] ${r.reason || 'pending'} via ${r.target}: ${r.error}`);
       }
     } catch (e) {
       console.warn('[SYNC OUTBOX]', e.message);
@@ -2368,9 +2379,38 @@ ipcMain.handle('syncOutbox:exportPending', (_, dateFrom, dateTo) => {
   }
 });
 
+ipcMain.handle('syncOutbox:setCredentials', (_, opts) => {
+  try {
+    const apiBaseUrl = opts && typeof opts === 'object' ? opts.apiBaseUrl : opts;
+    const userBearer = opts && typeof opts === 'object' ? opts.userBearer || opts.bearerToken : '';
+    if (apiBaseUrl) syncOutbox.setPreferredApiBase(apiBaseUrl);
+    if (userBearer != null) {
+      const token = String(userBearer || '').trim();
+      clientFlushAuth.userBearer = token && token.split('.').length === 3 && !token.startsWith('local-')
+        ? token
+        : null;
+    }
+    return { ok: true, apiBase: syncOutbox.getPreferredApiBase() || getCityApiBaseForClient() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('syncOutbox:flush', async (_, apiBaseUrl) => {
   try {
-    return { success: true, ...(await syncOutbox.flushToServer(apiBaseUrl || getCityApiBaseForClient())) };
+    const opts = apiBaseUrl && typeof apiBaseUrl === 'object' ? apiBaseUrl : { apiBaseUrl };
+    const url = opts.apiBaseUrl || getCityApiBaseForClient();
+    const userBearer = opts.userBearer || opts.bearerToken || clientFlushAuth.userBearer;
+    if (opts.apiBaseUrl) syncOutbox.setPreferredApiBase(opts.apiBaseUrl);
+    if (userBearer) clientFlushAuth.userBearer = userBearer;
+    const result = await syncOutbox.flushToServer(url, {
+      persist: true,
+      userBearer,
+    });
+    if (result.flushed > 0) {
+      sendToAllWindows('sync:outbox-flushed', result);
+    }
+    return { success: true, ...result };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -2399,7 +2439,10 @@ ipcMain.handle('clientLocal:saveSale', (_, saleData) => {
     clientDb.init();
     const result = clientDb.saveSale(saleData);
     agtSyncWorker.runAgtCycle().catch(() => {});
-    syncOutbox.flushToServer(getCityApiBaseForClient()).catch(() => {});
+    syncOutbox.flushToServer(getCityApiBaseForClient(), {
+      persist: false,
+      userBearer: clientFlushAuth.userBearer,
+    }).catch(() => {});
     return { ok: true, ...result };
   } catch (e) {
     console.error('[CLIENT LOCAL] saveSale:', e.message);
@@ -3292,7 +3335,7 @@ function requestAppExit() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400, height: 900, minWidth: 1024, minHeight: 768,
+    width: 1400, height: 900, minWidth: 900, minHeight: 640,
     icon: path.join(__dirname, '../public/icon.png'),
     webPreferences: {
       nodeIntegration: false,
@@ -3381,7 +3424,7 @@ function createSecondaryWindow() {
   // Ephemeral, unique session partition → independent login/storage per window.
   const partition = `nexor-login-${++secondaryWindowSeq}-${Date.now()}`;
   const win = new BrowserWindow({
-    width: 1400, height: 900, minWidth: 1024, minHeight: 768,
+    width: 1400, height: 900, minWidth: 900, minHeight: 640,
     icon: path.join(__dirname, '../public/icon.png'),
     title: 'NEXOR ERP',
     webPreferences: {

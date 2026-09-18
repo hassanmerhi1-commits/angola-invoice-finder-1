@@ -102,7 +102,7 @@ export function AppLayout() {
   }, [location.pathname, t.topNav.file.printUnavailablePage, toast]);
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50/50 overflow-hidden">
+    <div className="h-full flex flex-col bg-slate-50/50 overflow-hidden">
       <BranchAccessGuard />
       <div data-topnav>
         <TopNav
@@ -113,7 +113,7 @@ export function AppLayout() {
           onLogout={logout}
         />
       </div>
-      <main data-nexor-scale className="flex min-h-0 flex-1 flex-col overflow-auto">
+      <main data-nexor-scale className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <AppInteractionProvider>
           <Outlet />
         </AppInteractionProvider>

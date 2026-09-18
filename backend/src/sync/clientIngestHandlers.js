@@ -48,15 +48,31 @@ async function writeIngestReceipt(client, idempotencyKey, eventType, entityId, b
 async function handleSaleCreated(poolClient, idempotencyKey, payload) {
   const receipt = await findIngestReceipt(idempotencyKey);
   if (receipt?.entity_id) {
-    return { ok: true, duplicate: true, saleId: receipt.entity_id, eventType: 'sale.created' };
+    const existing = await db.query(
+      `SELECT invoice_number FROM sales WHERE id = $1 LIMIT 1`,
+      [receipt.entity_id]
+    );
+    return {
+      ok: true,
+      duplicate: true,
+      saleId: receipt.entity_id,
+      invoiceNumber: existing.rows[0]?.invoice_number,
+      eventType: 'sale.created',
+    };
   }
 
   const dupSale = await db.query(
-    `SELECT id FROM sales WHERE client_request_id = $1 LIMIT 1`,
+    `SELECT id, invoice_number FROM sales WHERE client_request_id = $1 LIMIT 1`,
     [idempotencyKey]
   );
   if (dupSale.rows.length > 0) {
-    return { ok: true, duplicate: true, saleId: dupSale.rows[0].id, eventType: 'sale.created' };
+    return {
+      ok: true,
+      duplicate: true,
+      saleId: dupSale.rows[0].id,
+      invoiceNumber: dupSale.rows[0].invoice_number,
+      eventType: 'sale.created',
+    };
   }
 
   const body = payload?.saleData || payload;
@@ -68,7 +84,13 @@ async function handleSaleCreated(poolClient, idempotencyKey, payload) {
     sale = await processSale(poolClient, body);
     if (sale.duplicate) {
       await poolClient.query('ROLLBACK');
-      return { ok: true, duplicate: true, saleId: sale.id, eventType: 'sale.created' };
+      return {
+        ok: true,
+        duplicate: true,
+        saleId: sale.id,
+        invoiceNumber: sale.invoice_number,
+        eventType: 'sale.created',
+      };
     }
     await poolClient.query('COMMIT');
   } catch (e) {

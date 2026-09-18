@@ -188,6 +188,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listPending: () => ipcRenderer.invoke('syncOutbox:listPending'),
     exportPending: (dateFrom, dateTo) => ipcRenderer.invoke('syncOutbox:exportPending', dateFrom, dateTo),
     flush: (apiBaseUrl) => ipcRenderer.invoke('syncOutbox:flush', apiBaseUrl),
+    setCredentials: (opts) => ipcRenderer.invoke('syncOutbox:setCredentials', opts),
+    onFlushed: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('sync:outbox-flushed', handler);
+      return () => ipcRenderer.removeListener('sync:outbox-flushed', handler);
+    },
   },
 
   // Phase B1 — local SQLite save-first (shop client)

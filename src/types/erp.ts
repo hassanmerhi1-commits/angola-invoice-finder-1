@@ -108,6 +108,9 @@ export interface Sale {
   createdAt: string;
   syncedAt?: string;
   syncedToMain?: boolean;
+  /** Local/offline stub waiting to reach the city server. */
+  pendingSync?: boolean;
+  clientRequestId?: string;
 }
 
 export interface SaleItem {

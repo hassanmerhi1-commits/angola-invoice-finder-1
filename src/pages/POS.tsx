@@ -734,7 +734,7 @@ export default function POS() {
   };
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
       {/* Top: cart list */}
       <div className="flex-1 min-h-0 flex flex-col bg-card border-b">
         <div className="px-3 py-1.5 border-b shrink-0 flex items-center justify-between gap-2">
@@ -814,7 +814,7 @@ export default function POS() {
       )}
 
       {/* Bottom: search + tools */}
-      <div className="shrink-0 p-3 border-t bg-background space-y-2">
+      <div className="shrink-0 p-2 sm:p-3 border-t bg-background space-y-2">
         <div className="flex items-center gap-2">
           <Input
             ref={qtyInputRef}
@@ -942,7 +942,7 @@ export default function POS() {
             type="button"
             variant="outline"
             size="sm"
-            className="h-9 text-xs gap-1.5 lg:hidden shrink-0"
+            className="h-9 text-xs gap-1.5 md:hidden shrink-0"
             onClick={() =>
               navigate(
                 { pathname: location.pathname, search: location.search, hash: location.hash },

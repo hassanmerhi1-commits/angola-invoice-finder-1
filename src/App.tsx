@@ -157,6 +157,14 @@ function AppRoutes() {
   }, [isElectron]);
 
   React.useEffect(() => {
+    if (!user) return;
+    void import('@/lib/sync/offlineSales').then(async (m) => {
+      await m.registerOutboxCredentials();
+      await m.flushOfflineOutbox();
+    }).catch(() => {});
+  }, [user?.id]);
+
+  React.useEffect(() => {
     let isMounted = true;
 
     let intervalId: ReturnType<typeof setInterval> | undefined;
@@ -369,6 +377,19 @@ function LanguageKeyedRouter({ isElectron, browserBasename }: { isElectron: bool
 
 const App = () => {
   const isElectron = typeof window !== "undefined" && !!window.electronAPI?.isElectron;
+
+  React.useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void import("@/lib/uiFit").then((m) => {
+      if (cancelled) return;
+      stop = m.startUiFitWatcher();
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, []);
   const browserBasename = !isElectron && typeof window !== 'undefined' && window.location.pathname.startsWith('/app')
     ? '/app'
     : undefined;

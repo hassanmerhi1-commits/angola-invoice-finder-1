@@ -52,23 +52,23 @@ export const warmToolbar = {
 
 export const warmChrome = {
   navRow1:
-    'h-10 px-3 bg-gradient-to-r from-orange-200/90 via-amber-100 to-rose-200/70 text-sidebar-foreground hidden lg:flex items-center justify-between border-b border-orange-300/70 shadow-md shadow-orange-200/50',
+    'h-10 px-3 bg-gradient-to-r from-orange-200/90 via-amber-100 to-rose-200/70 text-sidebar-foreground hidden md:flex items-center justify-between border-b border-orange-300/70 shadow-md shadow-orange-200/50',
   navRow1Mobile:
-    'h-14 px-4 flex lg:hidden items-center justify-between bg-gradient-to-r from-orange-200/90 via-amber-100 to-rose-200/70 text-sidebar-foreground border-b border-orange-300/70 shadow-md shadow-orange-200/50',
+    'h-14 px-4 flex md:hidden items-center justify-between bg-gradient-to-r from-orange-200/90 via-amber-100 to-rose-200/70 text-sidebar-foreground border-b border-orange-300/70 shadow-md shadow-orange-200/50',
   navBrandBorder: 'flex items-center gap-2 pr-4 mr-2 border-r border-orange-300/60',
   navLogoRing: 'w-6 h-6 rounded-lg overflow-hidden bg-white/80 ring-2 ring-orange-300/70 flex items-center justify-center',
   navBrand: 'font-bold text-sm tracking-tight text-orange-900',
   navMenuBtn:
     'h-7 px-2.5 text-xs font-medium text-orange-950/80 hover:text-orange-950 hover:bg-white/60 rounded-md',
   navTabsRow:
-    'h-10 px-2 bg-gradient-to-r from-orange-100 via-amber-50 to-rose-100/80 hidden lg:flex items-end justify-between gap-2 border-b border-orange-200/70 overflow-hidden',
+    'h-10 px-2 bg-gradient-to-r from-orange-100 via-amber-50 to-rose-100/80 hidden md:flex items-end justify-between gap-2 border-b border-orange-200/70 overflow-x-auto',
   navTabActive:
     'bg-white text-orange-900 border-t-[3px] border-x border-t-orange-500 border-x-orange-200 -mb-px shadow-sm',
   navTabIdle: 'text-orange-900/70 hover:text-orange-950 hover:bg-white/70',
   checklistTab:
     'flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-amber-950 bg-amber-200/80 hover:bg-amber-300/80 ml-0.5 border border-amber-300/80 border-b-0',
   toolbarRow:
-    'h-10 px-3 bg-gradient-to-r from-orange-50/90 via-amber-50/60 to-rose-50/50 hidden lg:flex items-center gap-1.5 border-b border-orange-100 overflow-x-auto',
+    'h-10 px-3 bg-gradient-to-r from-orange-50/90 via-amber-50/60 to-rose-50/50 hidden md:flex items-center gap-1.5 border-b border-orange-100 overflow-x-auto',
   dashboardSurface:
     'flex-1 p-6 overflow-auto space-y-6 bg-gradient-to-b from-orange-50/60 via-amber-50/30 to-rose-50/25',
   documentFlowCard:

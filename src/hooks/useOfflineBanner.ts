@@ -37,7 +37,8 @@ export function useOfflineBanner(): OfflineBannerState {
 
   const refresh = useCallback(async () => {
     setOfflineLogin(isOfflineModeActive());
-    setPendingCount(await getOfflinePendingCount());
+    const pending = await getOfflinePendingCount();
+    setPendingCount(pending);
 
     if (!isThinClientMode() && !isOfflineModeActive()) {
       failStreak.current = 0;
@@ -54,6 +55,9 @@ export function useOfflineBanner(): OfflineBannerState {
       if (isOfflineModeActive()) {
         setOfflineModeActive(false);
         setOfflineLogin(false);
+      }
+      if (pending > 0) {
+        void import('@/lib/sync/offlineSales').then((m) => m.flushOfflineOutbox()).catch(() => {});
       }
       return;
     }

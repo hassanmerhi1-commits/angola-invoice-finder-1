@@ -1,3 +1,5 @@
+import { isOfflineSaleStub } from '@/lib/saleOfflineGuard';
+
 export type PosShiftIssueKind = 'checkout' | 'print' | 'caixa';
 
 export interface PosShiftIssue {
@@ -70,10 +72,17 @@ export type PosShiftSaleStatus =
   | 'agt_error';
 
 export function resolveShiftSaleStatus(
-  sale: { id: string; invoiceNumber?: string; status?: string; agtStatus?: string },
+  sale: {
+    id: string;
+    invoiceNumber?: string;
+    status?: string;
+    agtStatus?: string;
+    pendingSync?: boolean;
+  },
   issues: PosShiftIssue[],
 ): PosShiftSaleStatus {
   if (sale.status === 'voided') return 'voided';
+  if (sale.pendingSync || isOfflineSaleStub(sale as Record<string, unknown>)) return 'pending';
   if (sale.status === 'pending') return 'pending';
   if (sale.agtStatus === 'rejected') return 'agt_error';
 

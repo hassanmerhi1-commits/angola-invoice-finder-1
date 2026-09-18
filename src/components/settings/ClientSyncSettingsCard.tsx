@@ -50,7 +50,8 @@ export function ClientSyncSettingsCard() {
     if (!api?.flush) return;
     setFlushing(true);
     try {
-      await api.flush();
+      const { flushOfflineOutbox } = await import('@/lib/sync/offlineSales');
+      await flushOfflineOutbox();
       await refresh();
     } finally {
       setFlushing(false);

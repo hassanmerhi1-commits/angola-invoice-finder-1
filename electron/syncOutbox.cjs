@@ -7,6 +7,10 @@ const crypto = require('crypto');
 
 const INSTALL_DIR = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
 const OUTBOX_PATH = path.join(INSTALL_DIR, 'sync-pending.json');
+const PREFERRED_API_PATH = path.join(INSTALL_DIR, 'city-api.base');
+
+let preferredApiBaseMemo = null;
+let flushInFlight = null;
 
 let clientDb = null;
 function getClientDb() {
@@ -58,14 +62,152 @@ function loadClientSyncApiKey() {
   return '';
 }
 
-function syncAuthHeaders() {
+function isLoopbackApiBase(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeApiBase(url) {
+  const cleaned = String(url || '').trim().replace(/\/$/, '');
+  if (!/^https?:\/\//i.test(cleaned)) return '';
+  return cleaned;
+}
+
+function getPreferredApiBase() {
+  if (preferredApiBaseMemo) return preferredApiBaseMemo;
+  try {
+    if (fs.existsSync(PREFERRED_API_PATH)) {
+      const stored = normalizeApiBase(fs.readFileSync(PREFERRED_API_PATH, 'utf8'));
+      if (stored) {
+        preferredApiBaseMemo = stored;
+        return stored;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
+/** Renderer-reported city API URL — tills often have a working UI URL while setup-config points at localhost. */
+function setPreferredApiBase(url) {
+  const cleaned = normalizeApiBase(url);
+  if (!cleaned) return false;
+  if (isLoopbackApiBase(cleaned)) {
+    const existing = getPreferredApiBase();
+    if (existing && !isLoopbackApiBase(existing)) return false;
+  }
+  preferredApiBaseMemo = cleaned;
+  try {
+    if (!fs.existsSync(INSTALL_DIR)) fs.mkdirSync(INSTALL_DIR, { recursive: true });
+    fs.writeFileSync(PREFERRED_API_PATH, cleaned, 'utf8');
+  } catch {
+    /* in-memory is enough for this session */
+  }
+  return true;
+}
+
+function collectApiBases(primary) {
+  const list = [];
+  const add = (value) => {
+    const cleaned = normalizeApiBase(value);
+    if (!cleaned || list.includes(cleaned)) return;
+    list.push(cleaned);
+  };
+  add(getPreferredApiBase());
+  add(primary);
+  add(process.env.NEXOR_CITY_API_URL);
+  list.sort((a, b) => Number(isLoopbackApiBase(a)) - Number(isLoopbackApiBase(b)));
+  return list.length > 0 ? list : ['http://127.0.0.1:3000'];
+}
+
+function syncAuthHeaders(userBearer) {
   const key = loadClientSyncApiKey();
-  if (!key) return { 'Content-Type': 'application/json' };
+  const bearer = String(userBearer || '').trim();
+  if (key) {
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+      'X-Sync-Api-Key': key,
+    };
+  }
+  if (bearer && bearer.split('.').length === 3 && !bearer.startsWith('local-')) {
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${bearer}`,
+    };
+  }
+  return { 'Content-Type': 'application/json' };
+}
+
+function userJwtHeaders(userBearer) {
+  const bearer = String(userBearer || '').trim();
+  if (!bearer || bearer.split('.').length !== 3 || bearer.startsWith('local-')) return null;
   return {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${key}`,
-    'X-Sync-Api-Key': key,
+    Authorization: `Bearer ${bearer}`,
   };
+}
+
+async function fetchJson(url, opts, timeoutMs = 20000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctrl.signal });
+    const body = await res.json().catch(() => ({}));
+    return { res, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function ingestRowAccepted(res, body) {
+  if (res.status === 409) {
+    return { ok: true, invoiceNumber: body.invoiceNumber || body.invoice_number || null };
+  }
+  const row = Array.isArray(body.results) ? body.results[0] : null;
+  if (res.ok && row && row.ok === false) {
+    return { ok: false, error: row.error || body.error || `HTTP ${res.status}` };
+  }
+  if (res.ok && (body.success === true || row?.ok === true || row?.duplicate)) {
+    return {
+      ok: true,
+      invoiceNumber: row?.invoiceNumber || row?.invoice_number || body.invoiceNumber || null,
+    };
+  }
+  if (res.ok && body.success !== false && !row) {
+    return { ok: true, invoiceNumber: null };
+  }
+  return {
+    ok: false,
+    error: body.error || body.hint || row?.error || `HTTP ${res.status}`,
+    status: res.status,
+  };
+}
+
+async function postClientIngest(apiBase, event, userBearer) {
+  const url = `${apiBase.replace(/\/$/, '')}/api/sync/client-ingest`;
+  const payload = JSON.stringify({ events: [event] });
+  let { res, body } = await fetchJson(url, {
+    method: 'POST',
+    headers: syncAuthHeaders(userBearer),
+    body: payload,
+  });
+  if (res.status === 401) {
+    const jwtHeaders = userJwtHeaders(userBearer);
+    if (jwtHeaders && loadClientSyncApiKey()) {
+      ({ res, body } = await fetchJson(url, {
+        method: 'POST',
+        headers: jwtHeaders,
+        body: payload,
+      }));
+    }
+  }
+  return ingestRowAccepted(res, body);
 }
 
 function readJsonOutbox() {
@@ -231,27 +373,31 @@ function listPendingForUi() {
   });
 }
 
-async function checkServerHealth(apiBase) {
-  // lite=1 avoids heavy schema/product counts; Tailscale can be slower than LAN.
-  const url = `${apiBase.replace(/\/$/, '')}/api/health?lite=1`;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 8000);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal });
-    if (!res.ok) return false;
-    const j = await res.json().catch(() => ({}));
-    return j.ok === true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(t);
+function healCreditSalePayload(cdb, ev, payload) {
+  if (
+    String(ev.event_type || ev.type || '').includes('sale')
+    && payload?.saleData
+    && String(payload.saleData.paymentMethod || '').toLowerCase() === 'credit'
+    && !payload.saleData.clientId
+    && !payload.saleData.client_id
+    && ev.entity_id
+  ) {
+    try {
+      const database = cdb.getDb?.();
+      const row = database?.prepare?.('SELECT client_id FROM sales WHERE id = ?').get(ev.entity_id);
+      const healed = String(row?.client_id || '').trim();
+      if (healed) payload.saleData.clientId = healed;
+    } catch (_) {
+      /* best-effort */
+    }
   }
 }
 
-async function flushSqliteOutbox(apiBase, cdb) {
+async function flushSqliteOutbox(apiBase, cdb, userBearer) {
   const events = cdb.getPendingOutboxEvents('CITY_SERVER');
   let flushed = 0;
   const errors = [];
+  let networkFail = false;
 
   for (const ev of events) {
     let payload;
@@ -271,51 +417,25 @@ async function flushSqliteOutbox(apiBase, cdb) {
       || ev.entity_id
       || ev.id;
 
-    // Heal credit sales queued before clientId was included in the outbox payload.
-    if (
-      String(ev.event_type || '').includes('sale')
-      && payload?.saleData
-      && String(payload.saleData.paymentMethod || '').toLowerCase() === 'credit'
-      && !payload.saleData.clientId
-      && !payload.saleData.client_id
-      && ev.entity_id
-    ) {
-      try {
-        const database = cdb.getDb?.();
-        const row = database?.prepare?.('SELECT client_id FROM sales WHERE id = ?').get(ev.entity_id);
-        const healed = String(row?.client_id || '').trim();
-        if (healed) payload.saleData.clientId = healed;
-      } catch (_) {
-        /* best-effort */
-      }
-    }
+    healCreditSalePayload(cdb, ev, payload);
 
     try {
-      const res = await fetch(`${apiBase.replace(/\/$/, '')}/api/sync/client-ingest`, {
-        method: 'POST',
-        headers: syncAuthHeaders(),
-        body: JSON.stringify({
-          events: [{
-            type: ev.event_type || 'sale.created',
-            idempotencyKey,
-            payload,
-          }],
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (res.ok && body.success) {
-        cdb.markOutboxSent(ev.id);
-        flushed += 1;
-      } else if (res.status === 409) {
-        cdb.markOutboxSent(ev.id);
+      const accepted = await postClientIngest(apiBase, {
+        type: ev.event_type || 'sale.created',
+        idempotencyKey,
+        payload,
+      }, userBearer);
+      if (accepted.ok) {
+        cdb.markOutboxSent(ev.id, accepted.invoiceNumber);
         flushed += 1;
       } else {
-        const msg = body.error || body.hint || `HTTP ${res.status}`;
+        const msg = accepted.error || 'ingest failed';
         cdb.markOutboxFailed(ev.id, msg, (ev.retry_count || 0) + 1);
         errors.push(msg);
       }
     } catch (e) {
-      const msg = e.message || 'fetch failed';
+      networkFail = true;
+      const msg = e.name === 'AbortError' ? 'ingest timeout' : (e.message || 'fetch failed');
       cdb.markOutboxFailed(ev.id, msg, (ev.retry_count || 0) + 1);
       errors.push(msg);
     }
@@ -326,67 +446,43 @@ async function flushSqliteOutbox(apiBase, cdb) {
     flushed,
     pending,
     target: apiBase,
-    reason: flushed > 0 ? (pending > 0 ? 'partial' : 'ok') : (pending > 0 ? 'ingest_failed' : 'ok'),
+    reason: flushed > 0
+      ? (pending > 0 ? 'partial' : 'ok')
+      : (pending > 0 ? (networkFail ? 'server_unreachable' : 'ingest_failed') : 'ok'),
     error: errors[0] || null,
   };
 }
 
-async function flushToServer(apiBaseUrl) {
-  const apiBase = apiBaseUrl || process.env.NEXOR_CITY_API_URL || 'http://127.0.0.1:3000';
-  const healthy = await checkServerHealth(apiBase);
-  if (!healthy) {
-    return {
-      flushed: 0,
-      reason: 'server_unreachable',
-      target: apiBase,
-      pending: getPendingCount(),
-      error: `No response from ${apiBase}/api/health`,
-    };
-  }
-
-  const cdb = getClientDb();
-  if (useSqliteOutbox() && cdb) {
-    cdb.init();
-    return flushSqliteOutbox(apiBase, cdb);
-  }
-
+async function flushJsonOutbox(apiBase, userBearer) {
   const events = readJsonOutbox();
   let flushed = 0;
   const errors = [];
+  let networkFail = false;
 
   for (const ev of events) {
     if (ev.status === 'sent') continue;
     try {
-      const res = await fetch(`${apiBase.replace(/\/$/, '')}/api/sync/client-ingest`, {
-        method: 'POST',
-        headers: syncAuthHeaders(),
-        body: JSON.stringify({
-          events: [{
-            type: ev.type,
-            idempotencyKey: ev.idempotencyKey,
-            payload: ev.payload,
-          }],
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (res.ok && body.success) {
+      const accepted = await postClientIngest(apiBase, {
+        type: ev.type,
+        idempotencyKey: ev.idempotencyKey,
+        payload: ev.payload,
+      }, userBearer);
+      if (accepted.ok) {
         ev.status = 'sent';
         ev.sentAt = new Date().toISOString();
-        flushed += 1;
-      } else if (res.status === 409) {
-        ev.status = 'sent';
         flushed += 1;
       } else {
         ev.attempts = (ev.attempts || 0) + 1;
         ev.status = 'failed';
-        ev.lastError = body.error || body.hint || `HTTP ${res.status}`;
+        ev.lastError = accepted.error || 'ingest failed';
         errors.push(ev.lastError);
       }
     } catch (e) {
+      networkFail = true;
       ev.attempts = (ev.attempts || 0) + 1;
       ev.status = 'failed';
-      ev.lastError = e.message;
-      errors.push(e.message);
+      ev.lastError = e.name === 'AbortError' ? 'ingest timeout' : e.message;
+      errors.push(ev.lastError);
     }
   }
 
@@ -396,9 +492,62 @@ async function flushToServer(apiBaseUrl) {
     flushed,
     pending: kept.length,
     target: apiBase,
-    reason: flushed > 0 ? (kept.length > 0 ? 'partial' : 'ok') : (kept.length > 0 ? 'ingest_failed' : 'ok'),
+    reason: flushed > 0
+      ? (kept.length > 0 ? 'partial' : 'ok')
+      : (kept.length > 0 ? (networkFail ? 'server_unreachable' : 'ingest_failed') : 'ok'),
     error: errors[0] || null,
   };
+}
+
+async function flushToServerInner(apiBaseUrl, options = {}) {
+  const userBearer = options.userBearer || options.bearerToken || '';
+  const bases = collectApiBases(apiBaseUrl || options.apiBaseUrl);
+  let last = {
+    flushed: 0,
+    pending: getPendingCount(),
+    target: bases[0],
+    reason: 'server_unreachable',
+    error: 'No city API URL',
+  };
+
+  const cdb = getClientDb();
+  const sqlite = !!(useSqliteOutbox() && cdb);
+  if (sqlite) cdb.init();
+
+  for (const apiBase of bases) {
+    const result = sqlite
+      ? await flushSqliteOutbox(apiBase, cdb, userBearer)
+      : await flushJsonOutbox(apiBase, userBearer);
+    last = result;
+    if (result.pending <= 0 || result.flushed > 0) return result;
+    const err = String(result.error || '');
+    // Validation / business errors will fail on every host — stop hopping.
+    if (result.reason === 'ingest_failed' && /stock|obrigat|invalid|clientid|branch/i.test(err)) {
+      return result;
+    }
+  }
+
+  return last;
+}
+
+async function flushToServer(apiBaseUrl, options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  if (typeof apiBaseUrl === 'object' && apiBaseUrl) {
+    opts.apiBaseUrl = opts.apiBaseUrl || apiBaseUrl.apiBaseUrl;
+    opts.userBearer = opts.userBearer || apiBaseUrl.userBearer || apiBaseUrl.bearerToken;
+    apiBaseUrl = apiBaseUrl.apiBaseUrl;
+  }
+  const persist = opts.persist !== false;
+  if (persist) {
+    if (opts.apiBaseUrl) setPreferredApiBase(opts.apiBaseUrl);
+    else if (apiBaseUrl) setPreferredApiBase(apiBaseUrl);
+  }
+
+  if (flushInFlight) return flushInFlight;
+  flushInFlight = flushToServerInner(apiBaseUrl, opts).finally(() => {
+    flushInFlight = null;
+  });
+  return flushInFlight;
 }
 
 module.exports = {
@@ -408,6 +557,8 @@ module.exports = {
   listPendingForUi,
   exportPendingEvents,
   flushToServer,
+  getPreferredApiBase,
+  setPreferredApiBase,
   OUTBOX_PATH,
   useSqliteOutbox,
 };

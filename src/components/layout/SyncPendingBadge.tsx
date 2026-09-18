@@ -68,7 +68,15 @@ export function SyncPendingBadge() {
   useEffect(() => {
     void refresh();
     const id = window.setInterval(() => void refresh(), 10000);
-    return () => window.clearInterval(id);
+    const api = (window as any).electronAPI?.syncOutbox;
+    const off = api?.onFlushed?.(() => {
+      void refresh();
+      void import('@/lib/sync/offlineSales').then((m) => m.dispatchSalesChanged());
+    });
+    return () => {
+      window.clearInterval(id);
+      if (typeof off === 'function') off();
+    };
   }, [refresh]);
 
   const handleSyncNow = useCallback(async () => {
@@ -76,7 +84,8 @@ export function SyncPendingBadge() {
     if (!api?.flush || syncing) return;
     setSyncing(true);
     try {
-      const result = await api.flush();
+      const { flushOfflineOutbox } = await import('@/lib/sync/offlineSales');
+      const result = await flushOfflineOutbox();
       await refresh();
       const flushed = Number(result?.flushed ?? 0);
       const pending = Number(result?.pending ?? 0);

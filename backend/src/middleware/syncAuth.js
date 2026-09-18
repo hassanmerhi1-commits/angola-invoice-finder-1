@@ -72,6 +72,21 @@ async function authenticateClientIngest(req, res, next) {
     return next();
   }
 
+  // Cashier JWT — shop tills often have no NEXOR_CLIENT_SYNC_API_KEY in sync.env.
+  if (token) {
+    try {
+      const jwt = require('jsonwebtoken');
+      const { JWT_SECRET } = require('../jwtSecret');
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded && decoded.userId) {
+        req.syncAuth = { source: 'user-jwt', userId: decoded.userId };
+        return next();
+      }
+    } catch (_) {
+      /* not a user session token */
+    }
+  }
+
   const allowOpen =
     process.env.NEXOR_ALLOW_OPEN_CLIENT_INGEST === '1'
     || process.env.NODE_ENV === 'test';

@@ -784,6 +784,9 @@ export function mapSaleRow(s: any): Sale {
     agtCode: s.agtCode || s.agt_code || undefined,
     agtValidatedAt: s.agtValidatedAt || s.agt_validated_at || undefined,
     createdAt: s.createdAt || s.created_at || '',
+    pendingSync: !!(s.pendingSync || s.pending_sync)
+      || /^OFF-|^LOCAL-/i.test(String(s.invoiceNumber || s.invoice_number || '')),
+    clientRequestId: s.clientRequestId || s.client_request_id || undefined,
   };
 }
 

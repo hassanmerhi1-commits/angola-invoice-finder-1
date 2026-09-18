@@ -60,7 +60,7 @@ function CartTotals({
   const fmt = (value: number) => value.toLocaleString(uiLocale);
 
   return (
-    <div className={cn('flex flex-col justify-between', compact ? 'shrink-0 border-l pl-3 min-w-[11rem] max-w-[40vw]' : 'mt-3 pt-3 border-t shrink-0')}>
+    <div className={cn('flex flex-col justify-between', compact ? 'shrink-0 sm:border-l sm:pl-3 min-w-0 sm:min-w-[11rem] sm:max-w-[40vw] max-sm:border-t max-sm:pt-3' : 'mt-3 pt-3 border-t shrink-0')}>
       <div className={cn('space-y-1', compact ? 'text-sm' : '')}>
         <div className="flex justify-between gap-4">
           <span className="text-muted-foreground">{t.common.subtotal}</span>
@@ -242,7 +242,7 @@ export function Cart({
   if (items.length === 0) {
     if (layout === 'dock') {
       return (
-        <div className="flex h-full min-h-0 items-stretch gap-3">
+        <div className="flex h-full min-h-0 flex-col sm:flex-row items-stretch gap-3">
           <div className="flex flex-1 items-center justify-center text-muted-foreground gap-3 px-4 min-w-0">
             <ShoppingCart className="w-8 h-8 opacity-30 shrink-0" />
             <p className="text-sm font-medium">{t.pos.emptyCart}</p>
@@ -273,7 +273,7 @@ export function Cart({
 
   if (layout === 'dock') {
     return (
-      <div className="flex h-full min-h-0 items-stretch gap-3">
+      <div className="flex h-full min-h-0 flex-col sm:flex-row items-stretch gap-3">
         <ScrollArea className="flex-1 min-w-0 min-h-0">
           <CartLineList
             items={items}
