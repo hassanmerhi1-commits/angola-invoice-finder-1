@@ -205,39 +205,53 @@ export async function seedPosSaleProduct(
   });
 }
 
+function uniqueSupplierNif(): string {
+  // Must stay numeric. Base36 + strip-letters collapsed to 900000xxx and hit seed NIFs.
+  return `8${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(0, 10);
+}
+
 export async function seedSupplier(
   request: APIRequestContext,
   options: { auth?: E2eAuthContext; name?: string } = {},
 ): Promise<SeededSupplier> {
   const auth = options.auth ?? await loginApi(request);
-  const suffix = Date.now().toString(36).slice(-6);
-  const supplierName = options.name ?? `E2E Supplier ${suffix}`;
-  const nif = `9${suffix.replace(/\D/g, '').padStart(8, '0').slice(0, 8)}`;
+  let lastError = 'Failed to create supplier';
 
-  const res = await request.post(`${E2E_BACKEND_URL}/api/suppliers`, {
-    headers: {
-      Authorization: `Bearer ${auth.token}`,
-      'Content-Type': 'application/json',
-    },
-    data: {
-      name: supplierName,
-      nif,
-      phone: '923000000',
-      country: 'Angola',
-    },
-  });
-  expect(res.ok(), await res.text()).toBeTruthy();
-  const supplier = await res.json();
-  const accountCode = String(supplier._accountCode || supplier.accountCode || '').trim();
-  expect(accountCode, 'supplier CoA leaf account was not created').toMatch(/^321\d+$/);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const nif = uniqueSupplierNif();
+    const supplierName = options.name ?? `E2E Supplier ${nif}`;
+    const res = await request.post(`${E2E_BACKEND_URL}/api/suppliers`, {
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        'Content-Type': 'application/json',
+      },
+      data: {
+        name: supplierName,
+        nif,
+        phone: '923000000',
+        country: 'Angola',
+      },
+    });
+    if (res.ok()) {
+      const supplier = await res.json();
+      const accountCode = String(supplier._accountCode || supplier.accountCode || '').trim();
+      expect(accountCode, 'supplier CoA leaf account was not created').toMatch(/^321\d+$/);
+      return {
+        auth,
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        accountCode,
+        nif: supplier.nif || nif,
+      };
+    }
+    lastError = await res.text();
+    if (!/já existe um fornecedor com este nif/i.test(lastError)) {
+      expect(res.ok(), lastError).toBeTruthy();
+    }
+  }
 
-  return {
-    auth,
-    supplierId: supplier.id,
-    supplierName: supplier.name,
-    accountCode,
-    nif: supplier.nif || nif,
-  };
+  expect(false, lastError).toBeTruthy();
+  throw new Error(lastError);
 }
 
 export async function createBranchApi(
