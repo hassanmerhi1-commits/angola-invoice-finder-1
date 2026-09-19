@@ -21,12 +21,13 @@ import {
 } from '@/lib/purchaseInvoiceStorage';
 import type { CreditNote, TransportDocument } from '@/types/erp';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
+import { timestampLocalDate } from '@/lib/workingDayAccess';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
 
 export function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
   const createdAt = sale.createdAt || sale.created_at || new Date().toISOString();
-  const issueDate = String(createdAt).split('T')[0] || createdAt;
+  const issueDate = timestampLocalDate(createdAt) || String(createdAt).slice(0, 10);
   const items = Array.isArray(sale.items) ? sale.items : [];
   const lines: DocumentLine[] = items.map((item: any, idx: number) => {
     const quantity = Number(item.quantity || 0);
@@ -350,7 +351,7 @@ export async function getSalesInvoicesAsDocuments(
   const to = opts?.dateTo?.slice(0, 10);
   if (from || to) {
     rows = rows.filter((s) => {
-      const day = String(s.created_at || s.createdAt || '').slice(0, 10);
+      const day = timestampLocalDate(s.created_at || s.createdAt);
       if (from && day && day < from) return false;
       if (to && day && day > to) return false;
       return true;

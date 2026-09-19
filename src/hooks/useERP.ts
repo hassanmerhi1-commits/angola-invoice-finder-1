@@ -37,6 +37,7 @@ import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { validateNIF } from '@/lib/companySettings';
+import { timestampLocalDate } from '@/lib/workingDayAccess';
 
 // Helper: only use local demo storage in explicit demo mode.
 // In real web localhost/API mode, never silently revive stale browser data.
@@ -790,6 +791,43 @@ export function mapSaleRow(s: any): Sale {
   };
 }
 
+function saleInRequestedRange(sale: Sale, dateFrom?: string, dateTo?: string): boolean {
+  const from = dateFrom?.slice(0, 10);
+  const to = dateTo?.slice(0, 10);
+  if (!from && !to) return true;
+  const day = timestampLocalDate(sale.createdAt);
+  if (!day) return true;
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+}
+
+/** Keep just-created / cached rows when a list fetch is empty or lags the POST. */
+function mergeSalesPreferIncoming(
+  prev: Sale[],
+  incoming: Sale[],
+  dateFrom?: string,
+  dateTo?: string,
+): Sale[] {
+  if (incoming.length === 0) return prev;
+  const ids = new Set(incoming.map((sale) => sale.id));
+  const invoices = new Set(
+    incoming
+      .map((sale) => String(sale.invoiceNumber || '').trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const extras = prev.filter((sale) => {
+    if (ids.has(sale.id)) return false;
+    const invoice = String(sale.invoiceNumber || '').trim().toUpperCase();
+    if (invoice && invoices.has(invoice)) return false;
+    return saleInRequestedRange(sale, dateFrom, dateTo);
+  });
+  if (extras.length === 0) return incoming;
+  return [...extras, ...incoming].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+}
+
 export type UseSalesOptions = {
   deferInitialLoad?: boolean;
   /** Skip sale_items (headers only). Default true for faster lists. */
@@ -815,6 +853,8 @@ export function useSales(
   const limit = opts.limit ?? 200;
   const salesCacheKey = `sales:${branchId ?? 'all'}:${light ? 'light' : 'full'}:${dateFrom || ''}:${dateTo || ''}:${limit}`;
   const [sales, setSales] = useState<Sale[]>(() => getCachedList<Sale[]>(salesCacheKey) ?? []);
+  const salesRef = useRef(sales);
+  salesRef.current = sales;
 
   const refreshSales = useCallback(async (optsRefresh?: { force?: boolean }) => {
     if (!optsRefresh?.force && isCachedListFresh(salesCacheKey)) {
@@ -858,8 +898,10 @@ export function useSales(
     // Don't wipe a good cached list to empty on a transient fetch failure.
     if (!reachedServer && data.length === 0) return;
     const mapped = data.map(mapSaleRow);
-    setSales(mapped);
-    setCachedList(salesCacheKey, mapped);
+    const next = mergeSalesPreferIncoming(salesRef.current, mapped, dateFrom, dateTo);
+    salesRef.current = next;
+    setSales(next);
+    setCachedList(salesCacheKey, next);
   }, [branchId, salesCacheKey, light, dateFrom, dateTo, limit]);
 
   useEffect(() => {
@@ -1007,10 +1049,12 @@ export function useSales(
       ) {
         return prev;
       }
-      return [sale, ...prev];
+      const next = [sale, ...prev];
+      salesRef.current = next;
+      return next;
     });
     // POS refreshes sales in the background; awaiting here blocks checkout + auto-print.
-    void refreshSales();
+    void refreshSales({ force: true });
     return sale;
   }, [refreshSales, t]);
 

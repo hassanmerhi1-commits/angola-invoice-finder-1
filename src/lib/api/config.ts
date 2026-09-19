@@ -230,22 +230,6 @@ export function pinCityApiFromPageOrigin(): string | null {
       /* ignore */
     }
   }
-  try {
-    const parsed = new URL(fromPage);
-    const port = Number(parsed.port || 3000);
-    localStorage.setItem('kwanza_api_url', fromPage);
-    localStorage.setItem('kwanza_is_server', 'false');
-    localStorage.setItem(
-      'kwanza_client_config',
-      JSON.stringify({
-        serverIp: parsed.hostname,
-        httpPort: Number.isFinite(port) && port > 0 ? port : 3000,
-        useSocketIo: true,
-      }),
-    );
-  } catch {
-    /* ignore */
-  }
   electronResolvedBase = fromPage;
   electronCacheVerifiedAt = Date.now();
   lanDiscoveryRequired = false;

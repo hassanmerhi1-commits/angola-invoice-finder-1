@@ -22,20 +22,7 @@ import {
 import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
 import { isNetworkErrorMessage } from '@/lib/networkErrors';
 import { isCreditPaymentMethod } from '@/lib/saleOfflineGuard';
-
-/** Local calendar day for sale timestamps — ISO `Z` must not be sliced as UTC date. */
-function saleCreatedCalendarDay(createdAt: unknown): string {
-  const raw = String(createdAt ?? '').trim();
-  if (!raw) return '';
-  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (ymd && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw.slice(10))) return ymd[1];
-  const d = new Date(raw);
-  if (!Number.isFinite(d.getTime())) return ymd?.[1] || '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+import { timestampLocalDate } from '@/lib/workingDayAccess';
 
 export type LoginErrorKind = 'credentials' | 'connection';
 
@@ -1028,7 +1015,7 @@ export const api = {
             const to = opts?.dateTo?.slice(0, 10);
             if (from || to) {
               rows = rows.filter((sale: any) => {
-                const day = saleCreatedCalendarDay(sale.created_at || sale.createdAt);
+                const day = timestampLocalDate(sale.created_at || sale.createdAt);
                 if (from && day && day < from) return false;
                 if (to && day && day > to) return false;
                 return true;
@@ -1062,17 +1049,6 @@ export const api = {
           pendingMod.prunePendingSalesCacheForServerRows(serverRows);
         }
         merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
-      }
-
-      const from = opts?.dateFrom?.slice(0, 10);
-      const to = opts?.dateTo?.slice(0, 10);
-      if ((from || to) && merged.length > 0) {
-        merged = merged.filter((sale: any) => {
-          const day = saleCreatedCalendarDay(sale.created_at || sale.createdAt);
-          if (from && day && day < from) return false;
-          if (to && day && day > to) return false;
-          return true;
-        });
       }
 
       if (merged.length > 0) {

@@ -53,6 +53,7 @@ import {
   type InvoicesWorkspaceTab,
 } from '@/lib/invoicesWorkspace';
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
+import { timestampLocalDate } from '@/lib/workingDayAccess';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { ProFormaCreateDialog } from '@/components/proforma/ProFormaCreateDialog';
 import { TransportDocumentPrintDialog } from '@/components/fiscal/TransportDocumentPrintDialog';
@@ -655,7 +656,8 @@ export default function Invoices() {
         ].join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
       }
-      const day = String(d.issueDate || '').slice(0, 10);
+      const day = timestampLocalDate(d.createdAt || d.issueDate)
+        || String(d.issueDate || '').slice(0, 10);
       if (dateFrom && day && day < dateFrom) return false;
       if (dateTo && day && day > dateTo) return false;
       return true;

@@ -9,6 +9,24 @@ export function localISODate(d: Date = new Date()): string {
   return `${y}-${m}-${day}`;
 }
 
+/**
+ * Local calendar day of a sale/document timestamp.
+ * ISO `Z` must not be sliced as UTC (`2026-09-18T23:30:00.000Z` in Angola is the 19th).
+ * Naive `YYYY-MM-DD` / `YYYY-MM-DDTHH:mm:ss` keep the stored day.
+ */
+export function timestampLocalDate(createdAt: unknown): string {
+  if (createdAt instanceof Date) {
+    return Number.isFinite(createdAt.getTime()) ? localISODate(createdAt) : '';
+  }
+  const raw = String(createdAt ?? '').trim();
+  if (!raw) return '';
+  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (ymd && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw.slice(10))) return ymd[1];
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) return ymd?.[1] || '';
+  return localISODate(d);
+}
+
 /** Normalize to YYYY-MM-DD for comparisons. */
 export function toISODateOnly(value: string | Date | null | undefined): string {
   if (!value) return '';

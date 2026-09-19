@@ -3,6 +3,7 @@ import type { CaixaSession } from '@/types/accounting';
 import type { Expense } from '@/types/accounting';
 import type { User } from '@/types/erp';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
+import { timestampLocalDate } from '@/lib/workingDayAccess';
 
 const LAST_CLOSED_PREFIX = 'nexor:pos-caixa-last-closed:v1:';
 
@@ -53,18 +54,7 @@ export function getPosCaixaLastClosedAt(branchId: string | null | undefined): st
 }
 
 export function saleLocalDate(createdAt: string): string {
-  const raw = String(createdAt || '').trim();
-  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  // Date-only or naive timestamps keep the stored calendar day (no UTC shift).
-  if (ymd && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw.slice(10))) {
-    return ymd[1];
-  }
-  const d = new Date(raw);
-  if (!Number.isFinite(d.getTime())) return ymd?.[1] || '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return timestampLocalDate(createdAt);
 }
 
 export function todayLocalDate(): string {
@@ -303,17 +293,21 @@ export function selectPosShiftInvoices(
   day = todayLocalDate(),
 ): { rows: Sale[]; scopedToCashier: boolean } {
   const selected = selectEndOfDaySales(sales, cashier, session, day);
-  if (selected.rows.length > 0) return selected;
   const today = todayLocalDate();
-  const rows = dedupeShiftSales(
-    sales.filter((sale) => {
-      if (String(sale.status || '').toLowerCase() === 'voided') return false;
-      const saleDay = saleLocalDate(sale.createdAt);
-      if (saleDay && saleDay !== day && saleDay !== today) return false;
-      return true;
-    }),
-  ).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return { rows, scopedToCashier: false };
+  const extra = sales.filter((sale) => {
+    if (String(sale.status || '').toLowerCase() === 'voided') return false;
+    if (selected.rows.some((row) => row.id === sale.id)) return false;
+    const saleDay = saleLocalDate(sale.createdAt);
+    if (saleDay && saleDay !== day && saleDay !== today) return false;
+    return true;
+  });
+  if (extra.length === 0) return selected;
+  return {
+    rows: dedupeShiftSales([...extra, ...selected.rows]).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    ),
+    scopedToCashier: selected.scopedToCashier,
+  };
 }
 
 function eventInShift(isoTimestamp: string | undefined, session: CaixaSession | null | undefined): boolean {

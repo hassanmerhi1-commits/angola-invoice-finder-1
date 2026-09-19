@@ -11,13 +11,6 @@ pinCityApiFromPageOrigin();
 applyColorTheme();
 applyTextSize();
 applyUiFit();
-if (typeof window !== "undefined") {
-  window.setInterval(() => pinCityApiFromPageOrigin(), 1500);
-}
-
-applyColorTheme();
-applyTextSize();
-applyUiFit();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
