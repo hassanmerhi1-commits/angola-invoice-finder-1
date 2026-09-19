@@ -76,6 +76,20 @@ function isProvisionalInvoiceNumber(documentNumber: string): boolean {
   return n.startsWith('OFF-') || n.startsWith('LOCAL-');
 }
 
+function upsertInvoiceDocument(docs: ERPDocument[], extra: ERPDocument | null | undefined): ERPDocument[] {
+  if (!extra) return docs;
+  const idx = docs.findIndex((d) =>
+    d.id === extra.id
+    || (!!extra.documentNumber
+      && d.documentNumber === extra.documentNumber
+      && d.documentType === extra.documentType),
+  );
+  if (idx < 0) return [extra, ...docs];
+  const next = docs.slice();
+  next[idx] = extra;
+  return next;
+}
+
 /** Prefer canonical sales row over stale local erp_documents mirror (doc_* ids). */
 function resolveCanonicalSaleDocument(doc: ERPDocument, all: ERPDocument[]): ERPDocument {
   if (doc.documentType !== 'fatura_venda' || !doc.documentNumber) return doc;
@@ -255,7 +269,24 @@ export default function Invoices() {
     setListLoading(cached.length === 0);
 
     let cancelled = false;
-    const listOpts = { light: true as const, dateFrom, dateTo, limit: 200 };
+    const listOpts = { light: true as const, dateFrom, dateTo, limit: 500 };
+    const paintDocs = (rows: ERPDocument[]) => {
+      if (cancelled) return;
+      setDocuments(rows);
+      setCachedList(cacheKey, rows);
+      const params = readAppSearchParams(location.search);
+      const focus = readNexorSearchFocus(location.state);
+      const invoiceId = params.get('invoiceId')?.trim()
+        || (focus?.kind === 'sale' ? focus.invoiceId : '')
+        || '';
+      if (!invoiceId || rows.some((d) => d.id === invoiceId)) return;
+      void getSaleInvoiceAsDocument(invoiceId, branchNames).then((full) => {
+        if (!full || cancelled) return;
+        const next = upsertInvoiceDocument(rows, full);
+        setDocuments(next);
+        setCachedList(cacheKey, next);
+      });
+    };
     const load = async () => {
       try {
         if (type === 'nota_credito') {
@@ -263,10 +294,7 @@ export default function Invoices() {
           const mapped = (cnRes.data || []).map((cn: CreditNote) =>
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
           );
-          if (!cancelled) {
-            setDocuments(mapped);
-            setCachedList(cacheKey, mapped);
-          }
+          paintDocs(mapped);
           return;
         }
 
@@ -277,10 +305,7 @@ export default function Invoices() {
           const mapped = rows.map((row) =>
             mapTransportDocumentToErpDocument(row, row.branchName || branchNames[row.branchId] || '', t.pos.finalConsumer),
           );
-          if (!cancelled) {
-            setDocuments(mapped);
-            setCachedList(cacheKey, mapped);
-          }
+          paintDocs(mapped);
           return;
         }
 
@@ -295,6 +320,30 @@ export default function Invoices() {
               rows.map(proformaToErpDocumentPrefill),
             )
           : Promise.resolve([] as ERPDocument[]);
+        const fetchSalesDocs = async () => {
+          if (!loadSales) return [] as ERPDocument[];
+          let salesDocs = await getSalesInvoicesAsDocuments(
+            listBranchId,
+            branchNames,
+            isHeadOffice,
+            branchCatalog,
+            listOpts,
+          );
+          if (salesDocs.length === 0 && (dateFrom || dateTo)) {
+            salesDocs = await getSalesInvoicesAsDocuments(
+              listBranchId,
+              branchNames,
+              isHeadOffice,
+              branchCatalog,
+              { light: true, limit: 500 },
+            );
+            if (salesDocs.length > 0 && !cancelled) {
+              setDateFrom('');
+              setDateTo('');
+            }
+          }
+          return salesDocs;
+        };
         const mergeStoredWithProformas = (stored: ERPDocument[], pfDocs: ERPDocument[]) => {
           const seen = new Set(stored.map((d) => d.id));
           const out = [...stored];
@@ -338,10 +387,7 @@ export default function Invoices() {
           }
           merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
           const result = type ? merged.filter((d) => d.documentType === type) : merged;
-          if (!cancelled) {
-            setDocuments(result);
-            setCachedList(cacheKey, result);
-          }
+          paintDocs(result);
         };
 
         // "All" tab: paint sales first so the grid is usable; purchases/CN fill in after.
@@ -350,7 +396,7 @@ export default function Invoices() {
             // Skip Electron erp_documents dump — API lists are canonical and the IPC scan was
             // blocking every Invoices open over Tailscale.
             getDocuments(type, branchFilter, { skipLocalDb: true }),
-            getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts),
+            fetchSalesDocs(),
             proformaDocsPromise,
           ]);
           const storedWithPf = mergeStoredWithProformas(storedDocs, pfDocs);
@@ -376,9 +422,7 @@ export default function Invoices() {
 
         const [storedDocs, salesDocs, purchaseDocs, cnRes, pfDocs, gtRes] = await Promise.all([
           getDocuments(type, branchFilter, { skipLocalDb: true }),
-          loadSales
-            ? getSalesInvoicesAsDocuments(listBranchId, branchNames, isHeadOffice, branchCatalog, listOpts)
-            : Promise.resolve([]),
+          fetchSalesDocs(),
           loadPurchase
             ? getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice, listOpts)
             : Promise.resolve([]),
@@ -416,7 +460,7 @@ export default function Invoices() {
 
     void load();
     return () => { cancelled = true; };
-  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey, dateFrom, dateTo, t.pos.finalConsumer]);
+  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey, dateFrom, dateTo, t.pos.finalConsumer, location.search, location.state]);
 
   useEffect(() => {
     setInvoicesWorkspaceTab(activeTab);
@@ -755,9 +799,6 @@ export default function Invoices() {
       setDateTo('');
       return;
     }
-    if (q && searchTerm !== q) {
-      setSearchTerm(q);
-    }
 
     const qLower = q.toLowerCase();
     const hit = documents.find((d) => d.id === invoiceId)
@@ -783,10 +824,12 @@ export default function Invoices() {
     const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
     void getSaleInvoiceAsDocument(invoiceId, branchNames).then((full) => {
       if (!full) return;
+      setDocuments((prev) => upsertInvoiceDocument(prev, full));
       setSelectedDocId(full.id);
+      scrollToNexorRow(full.id);
       void openEditDocumentRef.current(full);
     });
-  }, [location.search, location.hash, location.state, documents, dateFrom, dateTo, searchTerm, listLoading, branches]);
+  }, [location.search, location.hash, location.state, documents, dateFrom, dateTo, listLoading, branches]);
 
   useEffect(() => {
     const selected = documents.find((d) => d.id === selectedDocId) || null;

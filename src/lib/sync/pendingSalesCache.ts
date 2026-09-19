@@ -1,3 +1,5 @@
+import { branchIdsEquivalent } from '@/lib/branchAccess';
+
 const CACHE_KEY = 'nexor:pending-sales:v1';
 
 type PendingSaleRow = Record<string, unknown>;
@@ -62,9 +64,10 @@ export function readPendingSalesCache(branchId?: string): PendingSaleRow[] {
   const rows = readAll();
   if (!branchId) return rows;
   const key = String(branchId).trim();
-  return rows.filter(
-    (r) => String(r.branchId || r.branch_id || '').trim() === key,
-  );
+  return rows.filter((r) => {
+    const rowBranch = String(r.branchId || r.branch_id || '').trim();
+    return !rowBranch || rowBranch === key || branchIdsEquivalent(rowBranch, key);
+  });
 }
 
 export function removePendingSaleFromCache(idOrRequestId: string): void {

@@ -225,6 +225,7 @@ export default function POS() {
   useEffect(() => {
     if (posMainTab !== 'invoices' || !branchId) return;
     void refreshSales({ force: true });
+    void import('@/lib/sync/offlineSales').then((m) => m.flushOfflineOutbox()).catch(() => {});
   }, [posMainTab, branchId, refreshSales]);
 
   useEffect(() => {

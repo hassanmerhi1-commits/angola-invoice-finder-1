@@ -62,6 +62,11 @@ module.exports = function(broadcastTable) {
       const from = String(dateFrom || '').trim().slice(0, 10);
       const to = String(dateTo || '').trim().slice(0, 10);
       const dated = !!(from && to);
+      const requestIds = String(req.query.clientRequestIds || '')
+        .split(',')
+        .map((s) => String(s || '').trim())
+        .filter(Boolean)
+        .slice(0, 80);
       const { limit, offset } = parseListPagination(req, {
         defaultLimit: 200,
         maxLimit: dated ? 10000 : 2000,
@@ -73,20 +78,46 @@ module.exports = function(broadcastTable) {
         query += ` AND branch_id = $${params.length}`;
       }
       if (from) {
-        params.push(`${from}T00:00:00`);
-        query += ` AND created_at >= $${params.length}`;
+        params.push(from);
+        query += db.engine === 'postgres'
+          ? ` AND created_at >= ($${params.length}::date AT TIME ZONE 'Africa/Luanda')`
+          : ` AND created_at >= $${params.length}||'T00:00:00'`;
       }
       if (to) {
-        // Inclusive end day
         params.push(to);
         query += db.engine === 'postgres'
-          ? ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`
+          ? ` AND created_at < (($${params.length}::date + INTERVAL '1 day') AT TIME ZONE 'Africa/Luanda')`
           : ` AND date(created_at) <= date($${params.length})`;
       }
       query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
       params.push(limit, offset);
       const result = await db.query(query, params);
       const sales = result.rows || [];
+      if (requestIds.length) {
+        const extraParams = [requestIds];
+        let extraSql = db.engine === 'postgres'
+          ? 'SELECT * FROM sales WHERE (client_request_id = ANY($1::text[]) OR id = ANY($1::text[]))'
+          : `SELECT * FROM sales WHERE client_request_id IN (${requestIds.map(() => '?').join(',')}) OR id IN (${requestIds.map(() => '?').join(',')})`;
+        if (branchId) {
+          if (db.engine === 'postgres') {
+            extraSql += ' AND branch_id = $2';
+            extraParams.push(branchId);
+          } else {
+            extraSql += ' AND branch_id = ?';
+            extraParams.push(branchId);
+          }
+        }
+        const extra = db.engine === 'postgres'
+          ? await db.query(extraSql, extraParams)
+          : await db.query(extraSql, [...requestIds, ...requestIds, ...(branchId ? [branchId] : [])]);
+        const seen = new Set(sales.map((s) => String(s.id)));
+        for (const row of extra.rows || []) {
+          if (!seen.has(String(row.id))) {
+            seen.add(String(row.id));
+            sales.push(row);
+          }
+        }
+      }
       if (sales.length > 0 && !light) {
         const ids = sales.map((s) => s.id);
         const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
@@ -429,7 +460,10 @@ module.exports = function(broadcastTable) {
       return res.status(400).json({ error: 'Sale id required' });
     }
     try {
-      const result = await db.query('SELECT * FROM sales WHERE id = $1 LIMIT 1', [id]);
+      let result = await db.query('SELECT * FROM sales WHERE id = $1 LIMIT 1', [id]);
+      if (!result.rows[0]) {
+        result = await db.query('SELECT * FROM sales WHERE client_request_id = $1 LIMIT 1', [id]);
+      }
       const sale = result.rows[0];
       if (!sale) {
         return res.status(404).json({ error: 'Sale not found' });

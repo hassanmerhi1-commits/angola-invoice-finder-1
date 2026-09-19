@@ -337,13 +337,15 @@ export async function getSalesInvoicesAsDocuments(
     }
     rows = res.data;
     if (branchId && !includeAllBranches) {
-      rows = rows.filter((s) =>
+      const scoped = rows.filter((s) =>
         scopeBelongsToBranch(
           [s.branch_id, s.branchId, s.warehouse_id, s.warehouseId],
           branchId,
           branchCatalog,
         ),
       );
+      // Backend already filtered by branchId. A catalog alias miss must not blank Invoices.
+      rows = scoped.length > 0 ? scoped : rows;
     }
   }
 

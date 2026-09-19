@@ -83,7 +83,7 @@ export function resolveShiftSaleStatus(
 ): PosShiftSaleStatus {
   if (sale.status === 'voided') return 'voided';
   if (sale.pendingSync || isOfflineSaleStub(sale as Record<string, unknown>)) return 'pending';
-  if (sale.status === 'pending') return 'pending';
+  if (String(sale.status || '').toLowerCase() === 'pending') return 'pending';
   if (sale.agtStatus === 'rejected') return 'agt_error';
 
   const related = issues.filter(
@@ -93,7 +93,7 @@ export function resolveShiftSaleStatus(
   );
   if (related.some((row) => row.kind === 'print')) return 'print_error';
   if (related.some((row) => row.kind === 'caixa')) return 'caixa_error';
-  return sale.status === 'completed' ? 'completed' : 'pending';
+  return 'completed';
 }
 
 export function listCheckoutFailures(

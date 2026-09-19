@@ -976,6 +976,7 @@ export const api = {
         light?: boolean;
         dateFrom?: string;
         dateTo?: string;
+        clientRequestIds?: string[];
       },
     ) => {
       const params = new URLSearchParams();
@@ -985,15 +986,23 @@ export const api = {
       if (opts?.light) params.set('light', '1');
       if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
       if (opts?.dateTo) params.set('dateTo', opts.dateTo);
+      const pendingMod = await import('@/lib/sync/pendingSalesCache');
+      const { mergeSaleRows, readPendingSalesCache } = pendingMod;
+      const requestIds = [...new Set([
+        ...(opts?.clientRequestIds || []),
+        ...readPendingSalesCache(branchId).flatMap((row) => [
+          row.clientRequestId,
+          row.client_request_id,
+          row.id,
+        ]),
+      ].map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 80);
+      if (requestIds.length) params.set('clientRequestIds', requestIds.join(','));
       const qs = params.toString();
       const endpoint = `/sales${qs ? `?${qs}` : ''}`;
-      // Overlap chunk load with the network request (was sequential; added Tailscale latency).
-      const [pendingMod, offlineMod, apiResult] = await Promise.all([
-        import('@/lib/sync/pendingSalesCache'),
+      const [offlineMod, apiResult] = await Promise.all([
         import('@/lib/sync/offlineFirst'),
         apiFetch<any[]>(endpoint),
       ]);
-      const { mergeSaleRows, readPendingSalesCache } = pendingMod;
       const { getLocalSales } = offlineMod;
 
       let serverRows: any[] | undefined;
@@ -1044,10 +1053,10 @@ export const api = {
       let merged = serverRows ?? [];
       if (typeof window !== 'undefined') {
         const localRows = await getLocalSales(branchId);
-        const pendingRows = readPendingSalesCache(branchId);
         if (serverRows?.length) {
           pendingMod.prunePendingSalesCacheForServerRows(serverRows);
         }
+        const pendingRows = readPendingSalesCache(branchId);
         merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
       }
 
