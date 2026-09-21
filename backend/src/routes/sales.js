@@ -62,11 +62,14 @@ module.exports = function(broadcastTable) {
       const from = String(dateFrom || '').trim().slice(0, 10);
       const to = String(dateTo || '').trim().slice(0, 10);
       const dated = !!(from && to);
-      const requestIds = String(req.query.clientRequestIds || '')
+      const csvTokens = (raw) => String(raw || '')
         .split(',')
         .map((s) => String(s || '').trim())
         .filter(Boolean)
         .slice(0, 80);
+      const requestIds = csvTokens(req.query.clientRequestIds);
+      const invoiceNumbers = csvTokens(req.query.invoiceNumbers);
+      const extraIds = csvTokens(req.query.ids);
       const { limit, offset } = parseListPagination(req, {
         defaultLimit: 200,
         maxLimit: dated ? 10000 : 2000,
@@ -93,29 +96,62 @@ module.exports = function(broadcastTable) {
       params.push(limit, offset);
       const result = await db.query(query, params);
       const sales = result.rows || [];
-      if (requestIds.length) {
-        const extraParams = [requestIds];
-        let extraSql = db.engine === 'postgres'
-          ? 'SELECT * FROM sales WHERE (client_request_id = ANY($1::text[]) OR id = ANY($1::text[]))'
-          : `SELECT * FROM sales WHERE client_request_id IN (${requestIds.map(() => '?').join(',')}) OR id IN (${requestIds.map(() => '?').join(',')})`;
-        if (branchId) {
-          if (db.engine === 'postgres') {
-            extraSql += ' AND branch_id = $2';
-            extraParams.push(branchId);
-          } else {
-            extraSql += ' AND branch_id = ?';
-            extraParams.push(branchId);
-          }
-        }
-        const extra = db.engine === 'postgres'
-          ? await db.query(extraSql, extraParams)
-          : await db.query(extraSql, [...requestIds, ...requestIds, ...(branchId ? [branchId] : [])]);
+      const mergeExtra = (rows) => {
         const seen = new Set(sales.map((s) => String(s.id)));
-        for (const row of extra.rows || []) {
+        for (const row of rows || []) {
           if (!seen.has(String(row.id))) {
             seen.add(String(row.id));
             sales.push(row);
           }
+        }
+      };
+      // Explicit lookups match /search: no date and no branch. Changing the
+      // Invoices date picker must not hide a sale global search already found.
+      if (requestIds.length) {
+        const extra = db.engine === 'postgres'
+          ? await db.query(
+            'SELECT * FROM sales WHERE client_request_id = ANY($1::text[]) OR id = ANY($1::text[])',
+            [requestIds],
+          )
+          : await db.query(
+            `SELECT * FROM sales WHERE client_request_id IN (${requestIds.map(() => '?').join(',')}) OR id IN (${requestIds.map(() => '?').join(',')})`,
+            [...requestIds, ...requestIds],
+          );
+        mergeExtra(extra.rows);
+      }
+      if (extraIds.length) {
+        const extra = db.engine === 'postgres'
+          ? await db.query(
+            'SELECT * FROM sales WHERE id = ANY($1::text[]) OR client_request_id = ANY($1::text[])',
+            [extraIds],
+          )
+          : await db.query(
+            `SELECT * FROM sales WHERE id IN (${extraIds.map(() => '?').join(',')}) OR client_request_id IN (${extraIds.map(() => '?').join(',')})`,
+            [...extraIds, ...extraIds],
+          );
+        mergeExtra(extra.rows);
+      }
+      if (invoiceNumbers.length) {
+        if (db.engine === 'postgres') {
+          const extra = await db.query(
+            `SELECT * FROM sales
+             WHERE UPPER(TRIM(invoice_number)) = ANY($1::text[])
+                OR invoice_number ILIKE ANY($2::text[])`,
+            [
+              invoiceNumbers.map((n) => n.toUpperCase()),
+              invoiceNumbers.map((n) => `%${n}%`),
+            ],
+          );
+          mergeExtra(extra.rows);
+        } else {
+          const clauses = invoiceNumbers
+            .map(() => '(UPPER(TRIM(invoice_number)) = UPPER(?) OR invoice_number LIKE ?)')
+            .join(' OR ');
+          const extra = await db.query(
+            `SELECT * FROM sales WHERE ${clauses}`,
+            invoiceNumbers.flatMap((n) => [n, `%${n}%`]),
+          );
+          mergeExtra(extra.rows);
         }
       }
       if (sales.length > 0 && !light) {
@@ -463,6 +499,12 @@ module.exports = function(broadcastTable) {
       let result = await db.query('SELECT * FROM sales WHERE id = $1 LIMIT 1', [id]);
       if (!result.rows[0]) {
         result = await db.query('SELECT * FROM sales WHERE client_request_id = $1 LIMIT 1', [id]);
+      }
+      if (!result.rows[0]) {
+        result = await db.query(
+          'SELECT * FROM sales WHERE UPPER(TRIM(invoice_number)) = UPPER(TRIM($1)) LIMIT 1',
+          [id],
+        );
       }
       const sale = result.rows[0];
       if (!sale) {

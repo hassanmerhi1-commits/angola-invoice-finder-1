@@ -57,7 +57,10 @@ export function useOfflineBanner(): OfflineBannerState {
         setOfflineLogin(false);
       }
       if (pending > 0) {
-        void import('@/lib/sync/offlineSales').then((m) => m.flushOfflineOutbox()).catch(() => {});
+        void import('@/lib/sync/offlineSales').then(async (m) => {
+          await m.reconcilePendingSalesWithCity();
+          await m.flushOfflineOutbox();
+        }).catch(() => {});
       }
       return;
     }

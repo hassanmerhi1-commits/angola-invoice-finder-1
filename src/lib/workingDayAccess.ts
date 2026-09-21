@@ -1,16 +1,37 @@
 import type { UserRole, PermissionOverrides } from '@/lib/permissions';
 import { userHasPermission } from '@/lib/permissions';
 
-/** Local calendar day as YYYY-MM-DD (not UTC). */
-export function localISODate(d: Date = new Date()): string {
+/** Business calendar for lists and POS — same zone as GET /sales dateFrom/dateTo. */
+export const BUSINESS_TIME_ZONE = 'Africa/Luanda';
+
+function calendarDayInZone(d: Date, timeZone = BUSINESS_TIME_ZONE): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(d);
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+    if (year && month && day) return `${year}-${month}-${day}`;
+  } catch {
+    /* Intl timezone data missing */
+  }
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
 
+/** Angola business day as YYYY-MM-DD (not the browser clock, not UTC). */
+export function localISODate(d: Date = new Date()): string {
+  return calendarDayInZone(d);
+}
+
 /**
- * Local calendar day of a sale/document timestamp.
+ * Business calendar day of a sale/document timestamp.
  * ISO `Z` must not be sliced as UTC (`2026-09-18T23:30:00.000Z` in Angola is the 19th).
  * Naive `YYYY-MM-DD` / `YYYY-MM-DDTHH:mm:ss` keep the stored day.
  */

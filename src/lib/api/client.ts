@@ -977,6 +977,8 @@ export const api = {
         dateFrom?: string;
         dateTo?: string;
         clientRequestIds?: string[];
+        invoiceNumbers?: string[];
+        ids?: string[];
       },
     ) => {
       const params = new URLSearchParams();
@@ -988,15 +990,25 @@ export const api = {
       if (opts?.dateTo) params.set('dateTo', opts.dateTo);
       const pendingMod = await import('@/lib/sync/pendingSalesCache');
       const { mergeSaleRows, readPendingSalesCache } = pendingMod;
+      const pendingRows = readPendingSalesCache(branchId);
       const requestIds = [...new Set([
         ...(opts?.clientRequestIds || []),
-        ...readPendingSalesCache(branchId).flatMap((row) => [
+        ...pendingRows.flatMap((row) => [
           row.clientRequestId,
           row.client_request_id,
           row.id,
         ]),
       ].map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 80);
       if (requestIds.length) params.set('clientRequestIds', requestIds.join(','));
+      const extraIds = [...new Set(
+        (opts?.ids || []).map((id) => String(id || '').trim()).filter(Boolean),
+      )].slice(0, 80);
+      if (extraIds.length) params.set('ids', extraIds.join(','));
+      const invoiceNumbers = [...new Set([
+        ...(opts?.invoiceNumbers || []),
+        ...pendingRows.map((row) => row.invoiceNumber || row.invoice_number),
+      ].map((n) => String(n || '').trim()).filter(Boolean))].slice(0, 80);
+      if (invoiceNumbers.length) params.set('invoiceNumbers', invoiceNumbers.join(','));
       const qs = params.toString();
       const endpoint = `/sales${qs ? `?${qs}` : ''}`;
       const [offlineMod, apiResult] = await Promise.all([
@@ -1056,7 +1068,19 @@ export const api = {
         if (serverRows?.length) {
           pendingMod.prunePendingSalesCacheForServerRows(serverRows);
         }
-        const pendingRows = readPendingSalesCache(branchId);
+        let pendingRows = readPendingSalesCache(branchId);
+        if (pendingRows.length) {
+          const wideParams = new URLSearchParams();
+          if (branchId) wideParams.set('branchId', branchId);
+          wideParams.set('light', '1');
+          wideParams.set('limit', '2000');
+          const wide = await apiFetch<any[]>(`/sales?${wideParams.toString()}`);
+          if (Array.isArray(wide.data) && wide.data.length) {
+            pendingMod.prunePendingSalesCacheForServerRows(wide.data);
+            merged = mergeSaleRows(merged, wide.data);
+            pendingRows = readPendingSalesCache(branchId);
+          }
+        }
         merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
       }
 

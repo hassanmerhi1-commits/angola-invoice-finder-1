@@ -536,9 +536,9 @@ function listPendingSummary() {
   const database = getDb();
   if (!database) return [];
   return database.prepare(
-    `SELECT id, event_type, entity_id, destination, status, retry_count, last_error, created_at
+    `SELECT id, event_type, entity_id, destination, status, retry_count, last_error, created_at, payload_json
      FROM sync_outbox WHERE status IN ('pending', 'failed')
-     ORDER BY created_at ASC LIMIT 50`
+     ORDER BY created_at ASC LIMIT 200`
   ).all();
 }
 

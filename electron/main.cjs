@@ -2398,6 +2398,14 @@ ipcMain.handle('syncOutbox:setCredentials', (_, opts) => {
   }
 });
 
+ipcMain.handle('syncOutbox:markCompleted', (_, ids, serverInvoiceNumber) => {
+  try {
+    return { success: true, ...syncOutbox.markEventsCompleted(ids, serverInvoiceNumber) };
+  } catch (e) {
+    return { success: false, error: e.message, completed: 0 };
+  }
+});
+
 ipcMain.handle('syncOutbox:flush', async (_, apiBaseUrl) => {
   try {
     const opts = apiBaseUrl && typeof apiBaseUrl === 'object' ? apiBaseUrl : { apiBaseUrl };

@@ -84,11 +84,12 @@ export function SyncPendingBadge() {
     if (!api?.flush || syncing) return;
     setSyncing(true);
     try {
-      const { flushOfflineOutbox } = await import('@/lib/sync/offlineSales');
+      const { flushOfflineOutbox, getOfflinePendingCount, reconcilePendingSalesWithCity } = await import('@/lib/sync/offlineSales');
+      const reconciled = await reconcilePendingSalesWithCity();
       const result = await flushOfflineOutbox();
       await refresh();
-      const flushed = Number(result?.flushed ?? 0);
-      const pending = Number(result?.pending ?? 0);
+      const flushed = Number(result?.flushed ?? 0) + Number(reconciled || 0);
+      const pending = await getOfflinePendingCount();
       const reason = String(result?.reason || '');
       const target = result?.target ? String(result.target) : '';
       const detail = String(result?.error || '').trim()

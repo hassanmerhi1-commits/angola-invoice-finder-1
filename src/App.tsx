@@ -160,6 +160,7 @@ function AppRoutes() {
     if (!user) return;
     void import('@/lib/sync/offlineSales').then(async (m) => {
       await m.registerOutboxCredentials();
+      await m.reconcilePendingSalesWithCity();
       await m.flushOfflineOutbox();
     }).catch(() => {});
   }, [user?.id]);

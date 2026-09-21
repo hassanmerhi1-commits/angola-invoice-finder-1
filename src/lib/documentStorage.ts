@@ -315,7 +315,14 @@ export async function getSalesInvoicesAsDocuments(
   branchNames: Record<string, string> = {},
   includeAllBranches = false,
   branchCatalog: BranchRef[] = [],
-  opts?: { light?: boolean; dateFrom?: string; dateTo?: string; limit?: number },
+  opts?: {
+    light?: boolean;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    invoiceNumbers?: string[];
+    ids?: string[];
+  },
 ): Promise<ERPDocument[]> {
   let rows: any[] = [];
 
@@ -327,6 +334,8 @@ export async function getSalesInvoicesAsDocuments(
       dateFrom: opts?.dateFrom,
       dateTo: opts?.dateTo,
       limit: opts?.limit ?? 200,
+      invoiceNumbers: opts?.invoiceNumbers,
+      ids: opts?.ids,
     });
     if (res.error) {
       throw new Error(res.error);
@@ -349,15 +358,18 @@ export async function getSalesInvoicesAsDocuments(
     }
   }
 
-  const from = opts?.dateFrom?.slice(0, 10);
-  const to = opts?.dateTo?.slice(0, 10);
-  if (from || to) {
-    rows = rows.filter((s) => {
-      const day = timestampLocalDate(s.created_at || s.createdAt);
-      if (from && day && day < from) return false;
-      if (to && day && day > to) return false;
-      return true;
-    });
+  // Demo/local rows are not date-filtered by the API. Live lists already used dateFrom/dateTo.
+  if (isDemoMode()) {
+    const from = opts?.dateFrom?.slice(0, 10);
+    const to = opts?.dateTo?.slice(0, 10);
+    if (from || to) {
+      rows = rows.filter((s) => {
+        const day = timestampLocalDate(s.created_at || s.createdAt);
+        if (from && day && day < from) return false;
+        if (to && day && day > to) return false;
+        return true;
+      });
+    }
   }
 
   return rows

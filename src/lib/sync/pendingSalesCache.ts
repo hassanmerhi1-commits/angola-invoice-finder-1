@@ -37,6 +37,23 @@ function normalizedInvoice(row: PendingSaleRow): string {
   return rowString(row, 'invoice_number', 'invoiceNumber').toUpperCase();
 }
 
+function isOfflineInvoice(row: PendingSaleRow): boolean {
+  const inv = normalizedInvoice(row);
+  return inv.startsWith('OFF-')
+    || inv.startsWith('LOCAL-')
+    || row.pendingSync === true
+    || row.pending_sync === true;
+}
+
+function rowPersonKeys(row: PendingSaleRow): string[] {
+  return [
+    rowString(row, 'cashierId', 'cashier_id'),
+    rowString(row, 'cashierName', 'cashier_name'),
+  ]
+    .map((value) => value.toLowerCase())
+    .filter(Boolean);
+}
+
 /** True when two rows describe the same sale (offline stub vs server row). */
 export function salesRowsMatch(a: PendingSaleRow, b: PendingSaleRow): boolean {
   const aId = rowString(a, 'id');
@@ -49,7 +66,26 @@ export function salesRowsMatch(a: PendingSaleRow, b: PendingSaleRow): boolean {
   if (aId && (aId === bId || aId === bCrid)) return true;
   if (aCrid && (aCrid === bId || aCrid === bCrid)) return true;
   if (aInv && aInv === bInv && !aInv.startsWith('OFF-') && !aInv.startsWith('LOCAL-')) return true;
-  return false;
+
+  // Official city sale vs till OFF- stub: same cashier, branch, total, and checkout time.
+  if (isOfflineInvoice(a) === isOfflineInvoice(b)) return false;
+  const aBranch = rowString(a, 'branchId', 'branch_id');
+  const bBranch = rowString(b, 'branchId', 'branch_id');
+  if (aBranch && bBranch && aBranch !== bBranch && !branchIdsEquivalent(aBranch, bBranch)) {
+    return false;
+  }
+  const aPeople = rowPersonKeys(a);
+  const bPeople = rowPersonKeys(b);
+  if (aPeople.length > 0 && bPeople.length > 0 && !aPeople.some((key) => bPeople.includes(key))) {
+    return false;
+  }
+  const aTotal = Number(a.total);
+  const bTotal = Number(b.total);
+  if (!Number.isFinite(aTotal) || Math.abs(aTotal - bTotal) > 0.05) return false;
+  const aMs = new Date(String(a.created_at || a.createdAt || '')).getTime();
+  const bMs = new Date(String(b.created_at || b.createdAt || '')).getTime();
+  if (!Number.isFinite(aMs) || !Number.isFinite(bMs)) return false;
+  return Math.abs(aMs - bMs) <= 120_000;
 }
 
 export function savePendingSaleCache(sale: PendingSaleRow): void {

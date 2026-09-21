@@ -188,6 +188,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listPending: () => ipcRenderer.invoke('syncOutbox:listPending'),
     exportPending: (dateFrom, dateTo) => ipcRenderer.invoke('syncOutbox:exportPending', dateFrom, dateTo),
     flush: (apiBaseUrl) => ipcRenderer.invoke('syncOutbox:flush', apiBaseUrl),
+    markCompleted: (ids, serverInvoiceNumber) =>
+      ipcRenderer.invoke('syncOutbox:markCompleted', ids, serverInvoiceNumber),
     setCredentials: (opts) => ipcRenderer.invoke('syncOutbox:setCredentials', opts),
     onFlushed: (callback) => {
       const handler = (_event, data) => callback(data);

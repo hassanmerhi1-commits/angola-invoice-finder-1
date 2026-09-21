@@ -26,9 +26,12 @@ export type OfflinePendingItem = {
   lastError?: string | null;
   createdAt?: string | null;
   retryCount?: number;
+  entityId?: string;
+  clientRequestId?: string;
+  invoiceNumber?: string;
 };
 
-export async function getOfflinePendingSummary(): Promise<{
+async function fetchRawPendingSummary(): Promise<{
   count: number;
   items: OfflinePendingItem[];
 }> {
@@ -46,6 +49,58 @@ export async function getOfflinePendingSummary(): Promise<{
     return { count: Number(r?.count ?? 0), items: [] };
   } catch {
     return { count: 0, items: [] };
+  }
+}
+
+function outboxItemKeys(item: OfflinePendingItem): string[] {
+  return [...new Set([
+    item.id,
+    item.entityId,
+    item.clientRequestId,
+    item.invoiceNumber,
+  ].map((v) => String(v || '').trim()).filter(Boolean))];
+}
+
+function itemIsAcked(item: OfflinePendingItem, acked: Set<string>): boolean {
+  return outboxItemKeys(item).some((key) => acked.has(key));
+}
+
+export async function getOfflinePendingSummary(): Promise<{
+  count: number;
+  items: OfflinePendingItem[];
+}> {
+  const raw = await fetchRawPendingSummary();
+  const acked = readAckedOutboxKeys();
+  if (acked.size === 0) return raw;
+  const items = raw.items.filter((item) => !itemIsAcked(item, acked));
+  if (raw.items.length > 0) {
+    return { count: items.length, items };
+  }
+  return { count: Math.max(0, raw.count - acked.size), items };
+}
+
+const ACKED_OUTBOX_KEY = 'nexor:outbox-acked-keys:v1';
+
+function readAckedOutboxKeys(): Set<string> {
+  try {
+    const raw = localStorage.getItem(ACKED_OUTBOX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set((Array.isArray(parsed) ? parsed : []).map((k) => String(k || '').trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+function ackReconciledSaleKeys(keys: string[]): void {
+  const next = readAckedOutboxKeys();
+  for (const key of keys) {
+    const trimmed = String(key || '').trim();
+    if (trimmed) next.add(trimmed);
+  }
+  try {
+    localStorage.setItem(ACKED_OUTBOX_KEY, JSON.stringify([...next].slice(-500)));
+  } catch {
+    /* ignore */
   }
 }
 
@@ -150,6 +205,127 @@ async function replayQueuedSalesToServer(apiBaseUrl: string, userBearer: string)
     }
   }
   return sent;
+}
+
+function saleLookupKeys(row: Record<string, unknown>): string[] {
+  return [...new Set([
+    row.clientRequestId,
+    row.client_request_id,
+    row.id,
+    row.entityId,
+    row.entity_id,
+    row.invoiceNumber,
+    row.invoice_number,
+  ].map((v) => String(v || '').trim()).filter(Boolean))];
+}
+
+/**
+ * If the city already has the official sale, drop the till OFF- stub and
+ * stop counting that outbox row as pending (old Electron cannot mark it sent).
+ */
+export async function reconcilePendingSalesWithCity(): Promise<number> {
+  const { api } = await import('@/lib/api/client');
+  const { readPendingSalesCache, clearPendingSaleMatches, prunePendingSalesCacheForServerRows, salesRowsMatch } =
+    await import('@/lib/sync/pendingSalesCache');
+  const { getLocalSales } = await import('@/lib/sync/offlineFirst');
+
+  const outbox = await fetchRawPendingSummary();
+  const stubs = [
+    ...readPendingSalesCache(),
+    ...(await getLocalSales()),
+  ].filter((row) => row.pendingSync || row.pending_sync);
+
+  const lookupKeys = [...new Set([
+    ...outbox.items.flatMap((item) => outboxItemKeys(item)),
+    ...stubs.flatMap((row) => saleLookupKeys(row)),
+  ])].slice(0, 80);
+
+  const invoiceNumbers = [...new Set([
+    ...outbox.items.map((item) => item.invoiceNumber),
+    ...stubs.map((row) => row.invoiceNumber || row.invoice_number),
+  ].map((n) => String(n || '').trim()).filter(Boolean))].slice(0, 80);
+
+  const acked: string[] = [];
+  const remember = (...keys: Array<string | null | undefined>) => {
+    for (const key of keys) {
+      const trimmed = String(key || '').trim();
+      if (trimmed && !acked.includes(trimmed)) acked.push(trimmed);
+    }
+  };
+
+  const foundOnCity: any[] = [];
+
+  if (lookupKeys.length || invoiceNumbers.length) {
+    try {
+      const listed = await api.sales.list(undefined, {
+        light: true,
+        limit: 20,
+        clientRequestIds: lookupKeys,
+        ids: lookupKeys,
+        invoiceNumbers,
+      });
+      if (Array.isArray(listed.data)) foundOnCity.push(...listed.data);
+    } catch {
+      /* keep looking */
+    }
+  }
+
+  for (const key of lookupKeys.slice(0, 40)) {
+    if (foundOnCity.some((sale) => saleLookupKeys(sale).includes(key))) continue;
+    try {
+      const found = await api.sales.get(key);
+      if (found.data) foundOnCity.push(found.data);
+    } catch {
+      /* keep queued */
+    }
+  }
+
+  try {
+    const wide = await api.sales.list(undefined, { light: true, limit: 2000 });
+    if (Array.isArray(wide.data) && wide.data.length) {
+      prunePendingSalesCacheForServerRows(wide.data);
+      foundOnCity.push(...wide.data);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  for (const sale of foundOnCity) {
+    clearPendingSaleMatches(sale);
+    remember(...saleLookupKeys(sale));
+  }
+
+  for (const item of outbox.items) {
+    const keys = outboxItemKeys(item);
+    const matched = foundOnCity.some((sale) => {
+      const saleKeys = saleLookupKeys(sale);
+      return keys.some((key) => saleKeys.includes(key))
+        || stubs.filter((row) => outboxItemKeys(item).some((key) => saleLookupKeys(row).includes(key)))
+          .some((row) => salesRowsMatch(row, sale));
+    });
+    if (matched) remember(...keys);
+  }
+
+  for (const row of stubs) {
+    const key = String(row.clientRequestId || row.client_request_id || row.id || '').trim();
+    if (!key) continue;
+    if (foundOnCity.some((sale) => salesRowsMatch(row, sale))) remember(...saleLookupKeys(row));
+  }
+
+  if (acked.length) {
+    ackReconciledSaleKeys(acked);
+    const mark = (window as any).electronAPI?.syncOutbox?.markCompleted;
+    if (typeof mark === 'function') {
+      try {
+        await mark(acked);
+      } catch {
+        /* old Electron — badge uses the ack list until a later installer */
+      }
+    }
+    dispatchSalesChanged();
+  }
+
+  return acked.length;
 }
 
 /** Tell Electron main the URL/JWT the UI already uses, then push the outbox. */

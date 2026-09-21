@@ -53,7 +53,6 @@ import {
   type InvoicesWorkspaceTab,
 } from '@/lib/invoicesWorkspace';
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
-import { timestampLocalDate } from '@/lib/workingDayAccess';
 import { DocumentFormDialog } from '@/components/documents/DocumentFormDialog';
 import { ProFormaCreateDialog } from '@/components/proforma/ProFormaCreateDialog';
 import { TransportDocumentPrintDialog } from '@/components/fiscal/TransportDocumentPrintDialog';
@@ -88,6 +87,33 @@ function upsertInvoiceDocument(docs: ERPDocument[], extra: ERPDocument | null | 
   const next = docs.slice();
   next[idx] = extra;
   return next;
+}
+
+const PINNED_INVOICES_KEY = 'nexor:invoices-pinned:v1';
+
+function loadPinnedInvoiceDocs(): ERPDocument[] {
+  if (typeof sessionStorage === 'undefined') return [];
+  try {
+    const raw = sessionStorage.getItem(PINNED_INVOICES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((d: ERPDocument) => d?.id) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistPinnedInvoiceDocs(docs: ERPDocument[]) {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(PINNED_INVOICES_KEY, JSON.stringify(docs.slice(0, 40)));
+  } catch {
+    /* quota */
+  }
+}
+
+function uniqueInvoiceKeys(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((v) => String(v || '').trim()).filter(Boolean))].slice(0, 80);
 }
 
 /** Prefer canonical sales row over stale local erp_documents mirror (doc_* ids). */
@@ -206,8 +232,13 @@ export default function Invoices() {
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
   const [voidTarget, setVoidTarget] = useState<ERPDocument | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFrom, setDateFrom] = useState(() => localISODate());
+  const [dateFrom, setDateFrom] = useState(() => {
+    const start = new Date();
+    start.setDate(start.getDate() - 30);
+    return localISODate(start);
+  });
   const [dateTo, setDateTo] = useState(() => localISODate());
+  const pinnedInvoiceDocsRef = useRef<ERPDocument[]>(loadPinnedInvoiceDocs());
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [listLoading, setListLoading] = useState(false);
@@ -264,25 +295,53 @@ export default function Invoices() {
     // Drop previous branch/tab rows immediately; seed only this scope's cache.
     setSelectedDocId(null);
     const cached = getCachedList<ERPDocument[]>(cacheKey) ?? [];
-    setDocuments(cached);
+    const seeded = pinnedInvoiceDocsRef.current.reduce(
+      (acc, doc) => upsertInvoiceDocument(acc, doc),
+      cached,
+    );
+    setDocuments(seeded);
     // Soft loading only when empty — fresh cache still revalidates in background (SWR).
-    setListLoading(cached.length === 0);
+    setListLoading(seeded.length === 0);
 
     let cancelled = false;
-    const listOpts = { light: true as const, dateFrom, dateTo, limit: 500 };
+    const params = readAppSearchParams(location.search);
+    const focus = readNexorSearchFocus(location.state);
+    const focusInvoiceId = params.get('invoiceId')?.trim()
+      || (focus?.kind === 'sale' ? focus.invoiceId : '')
+      || '';
+    const focusQ = params.get('q')?.trim()
+      || (focus?.kind === 'sale' ? focus.q : '')
+      || '';
+    const listOpts = {
+      light: true as const,
+      dateFrom,
+      dateTo,
+      limit: 500,
+      ids: uniqueInvoiceKeys([
+        focusInvoiceId,
+        ...pinnedInvoiceDocsRef.current.map((d) => d.id),
+      ]),
+      invoiceNumbers: uniqueInvoiceKeys([
+        focusQ,
+        ...pinnedInvoiceDocsRef.current.map((d) => d.documentNumber),
+      ]),
+    };
     const paintDocs = (rows: ERPDocument[]) => {
       if (cancelled) return;
-      setDocuments(rows);
-      setCachedList(cacheKey, rows);
-      const params = readAppSearchParams(location.search);
-      const focus = readNexorSearchFocus(location.state);
-      const invoiceId = params.get('invoiceId')?.trim()
-        || (focus?.kind === 'sale' ? focus.invoiceId : '')
-        || '';
-      if (!invoiceId || rows.some((d) => d.id === invoiceId)) return;
+      const withPinned = pinnedInvoiceDocsRef.current.reduce(
+        (acc, doc) => upsertInvoiceDocument(acc, doc),
+        rows,
+      );
+      setDocuments(withPinned);
+      setCachedList(cacheKey, withPinned);
+      persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
+      const invoiceId = focusInvoiceId;
+      if (!invoiceId || withPinned.some((d) => d.id === invoiceId || d.documentNumber === focusQ)) return;
       void getSaleInvoiceAsDocument(invoiceId, branchNames).then((full) => {
         if (!full || cancelled) return;
-        const next = upsertInvoiceDocument(rows, full);
+        pinnedInvoiceDocsRef.current = upsertInvoiceDocument(pinnedInvoiceDocsRef.current, full);
+        persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
+        const next = upsertInvoiceDocument(withPinned, full);
         setDocuments(next);
         setCachedList(cacheKey, next);
       });
@@ -335,7 +394,12 @@ export default function Invoices() {
               branchNames,
               isHeadOffice,
               branchCatalog,
-              { light: true, limit: 500 },
+              {
+                light: true,
+                limit: 500,
+                invoiceNumbers: listOpts.invoiceNumbers,
+                ids: listOpts.ids,
+              },
             );
             if (salesDocs.length > 0 && !cancelled) {
               setDateFrom('');
@@ -691,22 +755,68 @@ export default function Invoices() {
 
   const filteredDocs = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
+    if (!q) return documents;
     return documents.filter((d) => {
-      if (q) {
-        const hay = [
-          d.documentNumber,
-          d.entityName,
-          d.entityNif,
-        ].join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      const day = timestampLocalDate(d.createdAt || d.issueDate)
-        || String(d.issueDate || '').slice(0, 10);
-      if (dateFrom && day && day < dateFrom) return false;
-      if (dateTo && day && day > dateTo) return false;
-      return true;
+      const hay = [
+        d.documentNumber,
+        d.entityName,
+        d.entityNif,
+      ].join(' ').toLowerCase();
+      return hay.includes(q);
     });
-  }, [documents, searchTerm, dateFrom, dateTo]);
+  }, [documents, searchTerm]);
+
+  // The page search box used to filter only the dated grid. Global search hits
+  // the city `sales` table with no date/branch — do the same here and pin rows.
+  useEffect(() => {
+    const q = searchTerm.trim();
+    if (q.length < 2) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        const already = documents.some((d) => {
+          const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
+          return hay.includes(q.toLowerCase());
+        });
+        if (already) return;
+        const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
+        try {
+          const listed = await getSalesInvoicesAsDocuments(
+            undefined,
+            branchNames,
+            true,
+            branches.map((b) => ({ id: b.id, code: b.code, name: b.name, isMain: b.isMain })),
+            { light: true, limit: 20, invoiceNumbers: [q] },
+          );
+          const hits = listed.filter((d) => {
+            const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
+            return hay.includes(q.toLowerCase());
+          });
+          if (!hits.length) {
+            const found = await api.search.query(q, 8, 'quick');
+            const sales = (found.data as { sales?: Array<{ id?: string }> } | undefined)?.sales || [];
+            for (const sale of sales) {
+              if (!sale.id) continue;
+              const full = await getSaleInvoiceAsDocument(sale.id, branchNames);
+              if (full) hits.push(full);
+            }
+          }
+          if (cancelled || !hits.length) return;
+          for (const doc of hits) {
+            pinnedInvoiceDocsRef.current = upsertInvoiceDocument(pinnedInvoiceDocsRef.current, doc);
+          }
+          persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
+          setDocuments((prev) => hits.reduce((acc, doc) => upsertInvoiceDocument(acc, doc), prev));
+        } catch {
+          /* keep the dated list */
+        }
+      })();
+    }, 280);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [searchTerm, documents, branches]);
 
   const selectedDoc = filteredDocs.find(d => d.id === selectedDocId);
 
@@ -794,11 +904,20 @@ export default function Invoices() {
     if (searchFocusKeyRef.current === key) return;
 
     setActiveTab('all');
-    if (dateFrom || dateTo) {
-      setDateFrom('');
-      setDateTo('');
-      return;
-    }
+
+    const pinAndOpen = (doc: ERPDocument) => {
+      searchFocusKeyRef.current = key;
+      pinnedInvoiceDocsRef.current = upsertInvoiceDocument(pinnedInvoiceDocsRef.current, doc);
+      persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
+      setDocuments((prev) => upsertInvoiceDocument(prev, doc));
+      if (doc.issueDate) {
+        if (dateFrom && doc.issueDate < dateFrom) setDateFrom(doc.issueDate);
+        if (dateTo && doc.issueDate > dateTo) setDateTo(doc.issueDate);
+      }
+      setSelectedDocId(doc.id);
+      scrollToNexorRow(doc.id);
+      void openEditDocumentRef.current(doc);
+    };
 
     const qLower = q.toLowerCase();
     const hit = documents.find((d) => d.id === invoiceId)
@@ -810,25 +929,34 @@ export default function Invoices() {
         : undefined);
 
     if (hit) {
-      searchFocusKeyRef.current = key;
-      setSelectedDocId(hit.id);
-      scrollToNexorRow(hit.id);
-      void openEditDocumentRef.current(hit);
+      pinAndOpen(hit);
       return;
     }
 
     if (listLoading) return;
-    if (!invoiceId) return;
+    if (!invoiceId && !q) return;
 
     searchFocusKeyRef.current = key;
     const branchNames = Object.fromEntries(branches.map((b) => [b.id, b.name]));
-    void getSaleInvoiceAsDocument(invoiceId, branchNames).then((full) => {
-      if (!full) return;
-      setDocuments((prev) => upsertInvoiceDocument(prev, full));
-      setSelectedDocId(full.id);
-      scrollToNexorRow(full.id);
-      void openEditDocumentRef.current(full);
-    });
+    void (async () => {
+      const full = invoiceId
+        ? await getSaleInvoiceAsDocument(invoiceId, branchNames)
+        : null;
+      if (full) {
+        pinAndOpen(full);
+        return;
+      }
+      if (!q) return;
+      try {
+        const found = await api.search.query(q, 8, 'quick');
+        const sale = (found.data as { sales?: Array<{ id?: string }> } | undefined)?.sales?.[0];
+        if (!sale?.id) return;
+        const fromSearch = await getSaleInvoiceAsDocument(sale.id, branchNames);
+        if (fromSearch) pinAndOpen(fromSearch);
+      } catch {
+        /* keep empty grid rather than toast on every focus */
+      }
+    })();
   }, [location.search, location.hash, location.state, documents, dateFrom, dateTo, listLoading, branches]);
 
   useEffect(() => {

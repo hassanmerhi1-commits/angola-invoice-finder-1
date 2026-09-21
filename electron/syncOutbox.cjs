@@ -349,10 +349,30 @@ function exportPendingEvents(dateFrom, dateTo) {
   return { events: filtered, totalPending: events.length };
 }
 
+function invoiceNumberFromPayload(payload) {
+  const sale = payload?.saleData || payload || {};
+  return String(
+    sale.invoiceNumber || sale.invoice_number || payload?.invoiceNumber || payload?.invoice_number || '',
+  ).trim();
+}
+
+function clientRequestIdFromPayload(payload) {
+  const sale = payload?.saleData || payload || {};
+  return String(
+    sale.clientRequestId || sale.client_request_id || payload?.clientRequestId || payload?.client_request_id || '',
+  ).trim();
+}
+
 /** Normalized rows for renderer tooltips / settings UI. */
 function listPendingForUi() {
   return listPending().map((row) => {
     if (row && typeof row === 'object' && 'event_type' in row) {
+      let payload = {};
+      try {
+        payload = row.payload_json ? JSON.parse(row.payload_json) : {};
+      } catch {
+        payload = {};
+      }
       return {
         id: String(row.id || ''),
         eventType: String(row.event_type || 'sale.created'),
@@ -360,8 +380,12 @@ function listPendingForUi() {
         lastError: row.last_error ? String(row.last_error) : null,
         createdAt: row.created_at ? String(row.created_at) : null,
         retryCount: Number(row.retry_count || 0),
+        entityId: row.entity_id ? String(row.entity_id) : '',
+        clientRequestId: clientRequestIdFromPayload(payload) || String(row.id || ''),
+        invoiceNumber: invoiceNumberFromPayload(payload),
       };
     }
+    const payload = row.payload || {};
     return {
       id: String(row.idempotencyKey || row.id || ''),
       eventType: String(row.type || 'sale.created'),
@@ -369,6 +393,9 @@ function listPendingForUi() {
       lastError: row.lastError || row.last_error ? String(row.lastError || row.last_error) : null,
       createdAt: row.createdAt || row.created_at ? String(row.createdAt || row.created_at) : null,
       retryCount: Number(row.attempts || 0),
+      entityId: String(row.entityId || row.entity_id || ''),
+      clientRequestId: clientRequestIdFromPayload(payload) || String(row.idempotencyKey || row.id || ''),
+      invoiceNumber: invoiceNumberFromPayload(payload),
     };
   });
 }
@@ -550,12 +577,63 @@ async function flushToServer(apiBaseUrl, options = {}) {
   return flushInFlight;
 }
 
+function resolveSqliteOutboxId(cdb, key) {
+  const database = cdb.getDb?.();
+  if (!database || !key) return key;
+  const row = database.prepare(
+    `SELECT id FROM sync_outbox
+     WHERE status IN ('pending', 'failed')
+       AND (id = ? OR entity_id = ? OR payload_json LIKE ?)
+     LIMIT 1`,
+  ).get(key, key, `%${key}%`);
+  return row?.id || key;
+}
+
+/** Renderer confirmed these events already exist on the city server. */
+function markEventsCompleted(ids, serverInvoiceNumber) {
+  const keys = [...new Set((Array.isArray(ids) ? ids : [ids]).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (keys.length === 0) return { ok: true, completed: 0 };
+  let completed = 0;
+  const cdb = getClientDb();
+  if (useSqliteOutbox() && cdb) {
+    cdb.init();
+    for (const key of keys) {
+      try {
+        const outboxId = resolveSqliteOutboxId(cdb, key);
+        cdb.markOutboxSent(outboxId, serverInvoiceNumber || null);
+        completed += 1;
+      } catch (e) {
+        console.warn('[SYNC OUTBOX] mark completed failed:', key, e.message);
+      }
+    }
+  } else {
+    const next = readJsonOutbox().map((ev) => {
+      const payload = ev.payload || {};
+      const sale = payload.saleData || {};
+      const candidates = [
+        ev.idempotencyKey,
+        ev.id,
+        sale.clientRequestId,
+        sale.client_request_id,
+        sale.invoiceNumber,
+        sale.invoice_number,
+      ].map((v) => String(v || '').trim()).filter(Boolean);
+      if (!candidates.some((id) => keys.includes(id)) || ev.status === 'completed') return ev;
+      completed += 1;
+      return { ...ev, status: 'completed', processedAt: new Date().toISOString(), lastError: null };
+    });
+    writeJsonOutbox(next);
+  }
+  return { ok: true, completed };
+}
+
 module.exports = {
   enqueueEvent,
   getPendingCount,
   listPending,
   listPendingForUi,
   exportPendingEvents,
+  markEventsCompleted,
   flushToServer,
   getPreferredApiBase,
   setPreferredApiBase,
