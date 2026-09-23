@@ -369,7 +369,9 @@ export default function Invoices() {
         const loadPurchase = !type || type === 'fatura_compra';
         const loadFiscalCreditNotes = !type || type === 'nota_credito';
         const loadFiscalTransport = !type || type === 'guia_remessa';
-        const loadProformas = !type || type === 'proforma';
+        // Proformas have their own page. The All tab is invoices only — old drafts
+        // were landing here and never on Proforma.
+        const loadProformas = type === 'proforma';
         const proformaDocsPromise = loadProformas
           ? getProFormas(isHeadOffice ? undefined : listBranchId).then((rows) =>
               rows.map(proformaToErpDocumentPrefill),
@@ -434,6 +436,7 @@ export default function Invoices() {
             }
             // Local erp_documents copies are stale; fiscal API is canonical for credit notes and GTs.
             if (doc.documentType === 'nota_credito' || doc.documentType === 'guia_remessa') continue;
+            if (!type && doc.documentType === 'proforma') continue;
             // Tab-scoped local docs: skip purchase rows when not loading purchases, etc.
             if (type === 'fatura_venda' && doc.documentType === 'fatura_compra') continue;
             if (type === 'fatura_compra' && doc.documentType === 'fatura_venda') continue;

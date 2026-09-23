@@ -41,7 +41,7 @@ export function proformaToErpDocumentPrefill(pf: ProForma): ERPDocument {
     currency: pf.currency || 'AOA',
     amountPaid: 0,
     amountDue: totals.total,
-    status: 'draft',
+    status: pf.status === 'converted' ? 'converted' : pf.status === 'rejected' || pf.status === 'expired' ? 'cancelled' : 'draft',
     issueDate,
     issueTime: '00:00:00',
     validUntil: pf.validUntil,

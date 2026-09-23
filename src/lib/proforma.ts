@@ -4,6 +4,7 @@ import { ProForma, ProFormaItem } from '@/types/proforma';
 import { isElectronMode, dbGetAll, dbInsert, dbDelete as dbDeleteRow, lsGet, lsSet } from '@/lib/dbHelper';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { api } from '@/lib/api/client';
+import { branchIdsEquivalent } from '@/lib/branchAccess';
 
 const STORAGE_KEY = 'kwanzaerp_proformas';
 let localMigrationDone = false;
@@ -50,7 +51,62 @@ function sortProformas(list: ProForma[]): ProForma[] {
 function filterByBranch(list: ProForma[], branchId?: string): ProForma[] {
   if (!branchId) return list;
   const key = String(branchId).trim();
-  return list.filter((p) => String(p.branchId || '').trim() === key);
+  return list.filter((p) => {
+    const rowBranch = String(p.branchId || '').trim();
+    return rowBranch === key || branchIdsEquivalent(rowBranch, key);
+  });
+}
+
+/** Drafts saved from the invoice form live in erp_documents, not the proformas table. */
+async function legacyDocumentProformas(branchId?: string): Promise<ProForma[]> {
+  try {
+    const { getDocuments } = await import('@/lib/documentStorage');
+    const docs = await getDocuments('proforma', branchId);
+    return docs.map((doc) => ({
+      id: doc.id,
+      documentNumber: doc.documentNumber || '',
+      branchId: doc.branchId || '',
+      branchName: doc.branchName || '',
+      customerName: doc.entityName || '',
+      customerNif: doc.entityNif,
+      customerEmail: doc.entityEmail,
+      customerPhone: doc.entityPhone,
+      customerAddress: doc.entityAddress,
+      clientId: doc.entityId,
+      items: (doc.lines || []).map((line) => ({
+        id: line.id,
+        productId: line.productId || '',
+        productName: line.description || '',
+        sku: line.productSku || '',
+        description: line.description,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        discount: line.discount || 0,
+        taxRate: line.taxRate,
+        taxAmount: line.taxAmount,
+        subtotal: line.quantity * line.unitPrice,
+        total: line.lineTotal,
+      })),
+      subtotal: doc.subtotal,
+      taxAmount: doc.totalTax,
+      discount: doc.totalDiscount,
+      total: doc.total,
+      currency: doc.currency || 'AOA',
+      status: (doc.status === 'converted'
+        ? 'converted'
+        : doc.status === 'cancelled'
+          ? 'rejected'
+          : 'draft') as ProForma['status'],
+      validUntil: doc.validUntil || doc.dueDate || '',
+      notes: doc.notes,
+      createdBy: doc.createdBy || '',
+      createdByName: doc.createdByName,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 async function fetchProformasFromApi(branchId?: string): Promise<ProForma[] | null> {
@@ -110,13 +166,23 @@ async function loadLegacyProformas(branchId?: string): Promise<ProForma[]> {
 export async function getProFormas(branchId?: string): Promise<ProForma[]> {
   await migrateLocalProformasToApi(branchId);
   const apiList = await fetchProformasFromApi(branchId);
+  const legacyDocs = await legacyDocumentProformas(branchId);
   if (apiList !== null) {
     for (const pf of apiList) {
       writeLocalProforma(pf);
     }
-    return apiList;
+    const ids = new Set(apiList.map((p) => p.id));
+    const numbers = new Set(apiList.map((p) => String(p.documentNumber || '').trim()).filter(Boolean));
+    const extra = legacyDocs.filter((p) => {
+      if (ids.has(p.id)) return false;
+      const num = String(p.documentNumber || '').trim();
+      return !num || !numbers.has(num);
+    });
+    return sortProformas([...apiList, ...extra]);
   }
-  return loadLegacyProformas(branchId);
+  const legacy = await loadLegacyProformas(branchId);
+  const ids = new Set(legacy.map((p) => p.id));
+  return sortProformas([...legacy, ...legacyDocs.filter((p) => !ids.has(p.id))]);
 }
 
 export async function getProFormaById(id: string): Promise<ProForma | undefined> {

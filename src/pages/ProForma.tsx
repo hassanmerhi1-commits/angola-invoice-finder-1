@@ -41,9 +41,11 @@ export default function ProFormaPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const { currentBranch, apiBranchId } = useBranchScope();
+  const { currentBranch, apiBranchId, isHeadOffice } = useBranchScope();
   const { user } = useAuth();
-  const branchId = apiBranchId || currentBranch?.id;
+  // Head office Invoices was loading every branch. This page must do the same,
+  // otherwise old drafts only appear on Invoices.
+  const branchId = isHeadOffice ? undefined : (apiBranchId || currentBranch?.id);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const {
     proformas,
@@ -104,8 +106,8 @@ export default function ProFormaPage() {
   const filteredProformas = useMemo(() => {
     return proformas.filter((pf) => {
       const matchesSearch =
-        pf.documentNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        pf.customerName.toLowerCase().includes(searchTerm.toLowerCase());
+        String(pf.documentNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        String(pf.customerName || '').toLowerCase().includes(searchTerm.toLowerCase());
       const matchesStatus = statusFilter === 'all' || pf.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
@@ -134,7 +136,7 @@ export default function ProFormaPage() {
       converted: p.statusConverted,
       expired: p.statusExpired,
     };
-    const { variant, icon: Icon } = variants[status];
+    const { variant, icon: Icon } = variants[status] || variants.draft;
     return (
       <Badge variant={variant} className="gap-1">
         <Icon className="h-3 w-3" />
