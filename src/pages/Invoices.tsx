@@ -232,11 +232,7 @@ export default function Invoices() {
   const [activeTab, setActiveTab] = useState<DocumentType | 'all'>('all');
   const [voidTarget, setVoidTarget] = useState<ERPDocument | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFrom, setDateFrom] = useState(() => {
-    const start = new Date();
-    start.setDate(start.getDate() - 30);
-    return localISODate(start);
-  });
+  const [dateFrom, setDateFrom] = useState(() => localISODate());
   const [dateTo, setDateTo] = useState(() => localISODate());
   const pinnedInvoiceDocsRef = useRef<ERPDocument[]>(loadPinnedInvoiceDocs());
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);

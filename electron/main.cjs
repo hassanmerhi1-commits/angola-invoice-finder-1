@@ -3093,14 +3093,18 @@ function getRendererSource() {
     return { type: 'dev', url: 'http://localhost:18080' };
   }
 
+  // The server PC must use the UI packed in the installer. Hot Updates load
+  // ${server}/app, and a missing JS bundle there is a white window.
+  if (isServerMode) {
+    return getLocalRendererSource();
+  }
+
   // Shop tills must load ${city}/app. The installer copy never receives pending/layout
   // fixes — Hot Updates left disabled (or emptied) on cashier PCs.
-  if (!isServerMode) {
-    const cityUrl = resolveCityServerUrl();
-    if (cityUrl) {
-      persistClientCityUi(cityUrl);
-      return { type: 'server', url: `${cityUrl}/app`, baseUrl: cityUrl };
-    }
+  const cityUrl = resolveCityServerUrl();
+  if (cityUrl) {
+    persistClientCityUi(cityUrl);
+    return { type: 'server', url: `${cityUrl}/app`, baseUrl: cityUrl };
   }
 
   const hotUpdate = loadHotUpdateConfig();
