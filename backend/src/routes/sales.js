@@ -110,7 +110,7 @@ module.exports = function(broadcastTable) {
       if (requestIds.length) {
         const extra = db.engine === 'postgres'
           ? await db.query(
-            'SELECT * FROM sales WHERE client_request_id = ANY($1::text[]) OR id = ANY($1::text[])',
+            'SELECT * FROM sales WHERE client_request_id = ANY($1::text[]) OR id::text = ANY($1::text[])',
             [requestIds],
           )
           : await db.query(
@@ -122,7 +122,7 @@ module.exports = function(broadcastTable) {
       if (extraIds.length) {
         const extra = db.engine === 'postgres'
           ? await db.query(
-            'SELECT * FROM sales WHERE id = ANY($1::text[]) OR client_request_id = ANY($1::text[])',
+            'SELECT * FROM sales WHERE id::text = ANY($1::text[]) OR client_request_id = ANY($1::text[])',
             [extraIds],
           )
           : await db.query(

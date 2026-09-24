@@ -16,6 +16,14 @@ function parseLocalISO(value: string | undefined): Date | undefined {
   return isValid(d) ? d : undefined;
 }
 
+/** The calendar cell the user clicked. Midnight on this PC is still the previous evening in Luanda, so do not shift the day. */
+function calendarDayISO(day: Date): string {
+  const y = day.getFullYear();
+  const m = String(day.getMonth() + 1).padStart(2, '0');
+  const d = String(day.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 type Props = {
   value: string;
   onChange: (isoDate: string) => void;
@@ -76,7 +84,7 @@ export function DatePickerButton({
           selected={selected}
           onSelect={(day) => {
             if (!day) return;
-            const iso = localISODate(day);
+            const iso = calendarDayISO(day);
             if (floor && day < floor) return;
             onChange(iso);
             setOpen(false);
