@@ -235,6 +235,8 @@ export default function Invoices() {
   const [dateFrom, setDateFrom] = useState(() => localISODate());
   const [dateTo, setDateTo] = useState(() => localISODate());
   const pinnedInvoiceDocsRef = useRef<ERPDocument[]>(loadPinnedInvoiceDocs());
+  // Search can widen the range to show one old invoice. Today / the pickers must stay put.
+  const dateHoldRef = useRef(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [listLoading, setListLoading] = useState(false);
@@ -379,32 +381,13 @@ export default function Invoices() {
           : Promise.resolve([] as ERPDocument[]);
         const fetchSalesDocs = async () => {
           if (!loadSales) return [] as ERPDocument[];
-          let salesDocs = await getSalesInvoicesAsDocuments(
+          return getSalesInvoicesAsDocuments(
             listBranchId,
             branchNames,
             isHeadOffice,
             branchCatalog,
             listOpts,
           );
-          if (salesDocs.length === 0 && (dateFrom || dateTo)) {
-            salesDocs = await getSalesInvoicesAsDocuments(
-              listBranchId,
-              branchNames,
-              isHeadOffice,
-              branchCatalog,
-              {
-                light: true,
-                limit: 500,
-                invoiceNumbers: listOpts.invoiceNumbers,
-                ids: listOpts.ids,
-              },
-            );
-            if (salesDocs.length > 0 && !cancelled) {
-              setDateFrom('');
-              setDateTo('');
-            }
-          }
-          return salesDocs;
         };
         const mergeStoredWithProformas = (stored: ERPDocument[], pfDocs: ERPDocument[]) => {
           const seen = new Set(stored.map((d) => d.id));
@@ -754,16 +737,20 @@ export default function Invoices() {
 
   const filteredDocs = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
-    if (!q) return documents;
+    const from = dateFrom.slice(0, 10);
+    const to = dateTo.slice(0, 10);
     return documents.filter((d) => {
-      const hay = [
-        d.documentNumber,
-        d.entityName,
-        d.entityNif,
-      ].join(' ').toLowerCase();
-      return hay.includes(q);
+      const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
+      // The search box still opens an older invoice. A date range must not.
+      if (q && hay.includes(q)) return true;
+      if (from || to) {
+        const day = String(d.issueDate || '').slice(0, 10);
+        if (from && day < from) return false;
+        if (to && day > to) return false;
+      }
+      return true;
     });
-  }, [documents, searchTerm]);
+  }, [documents, searchTerm, dateFrom, dateTo]);
 
   // The page search box used to filter only the dated grid. Global search hits
   // the city `sales` table with no date/branch — do the same here and pin rows.
@@ -909,7 +896,7 @@ export default function Invoices() {
       pinnedInvoiceDocsRef.current = upsertInvoiceDocument(pinnedInvoiceDocsRef.current, doc);
       persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
       setDocuments((prev) => upsertInvoiceDocument(prev, doc));
-      if (doc.issueDate) {
+      if (doc.issueDate && !dateHoldRef.current) {
         if (dateFrom && doc.issueDate < dateFrom) setDateFrom(doc.issueDate);
         if (dateTo && doc.issueDate > dateTo) setDateTo(doc.issueDate);
       }
@@ -970,6 +957,7 @@ export default function Invoices() {
       setPrefillDoc(null);
       setActiveTab('all');
       setInvoicesWorkspaceTab('all');
+      dateHoldRef.current = true;
       setDateFrom('');
       setDateTo('');
       setRefreshKey((k) => k + 1);
@@ -1240,23 +1228,31 @@ export default function Invoices() {
         <span className="text-xs text-muted-foreground">{t.common.from}:</span>
         <DatePickerButton
           value={dateFrom}
-          onChange={setDateFrom}
+          onChange={(value) => {
+            dateHoldRef.current = true;
+            setDateFrom(value);
+          }}
           placeholder={t.common.from}
           locale={language === 'pt' ? 'pt' : 'en'}
         />
         <span className="text-xs text-muted-foreground">{t.common.to}:</span>
         <DatePickerButton
           value={dateTo}
-          onChange={setDateTo}
+          onChange={(value) => {
+            dateHoldRef.current = true;
+            setDateTo(value);
+          }}
           placeholder={t.common.to}
           locale={language === 'pt' ? 'pt' : 'en'}
         />
         <Button
+          type="button"
           variant="ghost"
           size="sm"
           className="h-7 text-xs px-2"
           onClick={() => {
             const today = localISODate();
+            dateHoldRef.current = true;
             setDateFrom(today);
             setDateTo(today);
           }}
@@ -1264,10 +1260,12 @@ export default function Invoices() {
           {t.invoicesUi.todayOnly}
         </Button>
         <Button
+          type="button"
           variant="ghost"
           size="sm"
           className="h-7 text-xs px-2"
           onClick={() => {
+            dateHoldRef.current = true;
             setDateFrom('');
             setDateTo('');
           }}

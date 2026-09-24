@@ -1,6 +1,6 @@
 # Build browser UI and refresh Docker so http://SERVER:3000/app works.
 # Run on the NEXOR SERVER PC from the git repo root (or this scripts folder).
-# ASCII-only for Windows PowerShell.
+# ASCII-only for Windows PowerShell 5.1 (no smart punctuation).
 #
 # Usage:
 #   cd C:\Users\user\Documents\GitHub\angola-invoice-finder
@@ -45,7 +45,6 @@ if ($jsFiles.Count -lt 1) {
 }
 Write-Host ("Copied webapp: {0} ({1:N1} MB)" -f $jsFiles[0].Name, ($jsFiles[0].Length / 1MB))
 
-# Ensure compose mounts ./backend/webapp (needed after pull of blank-page fix).
 $compose = Join-Path $root 'docker-compose.yml'
 if (Test-Path -LiteralPath $compose) {
   $composeText = Get-Content -LiteralPath $compose -Raw
@@ -57,17 +56,20 @@ if (Test-Path -LiteralPath $compose) {
 Write-Host "Restarting nexor-backend so it serves the new files..."
 docker compose up -d backend
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "docker compose up failed — try: docker compose up -d --build backend" -ForegroundColor Yellow
+  Write-Host "docker compose up failed. Try: docker compose up -d --build backend" -ForegroundColor Yellow
 } else {
   Start-Sleep -Seconds 3
 }
 
 try {
   $html = (Invoke-WebRequest -Uri 'http://127.0.0.1:3000/app/' -UseBasicParsing -TimeoutSec 15).Content
-  if ($html -match '/app/assets/([^"]+\.js)') {
+  $assetPattern = '/app/assets/([^"\s>]+\.js)'
+  if ($html -match $assetPattern) {
     $name = $Matches[1]
     $js = Invoke-WebRequest -Uri ("http://127.0.0.1:3000/app/assets/$name") -UseBasicParsing -TimeoutSec 30
-    if ($js.RawContentLength -gt 50000 -and $js.Content -notmatch '<!doctype html>') {
+    $body = [string]$js.Content
+    $startsWithMarkup = $body.Length -gt 0 -and $body.Substring(0, 1) -eq '<'
+    if ($js.RawContentLength -gt 50000 -and -not $startsWithMarkup) {
       Write-Host ("OK: /app asset {0} ({1:N0} bytes)" -f $name, $js.RawContentLength) -ForegroundColor Green
     } else {
       Write-Host "FAIL: asset still wrong. Check docker volume mount for backend/webapp." -ForegroundColor Red
@@ -80,5 +82,5 @@ try {
 }
 
 Write-Host ""
-Write-Host "Open in browser: http://<server-ip>:3000/app  (Ctrl+F5)"
+Write-Host "Open in browser: http://SERVER:3000/app  then press Ctrl+F5"
 Write-Host "Example: http://100.104.240.46:3000/app"
