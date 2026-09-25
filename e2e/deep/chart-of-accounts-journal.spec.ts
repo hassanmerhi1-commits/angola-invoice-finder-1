@@ -76,11 +76,13 @@ test.describe('Chart of accounts + journal E2E', () => {
 
     await page.keyboard.press('Escape');
     const postButton = journalDialog.getByRole('button', { name: /^(post|lançar)$/i });
-    const creditInput = journalDialog.locator('input[placeholder="0.00"]').last();
-    await creditInput.click();
-    await creditInput.fill(String(amount));
+    // The credit box is re-rendered while the account list settles, so a normal
+    // click never becomes "stable". Force the value, then post once it is enabled.
+    await expect(async () => {
+      await journalDialog.locator('input[placeholder="0.00"]').last().fill(String(amount), { force: true });
+    }).toPass({ timeout: 15_000 });
     await expect(postButton).toBeEnabled({ timeout: 15_000 });
-    await postButton.click();
+    await postButton.click({ force: true });
     await expect(journalDialog).toBeHidden({ timeout: 30_000 });
 
     await expect
