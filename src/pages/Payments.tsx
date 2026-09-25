@@ -160,7 +160,7 @@ export default function Payments() {
   const { t, language } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  const deepLinkHandled = useRef(false);
+  const deepLinkHandled = useRef('');
   const returnToRef = useRef<string | null>(null);
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
@@ -544,6 +544,7 @@ export default function Payments() {
   };
 
   useEffect(() => {
+    const params = readAppSearchParams(location.search);
     const state = location.state as {
       openReceipt?: boolean;
       openPayment?: boolean;
@@ -551,19 +552,35 @@ export default function Payments() {
       entityName?: string;
       returnTo?: string;
     } | null;
-    if (!state || deepLinkHandled.current) return;
-    if (!state.openReceipt && !state.openPayment) return;
-    deepLinkHandled.current = true;
-    returnToRef.current = state.returnTo === '/payables' || state.returnTo === '/receivables'
+    const openReceipt = !!state?.openReceipt || params.get('openReceipt') === '1';
+    const openPayment = !!state?.openPayment || params.get('openPayment') === '1';
+    if (!openReceipt && !openPayment) {
+      deepLinkHandled.current = '';
+      return;
+    }
+    const entityId = state?.entityId || params.get('entityId') || '';
+    const entityName = state?.entityName || params.get('entityName') || '';
+    const sig = `${openReceipt ? 'r' : 'p'}|${entityId}|${entityName}`;
+    if (deepLinkHandled.current === sig) return;
+    deepLinkHandled.current = sig;
+    returnToRef.current = state?.returnTo === '/payables' || state?.returnTo === '/receivables'
       ? state.returnTo
       : null;
-    const type = state.openReceipt ? 'receipt' : 'payment';
-    openNewDialog(type, {
-      entityId: state.entityId,
-      entityName: state.entityName,
+    openNewDialog(openReceipt ? 'receipt' : 'payment', {
+      entityId: entityId || undefined,
+      entityName: entityName || undefined,
     });
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.state, location.pathname, navigate]);
+    const next = new URLSearchParams(params);
+    next.delete('openReceipt');
+    next.delete('openPayment');
+    next.delete('entityId');
+    next.delete('entityName');
+    const search = next.toString();
+    navigate(
+      { pathname: location.pathname, search: search ? `?${search}` : '' },
+      { replace: true, state: null },
+    );
+  }, [location.state, location.search, location.pathname, navigate]);
 
   const searchFocusKeyRef = useRef('');
   useEffect(() => {

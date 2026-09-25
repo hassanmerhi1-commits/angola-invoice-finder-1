@@ -43,7 +43,7 @@ async function createNotification({
     await ensureNotificationsTable();
     if (dedupeKey) {
       const existing = await db.query(
-        'SELECT id FROM notifications WHERE dedupe_key = $1 LIMIT 1',
+        'SELECT id, link FROM notifications WHERE dedupe_key = $1 LIMIT 1',
         [dedupeKey],
       );
       if (existing.rows[0]) return existing.rows[0];
@@ -89,36 +89,100 @@ async function notifyAgtFailure({ entityType, entityId, message }) {
   });
 }
 
-/** Overdue customer receivables (open_items). */
-async function scanOverdueReceivables() {
+function overdueReceivableLink(entityId, entityName) {
+  const params = new URLSearchParams();
+  params.set('openReceipt', '1');
+  params.set('entityId', String(entityId || '').trim());
+  const name = String(entityName || '').trim();
+  if (name) params.set('entityName', name);
+  return `/payments?${params.toString()}`;
+}
+
+function overdueDocKey(entityId, documentNumber) {
+  const entity = String(entityId || '').trim();
+  const doc = String(documentNumber || '').trim() || entity;
+  return `${entity}:${doc}`;
+}
+
+/** Drop warnings for invoices that are paid or no longer overdue. */
+async function pruneSettledOverdueNotifications(queryable = db) {
+  const today = new Date().toISOString().slice(0, 10);
+  let open;
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const r = await db.query(
-      `SELECT entity_id, document_number, remaining_amount, due_date
+    open = await queryable.query(
+      `SELECT entity_id, document_number
        FROM open_items
        WHERE entity_type = 'customer'
          AND status != 'cleared'
          AND due_date IS NOT NULL
          AND CAST(due_date AS TEXT) < $1
-         AND COALESCE(remaining_amount, 0) > 0
-       ORDER BY due_date ASC
+         AND COALESCE(remaining_amount, 0) > 0.01`,
+      [today],
+    );
+  } catch (err) {
+    console.warn('[NOTIFICATIONS] overdue prune skipped:', err.message);
+    return 0;
+  }
+  const live = new Set(
+    (open.rows || []).map((row) => overdueDocKey(row.entity_id, row.document_number)),
+  );
+  const existing = await queryable.query(
+    `SELECT id, dedupe_key FROM notifications WHERE type = 'overdue_ar'`,
+  );
+  const stale = [];
+  for (const row of existing.rows || []) {
+    const parts = String(row.dedupe_key || '').split(':');
+    if (parts[0] !== 'overdue_ar' || parts.length < 4) continue;
+    const entityId = parts[1];
+    const doc = parts.slice(2, -1).join(':');
+    if (!live.has(`${entityId}:${doc}`)) stale.push(row.id);
+  }
+  if (!stale.length) return 0;
+  const placeholders = stale.map((_, i) => `$${i + 1}`).join(', ');
+  await queryable.query(
+    `DELETE FROM notifications WHERE id IN (${placeholders})`,
+    stale,
+  );
+  return stale.length;
+}
+
+/** Overdue customer receivables (open_items). */
+async function scanOverdueReceivables() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const r = await db.query(
+      `SELECT oi.entity_id, oi.document_number, oi.remaining_amount, oi.due_date,
+              c.name AS entity_name
+       FROM open_items oi
+       LEFT JOIN clients c ON c.id = oi.entity_id
+       WHERE oi.entity_type = 'customer'
+         AND oi.status != 'cleared'
+         AND oi.due_date IS NOT NULL
+         AND CAST(oi.due_date AS TEXT) < $1
+         AND COALESCE(oi.remaining_amount, 0) > 0
+       ORDER BY oi.due_date ASC
        LIMIT 40`,
       [today],
-    ).catch(() => ({ rows: [] }));
+    );
     let created = 0;
     const day = today;
     for (const row of r.rows || []) {
       const due = Number(row.remaining_amount || 0);
+      const link = overdueReceivableLink(row.entity_id, row.entity_name);
       const n = await createNotification({
         type: 'overdue_ar',
         title: 'Overdue receivable',
         message: `${row.document_number || row.entity_id}: ${due.toFixed(2)} overdue (due ${String(row.due_date).slice(0, 10)})`,
         severity: 'warning',
-        link: '/receivables',
+        link,
         dedupeKey: `overdue_ar:${row.entity_id}:${row.document_number || row.entity_id}:${day}`,
       });
+      if (n && n.id && n.link !== link) {
+        await db.query('UPDATE notifications SET link = $1 WHERE id = $2', [link, n.id]);
+      }
       if (n && n.id) created += 1;
     }
+    await pruneSettledOverdueNotifications();
     return created;
   } catch (err) {
     console.warn('[NOTIFICATIONS] overdue AR scan:', err.message);
@@ -305,6 +369,7 @@ module.exports = {
   resolveExpenseApprovers,
   purgeRetiredNotifications,
   scanOverdueReceivables,
+  pruneSettledOverdueNotifications,
   scanPeriodCloseReminders,
   runNotificationScans,
   notifyAgtFailure,

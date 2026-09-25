@@ -71,7 +71,16 @@ module.exports = function(broadcastTable) {
       const payment = await processPayment(client, req.body);
       await enqueuePaymentCreated(client, payment.id, req.body.branchId);
       await client.query('COMMIT');
+      if (req.body.entityType === 'customer' && req.body.paymentType === 'receipt') {
+        try {
+          const { pruneSettledOverdueNotifications } = require('../lib/notifications');
+          await pruneSettledOverdueNotifications();
+        } catch (e) {
+          console.warn('[PAYMENTS] overdue notification prune skipped:', e.message);
+        }
+      }
       await broadcastTable('payments');
+      try { await broadcastTable('notifications'); } catch (_) { /* non-fatal */ }
       try { await broadcastTable('journal_entries'); } catch (_) { /* non-fatal */ }
       try { await broadcastTable('chart_of_accounts'); } catch (_) { /* non-fatal */ }
       try { await broadcastTable('caixas'); } catch (_) { /* non-fatal */ }
