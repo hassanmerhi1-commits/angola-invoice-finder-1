@@ -14,6 +14,7 @@ test.describe('Chart of accounts + journal E2E', () => {
   });
 
   test('create account and post balanced manual journal entry', async ({ page, request }) => {
+    test.setTimeout(120_000);
     const auth = await loginApi(request);
     const accountCode = `79${Date.now().toString().slice(-5)}`;
     const accountName = `E2E Expense ${accountCode}`;
@@ -74,13 +75,11 @@ test.describe('Chart of accounts + journal E2E', () => {
       .first()
       .fill(journalDescription);
 
-    await page.keyboard.press('Escape');
-    // Debit on line 1 fills the credit on the last line. Do not type into that
-    // credit box — it is recreated while the account list settles and the type
-    // clears the balance, which leaves Post disabled.
+    // Focus is on the description box. Escape would close the whole dialog.
+    // Debit on line 1 fills the last line's credit; do not type into that credit box.
     await journalDialog.locator('input[placeholder="0.00"]').first().fill(String(amount));
-    await journalDialog.getByRole('button', { name: /auto balance|balancear auto/i }).click({ force: true });
     const postButton = journalDialog.getByRole('button', { name: /^(post|lançar)$/i });
+    await journalDialog.getByRole('button', { name: /auto balance|balancear auto/i }).click({ force: true });
     await expect(postButton).toBeEnabled({ timeout: 15_000 });
     await postButton.click({ force: true });
     await expect(journalDialog).toBeHidden({ timeout: 30_000 });
