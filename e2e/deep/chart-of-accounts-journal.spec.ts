@@ -74,8 +74,13 @@ test.describe('Chart of accounts + journal E2E', () => {
       .first()
       .fill(journalDescription);
 
-    await journalDialog.getByRole('button', { name: /auto balance|balancear auto/i }).click();
-    await journalDialog.getByRole('button', { name: /^(post|lançar)$/i }).click();
+    await page.keyboard.press('Escape');
+    const postButton = journalDialog.getByRole('button', { name: /^(post|lançar)$/i });
+    const creditInput = journalDialog.locator('input[placeholder="0.00"]').last();
+    await creditInput.click();
+    await creditInput.fill(String(amount));
+    await expect(postButton).toBeEnabled({ timeout: 15_000 });
+    await postButton.click();
     await expect(journalDialog).toBeHidden({ timeout: 30_000 });
 
     await expect
