@@ -75,12 +75,12 @@ test.describe('Chart of accounts + journal E2E', () => {
       .fill(journalDescription);
 
     await page.keyboard.press('Escape');
+    // Debit on line 1 fills the credit on the last line. Do not type into that
+    // credit box — it is recreated while the account list settles and the type
+    // clears the balance, which leaves Post disabled.
+    await journalDialog.locator('input[placeholder="0.00"]').first().fill(String(amount));
+    await journalDialog.getByRole('button', { name: /auto balance|balancear auto/i }).click({ force: true });
     const postButton = journalDialog.getByRole('button', { name: /^(post|lançar)$/i });
-    // The credit box is re-rendered while the account list settles, so a normal
-    // click never becomes "stable". Force the value, then post once it is enabled.
-    await expect(async () => {
-      await journalDialog.locator('input[placeholder="0.00"]').last().fill(String(amount), { force: true });
-    }).toPass({ timeout: 15_000 });
     await expect(postButton).toBeEnabled({ timeout: 15_000 });
     await postButton.click({ force: true });
     await expect(journalDialog).toBeHidden({ timeout: 30_000 });
