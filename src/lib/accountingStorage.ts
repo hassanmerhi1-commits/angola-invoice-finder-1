@@ -22,8 +22,14 @@ import { isThinClientMode, isServerDatabaseHost } from '@/lib/api/config';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 
 function newUuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+  // Cashier tills load the city page over http://, which is not a secure
+  // context, so crypto.randomUUID is missing there.
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* fall through */
   }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -1422,7 +1428,7 @@ export async function createExpense(
   status?: Expense['status'],
 ): Promise<Expense> {
   const expense: Expense = {
-    id: crypto.randomUUID(),
+    id: newUuid(),
     expenseNumber: generateExpenseNumber(branchCode),
     branchId,
     branchName,

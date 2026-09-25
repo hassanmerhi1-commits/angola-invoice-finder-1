@@ -989,8 +989,16 @@ export const api = {
       if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
       if (opts?.dateTo) params.set('dateTo', opts.dateTo);
       const pendingMod = await import('@/lib/sync/pendingSalesCache');
-      const { mergeSaleRows, readPendingSalesCache } = pendingMod;
-      const pendingRows = readPendingSalesCache(branchId);
+      const { mergeSaleRows, readPendingSalesCache, salesRowsMatch } = pendingMod;
+      const { getLocalSales } = await import('@/lib/sync/offlineFirst');
+      const localRows = typeof window !== 'undefined'
+        ? await getLocalSales(branchId).catch(() => [] as Array<Record<string, unknown>>)
+        : [];
+      const localPending = localRows.filter((row) => row.pendingSync || row.pending_sync);
+      // Include sqlite pending keys, not only the browser cache. Otherwise the
+      // dated list never asks the city for those invoices, and the till keeps
+      // showing its own pending copies.
+      const pendingRows = [...readPendingSalesCache(branchId), ...localPending];
       const requestIds = [...new Set([
         ...(opts?.clientRequestIds || []),
         ...pendingRows.flatMap((row) => [
@@ -1011,11 +1019,7 @@ export const api = {
       if (invoiceNumbers.length) params.set('invoiceNumbers', invoiceNumbers.join(','));
       const qs = params.toString();
       const endpoint = `/sales${qs ? `?${qs}` : ''}`;
-      const [offlineMod, apiResult] = await Promise.all([
-        import('@/lib/sync/offlineFirst'),
-        apiFetch<any[]>(endpoint),
-      ]);
-      const { getLocalSales } = offlineMod;
+      const apiResult = await apiFetch<any[]>(endpoint);
 
       let serverRows: any[] | undefined;
       let serverError: string | undefined;
@@ -1064,12 +1068,11 @@ export const api = {
 
       let merged = serverRows ?? [];
       if (typeof window !== 'undefined') {
-        const localRows = await getLocalSales(branchId);
         if (serverRows?.length) {
           pendingMod.prunePendingSalesCacheForServerRows(serverRows);
         }
-        let pendingRows = readPendingSalesCache(branchId);
-        if (pendingRows.length) {
+        let stillPending = readPendingSalesCache(branchId);
+        if (stillPending.length) {
           const wideParams = new URLSearchParams();
           if (branchId) wideParams.set('branchId', branchId);
           wideParams.set('light', '1');
@@ -1078,10 +1081,29 @@ export const api = {
           if (Array.isArray(wide.data) && wide.data.length) {
             pendingMod.prunePendingSalesCacheForServerRows(wide.data);
             merged = mergeSaleRows(merged, wide.data);
-            pendingRows = readPendingSalesCache(branchId);
+            stillPending = readPendingSalesCache(branchId);
           }
         }
-        merged = mergeSaleRows(merged, [...localRows, ...pendingRows]);
+        merged = mergeSaleRows(merged, [...localRows, ...stillPending]);
+        const cityRows = merged.filter((row) => !row.pendingSync && !row.pending_sync);
+        const acked: string[] = [];
+        for (const local of localPending) {
+          if (!cityRows.some((city) => salesRowsMatch(local, city))) continue;
+          for (const key of [
+            local.id,
+            local.clientRequestId,
+            local.client_request_id,
+            local.invoiceNumber,
+            local.invoice_number,
+          ]) {
+            const trimmed = String(key || '').trim();
+            if (trimmed && !acked.includes(trimmed)) acked.push(trimmed);
+          }
+        }
+        const mark = (window as any).electronAPI?.syncOutbox?.markCompleted;
+        if (acked.length && typeof mark === 'function') {
+          void mark(acked).catch(() => { /* old Electron */ });
+        }
       }
 
       if (merged.length > 0) {
