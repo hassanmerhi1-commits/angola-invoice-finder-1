@@ -84,7 +84,8 @@ export function resolveShiftSaleStatus(
   if (sale.status === 'voided') return 'voided';
   if (sale.pendingSync || isOfflineSaleStub(sale as Record<string, unknown>)) return 'pending';
   if (String(sale.status || '').toLowerCase() === 'pending') return 'pending';
-  if (sale.agtStatus === 'rejected') return 'agt_error';
+  // A failed AGT send does not mean the sale is stuck. The invoice is already
+  // issued; AGT is retried from the invoice itself.
 
   const related = issues.filter(
     (row) =>

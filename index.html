@@ -1,6 +1,24 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script id="nexor-randomuuid-polyfill">
+      (function () {
+        try {
+          var c = globalThis.crypto;
+          if (!c || typeof c.randomUUID === "function") return;
+          c.randomUUID = function () {
+            var b = new Uint8Array(16);
+            if (c.getRandomValues) c.getRandomValues(b);
+            else for (var i = 0; i < 16; i++) b[i] = (Math.random() * 256) | 0;
+            b[6] = (b[6] & 15) | 64;
+            b[8] = (b[8] & 63) | 128;
+            var h = [];
+            for (var j = 0; j < 16; j++) h.push((b[j] + 256).toString(16).slice(1));
+            return h.slice(0, 4).join("") + "-" + h.slice(4, 6).join("") + "-" + h.slice(6, 8).join("") + "-" + h.slice(8, 10).join("") + "-" + h.slice(10).join("");
+          };
+        } catch (e) {}
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- TODO: Set the document title to the name of your application -->

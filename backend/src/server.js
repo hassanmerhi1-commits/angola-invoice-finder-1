@@ -123,6 +123,19 @@ function webappEntryAssetsExist(indexHtml) {
   return names.every((name) => fs.existsSync(path.join(webappPath, 'assets', name)));
 }
 
+function injectCashierPolyfill(html) {
+  if (String(html || '').includes('nexor-randomuuid-polyfill')) return html;
+  const script = `<script id="nexor-randomuuid-polyfill">`
+    + `(function(){try{var c=globalThis.crypto;if(!c||typeof c.randomUUID==="function")return;`
+    + `c.randomUUID=function(){var b=new Uint8Array(16);if(c.getRandomValues)c.getRandomValues(b);`
+    + `else for(var i=0;i<16;i++)b[i]=Math.random()*256|0;b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;`
+    + `var h=[];for(var j=0;j<16;j++)h.push((b[j]+256).toString(16).slice(1));`
+    + `return h.slice(0,4).join("")+"-"+h.slice(4,6).join("")+"-"+h.slice(6,8).join("")+"-"+h.slice(8,10).join("")+"-"+h.slice(10).join("");};`
+    + `}catch(e){}})();</script>`;
+  if (html.includes('<head>')) return html.replace('<head>', `<head>${script}`);
+  return script + html;
+}
+
 function webappMissingHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -163,7 +176,11 @@ app.get(/^\/app(?:\/.*)?$/, (req, res) => {
       html = '';
     }
     if (webappEntryAssetsExist(html)) {
-      return res.sendFile(indexPath);
+      // Tills load /app over http://. That is not a secure context, so the
+      // page has no crypto.randomUUID and saving an expense throws. Inject the
+      // fallback into the HTML itself so a cached older script still works.
+      res.set('Cache-Control', 'no-store');
+      return res.type('html').send(injectCashierPolyfill(html));
     }
   }
   res.status(503).type('html').send(webappMissingHtml());

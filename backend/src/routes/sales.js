@@ -107,52 +107,64 @@ module.exports = function(broadcastTable) {
       };
       // Explicit lookups match /search: no date and no branch. Changing the
       // Invoices date picker must not hide a sale global search already found.
+      const loadExtra = async (label, run) => {
+        try {
+          const extra = await run();
+          mergeExtra(extra.rows);
+        } catch (extraErr) {
+          // A lookup for pending till copies must not fail the whole list.
+          // When it did, the till threw away the city sales and showed only
+          // its own pending copies.
+          console.warn(`[SALES] extra ${label} lookup skipped:`, extraErr.message);
+        }
+      };
       if (requestIds.length) {
-        const extra = db.engine === 'postgres'
-          ? await db.query(
-            'SELECT * FROM sales WHERE client_request_id = ANY($1::text[]) OR id::text = ANY($1::text[])',
-            [requestIds],
-          )
-          : await db.query(
-            `SELECT * FROM sales WHERE client_request_id IN (${requestIds.map(() => '?').join(',')}) OR id IN (${requestIds.map(() => '?').join(',')})`,
-            [...requestIds, ...requestIds],
-          );
-        mergeExtra(extra.rows);
+        await loadExtra('clientRequestIds', () => (
+          db.engine === 'postgres'
+            ? db.query(
+              'SELECT * FROM sales WHERE client_request_id = ANY($1::text[]) OR id::text = ANY($1::text[])',
+              [requestIds],
+            )
+            : db.query(
+              `SELECT * FROM sales WHERE client_request_id IN (${requestIds.map(() => '?').join(',')}) OR id IN (${requestIds.map(() => '?').join(',')})`,
+              [...requestIds, ...requestIds],
+            )
+        ));
       }
       if (extraIds.length) {
-        const extra = db.engine === 'postgres'
-          ? await db.query(
-            'SELECT * FROM sales WHERE id::text = ANY($1::text[]) OR client_request_id = ANY($1::text[])',
-            [extraIds],
-          )
-          : await db.query(
-            `SELECT * FROM sales WHERE id IN (${extraIds.map(() => '?').join(',')}) OR client_request_id IN (${extraIds.map(() => '?').join(',')})`,
-            [...extraIds, ...extraIds],
-          );
-        mergeExtra(extra.rows);
+        await loadExtra('ids', () => (
+          db.engine === 'postgres'
+            ? db.query(
+              'SELECT * FROM sales WHERE id::text = ANY($1::text[]) OR client_request_id = ANY($1::text[])',
+              [extraIds],
+            )
+            : db.query(
+              `SELECT * FROM sales WHERE id IN (${extraIds.map(() => '?').join(',')}) OR client_request_id IN (${extraIds.map(() => '?').join(',')})`,
+              [...extraIds, ...extraIds],
+            )
+        ));
       }
       if (invoiceNumbers.length) {
-        if (db.engine === 'postgres') {
-          const extra = await db.query(
-            `SELECT * FROM sales
-             WHERE UPPER(TRIM(invoice_number)) = ANY($1::text[])
-                OR invoice_number ILIKE ANY($2::text[])`,
-            [
-              invoiceNumbers.map((n) => n.toUpperCase()),
-              invoiceNumbers.map((n) => `%${n}%`),
-            ],
-          );
-          mergeExtra(extra.rows);
-        } else {
+        await loadExtra('invoiceNumbers', () => {
+          if (db.engine === 'postgres') {
+            return db.query(
+              `SELECT * FROM sales
+               WHERE UPPER(TRIM(invoice_number)) = ANY($1::text[])
+                  OR invoice_number ILIKE ANY($2::text[])`,
+              [
+                invoiceNumbers.map((n) => n.toUpperCase()),
+                invoiceNumbers.map((n) => `%${n}%`),
+              ],
+            );
+          }
           const clauses = invoiceNumbers
             .map(() => '(UPPER(TRIM(invoice_number)) = UPPER(?) OR invoice_number LIKE ?)')
             .join(' OR ');
-          const extra = await db.query(
+          return db.query(
             `SELECT * FROM sales WHERE ${clauses}`,
             invoiceNumbers.flatMap((n) => [n, `%${n}%`]),
           );
-          mergeExtra(extra.rows);
-        }
+        });
       }
       if (sales.length > 0 && !light) {
         const ids = sales.map((s) => s.id);

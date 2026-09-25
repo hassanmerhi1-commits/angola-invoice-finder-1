@@ -1019,7 +1019,22 @@ export const api = {
       if (invoiceNumbers.length) params.set('invoiceNumbers', invoiceNumbers.join(','));
       const qs = params.toString();
       const endpoint = `/sales${qs ? `?${qs}` : ''}`;
-      const apiResult = await apiFetch<any[]>(endpoint);
+      let apiResult = await apiFetch<any[]>(endpoint);
+      if (
+        apiResult.data === undefined
+        && (requestIds.length || extraIds.length || invoiceNumbers.length)
+      ) {
+        const plain = new URLSearchParams();
+        if (branchId) plain.set('branchId', branchId);
+        if (opts?.limit != null) plain.set('limit', String(opts.limit));
+        if (opts?.offset != null) plain.set('offset', String(opts.offset));
+        if (opts?.light) plain.set('light', '1');
+        if (opts?.dateFrom) plain.set('dateFrom', opts.dateFrom);
+        if (opts?.dateTo) plain.set('dateTo', opts.dateTo);
+        const plainQs = plain.toString();
+        const retry = await apiFetch<any[]>(`/sales${plainQs ? `?${plainQs}` : ''}`);
+        if (retry.data !== undefined) apiResult = retry;
+      }
 
       let serverRows: any[] | undefined;
       let serverError: string | undefined;
