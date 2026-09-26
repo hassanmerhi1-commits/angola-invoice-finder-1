@@ -205,9 +205,13 @@ export async function seedPosSaleProduct(
   });
 }
 
+let supplierNifSeq = 0;
+
 function uniqueSupplierNif(): string {
-  // Must stay numeric. Base36 + strip-letters collapsed to 900000xxx and hit seed NIFs.
-  return `8${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(0, 10);
+  // Must stay numeric and 10 digits. Use the trailing time digits: the leading ones
+  // only change every 10 seconds, so two seeds in the same window collided.
+  supplierNifSeq = (supplierNifSeq + 1) % 100;
+  return `8${String(Date.now()).slice(-7)}${String(supplierNifSeq).padStart(2, '0')}`;
 }
 
 export async function seedSupplier(
