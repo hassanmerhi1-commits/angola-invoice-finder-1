@@ -62,6 +62,7 @@ import { useCreditNotes, useDebitNotes } from '@/hooks/useFiscalDocuments';
 import { getProFormas } from '@/lib/proforma';
 import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
+import { timestampLocalTime } from '@/lib/workingDayAccess';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
@@ -73,6 +74,15 @@ import { VoidInvoiceDialog } from '@/components/invoice/VoidInvoiceDialog';
 function isProvisionalInvoiceNumber(documentNumber: string): boolean {
   const n = String(documentNumber || '').trim().toUpperCase();
   return n.startsWith('OFF-') || n.startsWith('LOCAL-');
+}
+
+/** HH:MM for the list. Older documents were stored without a time. */
+function documentIssueHour(doc: ERPDocument): string {
+  const stored = String(doc.issueTime || '').trim();
+  const time = stored || timestampLocalTime(doc.createdAt);
+  if (!/^\d{2}:\d{2}/.test(time)) return '';
+  const hhmm = time.slice(0, 5);
+  return hhmm === '00:00' ? '' : hhmm;
 }
 
 function upsertInvoiceDocument(docs: ERPDocument[], extra: ERPDocument | null | undefined): ERPDocument[] {
@@ -978,6 +988,7 @@ export default function Invoices() {
         Tipo: d.documentType,
         Numero: d.documentNumber,
         Data: d.issueDate,
+        Hora: documentIssueHour(d),
         Entidade: d.entityName,
         Total: d.total,
         Pago: d.amountPaid,
@@ -1424,7 +1435,12 @@ export default function Invoices() {
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-1.5 text-muted-foreground">{new Date(doc.issueDate).toLocaleDateString(locale)}</td>
+                    <td className="px-3 py-1.5 text-muted-foreground">
+                      <div>{new Date(doc.issueDate).toLocaleDateString(locale)}</div>
+                      {documentIssueHour(doc) && (
+                        <div className="text-[10px] tabular-nums opacity-70">{documentIssueHour(doc)}</div>
+                      )}
+                    </td>
                     <td className="px-3 py-1.5 text-muted-foreground">
                       {doc.dueDate ? new Date(doc.dueDate).toLocaleDateString(locale) : '—'}
                     </td>

@@ -1,6 +1,7 @@
 import { ProForma } from '@/types/proforma';
 import { ERPDocument, DocumentLine } from '@/types/documents';
 import { calculateDocumentTotals, calculateLineTotals } from '@/lib/documentStorage';
+import { timestampLocalTime } from '@/lib/workingDayAccess';
 
 /** Map a Pro Forma record into an ERP document prefill for sales invoice creation. */
 export function proformaToErpDocumentPrefill(pf: ProForma): ERPDocument {
@@ -43,7 +44,7 @@ export function proformaToErpDocumentPrefill(pf: ProForma): ERPDocument {
     amountDue: totals.total,
     status: pf.status === 'converted' ? 'converted' : pf.status === 'rejected' || pf.status === 'expired' ? 'cancelled' : 'draft',
     issueDate,
-    issueTime: '00:00:00',
+    issueTime: timestampLocalTime(pf.createdAt),
     validUntil: pf.validUntil,
     dueDate: pf.validUntil?.split('T')[0] || pf.validUntil,
     notes: pf.notes,

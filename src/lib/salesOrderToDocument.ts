@@ -1,5 +1,6 @@
 import { ERPDocument, DocumentLine } from '@/types/documents';
 import { calculateDocumentTotals, calculateLineTotals } from '@/lib/documentStorage';
+import { timestampLocalTime } from '@/lib/workingDayAccess';
 
 export interface SalesOrderItem {
   id?: string;
@@ -95,7 +96,7 @@ export function salesOrderToErpDocumentPrefill(
     paymentMethod: 'credit',
     dueDate,
     issueDate,
-    issueTime: '00:00:00',
+    issueTime: timestampLocalTime(order.createdAt),
     notes: [
       order.notes,
       order.warehouseId ? `Warehouse: ${order.warehouseId}` : '',

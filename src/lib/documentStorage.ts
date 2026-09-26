@@ -21,7 +21,7 @@ import {
 } from '@/lib/purchaseInvoiceStorage';
 import type { CreditNote, TransportDocument } from '@/types/erp';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
-import { timestampLocalDate } from '@/lib/workingDayAccess';
+import { timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
 
@@ -93,9 +93,7 @@ export function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
     amountDue: Math.max(0, total - amountPaid),
     status,
     issueDate,
-    issueTime: String(createdAt).includes('T')
-      ? String(createdAt).split('T')[1]?.substring(0, 8) || ''
-      : '',
+    issueTime: timestampLocalTime(createdAt),
     dueDate: sale.dueDate || sale.due_date || undefined,
     createdBy: sale.cashierId || sale.cashier_id || '',
     createdByName: sale.cashierName || sale.cashier_name || '',

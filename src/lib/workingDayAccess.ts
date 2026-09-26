@@ -48,6 +48,35 @@ export function timestampLocalDate(createdAt: unknown): string {
   return localISODate(d);
 }
 
+/**
+ * Clock time of a sale/document timestamp as HH:MM:SS, in the same zone as
+ * `timestampLocalDate`. Slicing an ISO `Z` string instead would print the UTC
+ * hour next to the Angola day.
+ */
+export function timestampLocalTime(createdAt: unknown): string {
+  const raw = createdAt instanceof Date ? createdAt : String(createdAt ?? '').trim();
+  if (!raw) return '';
+  if (typeof raw === 'string') {
+    const naive = raw.match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}:\d{2}:\d{2})/);
+    if (naive && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw.slice(10))) return naive[1];
+  }
+  const d = raw instanceof Date ? raw : new Date(raw);
+  if (!Number.isFinite(d.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: BUSINESS_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(d);
+  } catch {
+    return [d.getHours(), d.getMinutes(), d.getSeconds()]
+      .map((n) => String(n).padStart(2, '0'))
+      .join(':');
+  }
+}
+
 /** Normalize to YYYY-MM-DD for comparisons. */
 export function toISODateOnly(value: string | Date | null | undefined): string {
   if (!value) return '';
