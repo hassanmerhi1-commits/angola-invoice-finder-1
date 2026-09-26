@@ -1,4 +1,5 @@
 import type { StockMovement } from '@/types/erp';
+import { movementUserLabel } from '@/lib/movementUserLabel';
 
 const NON_ADJUSTMENT_REASONS = new Set([
   'purchase',
@@ -123,7 +124,7 @@ export function groupStockAdjustmentDocuments(movements: StockMovement[]): Stock
       notes: first.notes || '',
       createdAt: first.createdAt,
       createdBy: first.createdBy || '',
-      createdByName: first.createdByName || first.createdBy || '',
+      createdByName: movementUserLabel(first.createdByName, first.createdBy, { missing: '', system: '' }),
       lineCount: mappedLines.length,
       totalQuantity,
       totalValue,

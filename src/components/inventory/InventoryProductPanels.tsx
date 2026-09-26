@@ -27,6 +27,7 @@ import {
   mapStockTransferRow,
 } from '@/lib/stockTransferUtils';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
+import { movementUserLabel } from '@/lib/movementUserLabel';
 import { useTranslation } from '@/i18n';
 
 export function collectProductIdsForSku(
@@ -788,7 +789,9 @@ export function InventoryProductAuditPanel({
         id: `sm-${m.id}`,
         timestamp: m.createdAt,
         action: `${typeLabel} · ${getReasonLabel(m.reason)}`,
-        userName: m.createdByName || m.createdBy || t.inventoryPageUi.table.systemUser,
+        userName: movementUserLabel(m.createdByName, m.createdBy, {
+          system: t.inventoryPageUi.table.systemUser,
+        }),
         branchLabel: m.branchName || m.branchId || '—',
         description: [m.referenceNumber, m.notes].filter(Boolean).join(' — ') || '—',
       });

@@ -22,6 +22,7 @@ import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { fetchInventoryGrid, invalidateInventoryGridCache, isInventoryGridCacheFresh, readProductStock } from '@/lib/inventoryGrid';
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
+import { movementUserLabel } from '@/lib/movementUserLabel';
 import { resolveBranchScopeDisplayLabel } from '@/lib/branchScopeDisplay';
 import { normalizeIsMain } from '@/lib/branchAccess';
 import { Product, StockMovement } from '@/types/erp';
@@ -1483,10 +1484,9 @@ export default function Inventory() {
   }, [branchById]);
 
   const formatMovementUser = useCallback((movement: StockMovement) => {
-    if (movement.createdByName?.trim()) return movement.createdByName.trim();
-    const id = String(movement.createdBy || '').trim();
-    if (!id || id === 'system') return t.inventoryPageUi.table.systemUser;
-    return id;
+    return movementUserLabel(movement.createdByName, movement.createdBy, {
+      system: t.inventoryPageUi.table.systemUser,
+    });
   }, [t]);
 
   const selectedProductMovements = useMemo(() => {

@@ -117,8 +117,7 @@ module.exports = function(broadcastTable) {
         return res.json([]);
       }
 
-      // No product/branch/user joins — those made every Inventory tab scan the ledger.
-      // The grid already has branch names; created_by is shown as-is when the name is missing.
+      // No joins on the ledger scan. Names are filled from a small id lookup afterwards.
       let query = `SELECT sm.id, sm.product_id, sm.warehouse_id, sm.movement_type,
         sm.quantity, sm.unit_cost, sm.reference_type, sm.reference_id,
         sm.reference_number, sm.notes, sm.created_by, sm.created_at
@@ -168,7 +167,12 @@ module.exports = function(broadcastTable) {
       }
       const productIds = [...new Set(rows.map((r) => String(r.product_id || '')).filter(Boolean))];
       const warehouseIds = [...new Set(rows.map((r) => String(r.warehouse_id || '')).filter(Boolean))];
-      const [productsRes, branchesRes] = await Promise.all([
+      const userIds = [...new Set(
+        rows
+          .map((r) => String(r.created_by || '').trim())
+          .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)),
+      )];
+      const [productsRes, branchesRes, usersRes] = await Promise.all([
         productIds.length
           ? db.query(
               `SELECT id, name, sku FROM products WHERE id IN (${productIds.map((_, i) => `$${i + 1}`).join(', ')})`,
@@ -181,18 +185,31 @@ module.exports = function(broadcastTable) {
               warehouseIds,
             )
           : Promise.resolve({ rows: [] }),
+        userIds.length
+          ? db.query(
+              `SELECT id, name, email FROM users WHERE id IN (${userIds.map((_, i) => `$${i + 1}`).join(', ')})`,
+              userIds,
+            ).catch((err) => {
+              console.warn('[STOCK MOVEMENTS] user name lookup failed:', err.message);
+              return { rows: [] };
+            })
+          : Promise.resolve({ rows: [] }),
       ]);
       const productById = new Map((productsRes.rows || []).map((p) => [String(p.id), p]));
       const branchById = new Map((branchesRes.rows || []).map((b) => [String(b.id), b]));
+      const userById = new Map((usersRes.rows || []).map((u) => [String(u.id), u]));
       res.json(rows.map((row) => {
         const product = productById.get(String(row.product_id)) || {};
         const branch = branchById.get(String(row.warehouse_id)) || {};
+        const user = userById.get(String(row.created_by || '').trim()) || {};
         return mapStockMovementRow({
           ...row,
           product_name: product.name || '',
           sku: product.sku || skuTrim,
           branch_name: branch.name || '',
           branch_code: branch.code || '',
+          created_by_name: user.name || '',
+          created_by_email: user.email || '',
         });
       }));
     } catch (error) {
