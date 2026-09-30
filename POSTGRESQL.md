@@ -13,7 +13,12 @@ The embedded Express backend reads `C:\NEXOR ERP\database.env` and sets `DATABAS
 
 ## 1. Install PostgreSQL
 
-**Option A — Docker (dev / small sites)**
+**Option A — Native PostgreSQL 16** on Windows (production). Match the major version used by
+`docker-compose.yml` (`postgres:16`) and by the backend image (`postgresql-client-16`). Create
+database `kwanza_erp` and a strong password. Leave it listening on `127.0.0.1` — clients only ever
+talk to port 3000, never to the database.
+
+**Option B — Docker (dev / small sites)**
 
 ```powershell
 cd C:\path\to\angola-invoice-finder-1
@@ -22,7 +27,63 @@ docker compose up -d postgres
 
 Default database: `kwanza_erp`, user `postgres`, password from `docker-compose.yml` (`POSTGRES_PASSWORD`).
 
-**Option B — Native PostgreSQL 16** on Windows — create database `kwanza_erp` and a strong password.
+### Already running in Docker and want to move off it
+
+`scripts\move-to-native-postgres.ps1` does the cutover on the server PC: dumps from the container,
+copies `jwt.secret` / `master.key` / AGT certs out of the `nexor_data` volume, restores into the
+native server, compares row counts per table, writes `database.env`, then runs the migrations.
+
+It runs in **two phases**, because the container publishes host port 5432 and the PostgreSQL
+installer wants that same port — they cannot both hold it. So export the data *before* installing
+PostgreSQL:
+
+```powershell
+# A. Docker still running, PostgreSQL not installed yet.
+.\scripts\move-to-native-postgres.ps1 -DumpOnly
+
+# B. Free the port, keeping the data volume.
+docker compose down
+
+# C. Install PostgreSQL 16 on port 5432, then finish.
+.\scripts\move-to-native-postgres.ps1 -Password 'NewStrongPassword' -ResumeFromRestore
+```
+
+If you already installed PostgreSQL and it landed on **5433** because 5432 was taken, you can run
+it in one shot with `-Port 5433` instead — but then move it back to 5432 later, or leave
+`DATABASE_URL` pointing at 5433.
+
+**Shortening the downtime.** Tills are offline from phase A until the native backend answers on
+port 3000, and the PostgreSQL install sits inside that window. Two things can be done beforehand,
+with the app still running, because neither touches the database and no recent release changed the
+backend dependencies:
+
+```powershell
+# Download the PostgreSQL 16 Windows installer to the server, do not run it yet.
+# Then install the backend deps that the native process will need:
+cd "C:\Users\user\Documents\GitHub\angola-invoice-finder\backend"
+npm ci --omit=dev
+```
+
+Then add `-SkipNpmInstall` to the phase C command, or the script's `npm ci` will delete
+`node_modules` and download everything again:
+
+```powershell
+.\scripts\move-to-native-postgres.ps1 -Password 'NewStrongPassword' -ResumeFromRestore -SkipNpmInstall
+```
+
+Pre-running `npm ci` on the host is safe while Docker serves traffic: the compose file bind-mounts
+`backend/src`, `backend/scripts` and `backend/package.json`, but **not** `node_modules`, so the
+container never sees it.
+
+Nothing is deleted — phase A only stops `nexor-backend`. Rollback is `docker compose up -d` until
+you run `docker compose down`, and even that keeps `kwanza_pgdata`. Two things the script
+deliberately leaves to you: registering the backend as a Windows service (Docker's
+`restart: unless-stopped` was doing that), and removing the containers once you have verified the
+data.
+
+**Do not skip the secrets.** They live in the Docker volume, not in git and not in the database.
+Without `jwt.secret` every till gets "Invalid or expired token"; without `master.key` the encrypted
+AGT key and PKCS#12 passphrase cannot be decrypted.
 
 ## 2. Apply schema (empty database)
 
@@ -80,7 +141,10 @@ Rows that cannot be linked (missing supplier/client/document) are skipped and lo
 ## Backups
 
 - UI: Settings → Database backup. If `pg_dump` is not installed on Windows, the server automatically uses `docker exec kwanza-postgres pg_dump` when the Docker container is running.
-- Manual: `docker exec kwanza-postgres pg_dump -U postgres -d kwanza_erp > backup.sql`
+- Manual (Docker): `docker exec kwanza-postgres pg_dump -U postgres -d kwanza_erp > backup.sql`
+- **Native install:** that Docker fallback is gone, so `pg_dump.exe` must be reachable. Either put
+  `C:\Program Files\PostgreSQL\16\bin` on the system PATH, or set `PG_DUMP_PATH` in `database.env`
+  (the move script writes it for you). Test one backup from the UI on day one.
 
 ## Rollback to SQLite
 
