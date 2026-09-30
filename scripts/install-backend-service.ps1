@@ -280,6 +280,16 @@ Set-NssmValue 'DisplayName' @('NEXOR ERP Backend')
 Set-NssmValue 'Description' @('NEXOR ERP API on port ' + $Port + ' (native PostgreSQL).')
 Set-NssmValue 'Start' @('SERVICE_AUTO_START')
 
+# Boot ordering. The pg pool would retry anyway, but without this the log fills
+# with connection errors every cold boot while PostgreSQL is still starting.
+$pgService = @(Get-Service | Where-Object { $_.Name -match 'postgre' } | Select-Object -First 1)
+if ($pgService.Count -gt 0) {
+  Set-NssmValue 'DependOnService' @($pgService[0].Name)
+  Write-Ok ("Starts after " + $pgService[0].Name)
+} else {
+  Write-Warn2 'No PostgreSQL service found, so no boot dependency was set.'
+}
+
 # Mirrors the docker-compose environment. DB_ENGINE and DATABASE_URL are
 # deliberately absent: server.js loads them from database.env.
 Set-NssmValue 'AppEnvironmentExtra' @(
@@ -356,14 +366,14 @@ Common causes:
   - port $Port is held by Docker or a manual npm start
   - the service account cannot write $InstallDir\data\secrets
 
-The service stays installed, so fix the cause and run:  nssm restart $ServiceName
+The service stays installed, so fix the cause and run:  Restart-Service $ServiceName
 "@
 }
 
 Write-Ok ("Health OK - engine " + $health.engine + ", schema " + $health.schemaVersion)
 if ($health.engine -ne 'postgres') {
   Write-Warn2 "engine is '$($health.engine)', not postgres - the API is NOT on your real data."
-  Write-Warn2 "Check DATABASE_URL in $envFile, then: nssm restart $ServiceName"
+  Write-Warn2 "Check DATABASE_URL in $envFile, then: Restart-Service $ServiceName"
 }
 
 # ---------------------------------------------------------------- done
@@ -373,10 +383,16 @@ Write-Host ''
 Write-Info "Starts on boot, restarts if it crashes."
 Write-Info "Logs:  $logDir\backend.log  and  backend.err.log"
 Write-Host ''
+# Plain service cmdlets, not nssm: nssm is not on PATH and its folder has a space
+# in it, so "nssm restart ..." only ever worked from the folder it lives in.
 Write-Host 'Day-to-day commands:' -ForegroundColor Cyan
-Write-Host ("  nssm restart {0}" -f $ServiceName)
-Write-Host ("  nssm stop {0}" -f $ServiceName)
+Write-Host ("  Restart-Service {0}" -f $ServiceName)
+Write-Host ("  Stop-Service {0}" -f $ServiceName)
+Write-Host ("  Get-Service {0}" -f $ServiceName)
 Write-Host ("  Get-Content `"{0}\backend.err.log`" -Tail 40" -f $logDir)
+Write-Host ''
+Write-Host 'To change the service configuration you need nssm itself, which lives at:'
+Write-Host ("  & `"{0}`" edit {1}" -f $script:Nssm, $ServiceName)
 Write-Host ''
 Write-Host 'After every code update (git pull) on this server:' -ForegroundColor Yellow
 Write-Host '  The Docker entrypoint used to run migrations on each start. The service'
@@ -384,6 +400,6 @@ Write-Host '  does not, so run them yourself:'
 Write-Host ("    cd `"{0}`"" -f $backendDir)
 Write-Host '    npm run migrate'
 Write-Host '    npm run ensure-schema'
-Write-Host ("    nssm restart {0}" -f $ServiceName)
+Write-Host ("    Restart-Service {0}" -f $ServiceName)
 Write-Host ''
 Write-Host ("Remove the service again with:  .\scripts\install-backend-service.ps1 -Remove") -ForegroundColor Yellow

@@ -89,10 +89,21 @@ Docker's `restart: unless-stopped`:
 .\scripts\install-backend-service.ps1
 ```
 
-It downloads NSSM if needed, points the service at `node backend\src\server.js`, sets auto-start
-and restart-on-crash, writes logs to `C:\NEXOR ERP\logs`, opens inbound TCP 3000 in Windows
-Firewall (Docker was publishing the port and doing this for you), then waits for
-`/api/health` and reports the engine. `-Remove` undoes it.
+It downloads NSSM if needed, points the service at `node backend\src\server.js`, sets auto-start,
+restart-on-crash and a boot dependency on the PostgreSQL service, writes logs to
+`C:\NEXOR ERP\logs`, opens inbound TCP 3000 in Windows Firewall (Docker was publishing the port and
+doing this for you), then waits for `/api/health` and reports the engine. `-Remove` undoes it.
+
+Day to day it is an ordinary Windows service, so NSSM is not needed to control it:
+
+```powershell
+Restart-Service NexorBackend
+Get-Service NexorBackend
+Get-Content "C:\NEXOR ERP\logs\backend.err.log" -Tail 40
+```
+
+NSSM itself (`C:\NEXOR ERP\tools\nssm.exe`) is only needed to *change* the configuration, and it is
+not on PATH — call it by full path.
 
 The database password is not copied into the service environment — `server.js` reads
 `database.env` itself before connecting.
@@ -104,7 +115,7 @@ start; the service does not. After each `git pull` on the server:
 cd backend
 npm run migrate
 npm run ensure-schema
-nssm restart NexorBackend
+Restart-Service NexorBackend
 ```
 
 **Do not skip the secrets.** They live in the Docker volume, not in git and not in the database.
