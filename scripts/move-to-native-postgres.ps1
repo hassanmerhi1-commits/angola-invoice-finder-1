@@ -502,7 +502,13 @@ if (Test-Path -LiteralPath $secretsStage) {
 }
 
 $envFile = Join-Path $InstallDir 'database.env'
-$connString = "postgres://{0}:{1}@127.0.0.1:{2}/{3}" -f $DbUser, $Password, $Port, $Database
+# Percent-encode the password: a literal @ : / ? or # would break the URL parse
+# and the backend would report a confusing connection error.
+$connString = "postgres://{0}:{1}@127.0.0.1:{2}/{3}" -f
+  [System.Uri]::EscapeDataString($DbUser),
+  [System.Uri]::EscapeDataString($Password),
+  $Port,
+  $Database
 if (Test-Path -LiteralPath $envFile) {
   $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
   Copy-Item -LiteralPath $envFile -Destination ("{0}.bak-{1}" -f $envFile, $stamp) -Force
