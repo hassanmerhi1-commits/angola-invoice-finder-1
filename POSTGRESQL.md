@@ -76,10 +76,36 @@ Pre-running `npm ci` on the host is safe while Docker serves traffic: the compos
 container never sees it.
 
 Nothing is deleted — phase A only stops `nexor-backend`. Rollback is `docker compose up -d` until
-you run `docker compose down`, and even that keeps `kwanza_pgdata`. Two things the script
-deliberately leaves to you: registering the backend as a Windows service (Docker's
-`restart: unless-stopped` was doing that), and removing the containers once you have verified the
-data.
+you run `docker compose down`, and even that keeps `kwanza_pgdata`. Removing the containers, once
+you have verified the data, stays a deliberate manual step.
+
+### Keeping the API up after a reboot
+
+`npm start` dies with its console, so once the data is moved, register the service. This replaces
+Docker's `restart: unless-stopped`:
+
+```powershell
+# As Administrator.
+.\scripts\install-backend-service.ps1
+```
+
+It downloads NSSM if needed, points the service at `node backend\src\server.js`, sets auto-start
+and restart-on-crash, writes logs to `C:\NEXOR ERP\logs`, opens inbound TCP 3000 in Windows
+Firewall (Docker was publishing the port and doing this for you), then waits for
+`/api/health` and reports the engine. `-Remove` undoes it.
+
+The database password is not copied into the service environment — `server.js` reads
+`database.env` itself before connecting.
+
+**One behaviour change to remember.** `docker-entrypoint.sh` ran the migrations on every container
+start; the service does not. After each `git pull` on the server:
+
+```powershell
+cd backend
+npm run migrate
+npm run ensure-schema
+nssm restart NexorBackend
+```
 
 **Do not skip the secrets.** They live in the Docker volume, not in git and not in the database.
 Without `jwt.secret` every till gets "Invalid or expired token"; without `master.key` the encrypted
