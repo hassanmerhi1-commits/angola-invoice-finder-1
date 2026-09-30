@@ -56,6 +56,8 @@ let lastMode = 'unknown';
 let startPromise = null;
 let lastDockerOk = false;
 let lastSpawnNativeError = null;
+/** Backend on DEFAULT_PORT that we did not spawn (Windows service or Docker). */
+let externalBackend = false;
 
 // Phase 5 state
 let healthTimer = null;
@@ -814,7 +816,7 @@ function waitForBackendReady(port, timeoutMs = 15000, proc = null) {
 // --------------------------------------------------------------------------
 async function stopChildOnly() {
   if (!childProc) {
-    boundPort = null;
+    if (!externalBackend) boundPort = null;
     return;
   }
   try {
@@ -845,6 +847,21 @@ async function startOnce(opts = {}) {
     }
     console.warn(`[BackendManager] stale child on port ${boundPort} — respawning`);
     await stopChildOnly();
+  }
+
+  // A server PC that is also a workstation already has the backend running, as a
+  // Windows service or in Docker. Without this the spawn loop below would skip
+  // the busy port and start a second backend on 3001: same database, but its own
+  // socket.io, so this PC would never see the tills' live updates.
+  if (!childProc && (await probeHealthOnce(DEFAULT_PORT, HEALTH_TIMEOUT_MS))) {
+    externalBackend = true;
+    boundPort = DEFAULT_PORT;
+    consecutiveFails = 0;
+    restartAttempts = 0;
+    console.log(`[BackendManager] backend already serving on ${DEFAULT_PORT} — using it instead of spawning`);
+    startHealthMonitor();
+    emitStatus({ state: 'healthy', detail: 'Using the backend already running on this PC' });
+    return { started: true, port: DEFAULT_PORT, mode, external: true };
   }
 
   lastDockerOk = true;
@@ -916,6 +933,13 @@ async function start(opts = {}) {
 
 async function stop() {
   stopHealthMonitor();
+  // Never kill a backend we did not spawn - the service owns its lifecycle.
+  if (externalBackend) {
+    externalBackend = false;
+    const port = boundPort;
+    boundPort = null;
+    return { stopped: true, external: true, port };
+  }
   if (!childProc) return { stopped: true, alreadyStopped: true };
   const proc = childProc;
   childProc = null;
@@ -948,7 +972,8 @@ function getPort() {
 
 function getStatus() {
   return {
-    running: !!childProc,
+    running: !!childProc || externalBackend,
+    external: externalBackend,
     port: boundPort,
     mode: lastMode,
     dockerOk: lastDockerOk,
@@ -1037,6 +1062,15 @@ async function runHealthCheck() {
 
 async function attemptRestart(reason) {
   if (isRestarting) return;
+
+  // The Windows service restarts itself. Spawning our own copy here would race
+  // it for port 3000 and leave two backends behind.
+  if (externalBackend) {
+    console.warn(`[BackendManager] external backend on ${boundPort} is down (${reason}) — waiting for the service to come back`);
+    emitStatus({ state: 'down', detail: 'The backend service on this PC is not responding' });
+    return;
+  }
+
   isRestarting = true;
   restartAttempts += 1;
 
