@@ -422,9 +422,15 @@ if (($exists -join '').Trim() -eq '1') {
   Write-Ok "Created database $Database"
 }
 
-Invoke-Psql -TargetDb $Database -ExtraArgs @(
-  '-c', 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; CREATE EXTENSION IF NOT EXISTS pgcrypto;'
+# Windows PowerShell 5.1 strips double quotes out of arguments to native commands,
+# and "uuid-ossp" must stay quoted or the hyphen makes it invalid SQL. Reading the
+# statements from a file skips the argument-quoting layer altogether.
+$extSql = Join-Path $WorkDir 'create-extensions.sql'
+Set-Content -LiteralPath $extSql -Encoding ASCII -Value @(
+  'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
+  'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
 )
+Invoke-Psql -TargetDb $Database -ExtraArgs @('-f', $extSql)
 Write-Ok 'Extensions uuid-ossp and pgcrypto present'
 
 # ---------------------------------------------------------------- restore
