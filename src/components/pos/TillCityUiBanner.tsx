@@ -3,7 +3,7 @@ import { AlertTriangle, Loader2, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
-import { getApiUrl } from '@/lib/api/config';
+import { getApiUrl, isServerDatabaseHost } from '@/lib/api/config';
 import { getTillUiSource, switchTillToCityUi } from '@/lib/sync/cityUi';
 
 /** Shown on POS and login — cashiers cannot open Settings. */
@@ -15,6 +15,9 @@ export function TillCityUiBanner() {
 
   useEffect(() => {
     if (typeof window === 'undefined' || !(window as any).electronAPI?.isElectron) return;
+    // The server PC is supposed to run the packaged UI against its own loopback
+    // API, so both warnings below would be false alarms there.
+    if (isServerDatabaseHost()) return;
     let cancelled = false;
     void getTillUiSource().then((source) => {
       if (!cancelled && source === 'local') setLocalUi(true);
