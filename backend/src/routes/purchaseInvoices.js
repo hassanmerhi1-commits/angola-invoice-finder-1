@@ -242,16 +242,21 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         query += ` AND status = $${idx++}`;
         params.push(status);
       }
-      // Prefer document date; fall back to created_at when date is empty.
+      // Document date is a calendar day. Comparing the raw text let a value such as
+      // "Wed Jul 15 ..." sort after every ISO day and stay on the list.
       const dayExpr = db.engine === 'postgres'
-        ? `COALESCE(NULLIF(TRIM(date::text), ''), to_char(created_at::date, 'YYYY-MM-DD'))`
-        : `COALESCE(NULLIF(TRIM(CAST(date AS TEXT)), ''), substr(CAST(created_at AS TEXT), 1, 10))`;
+        ? `COALESCE(date, (created_at AT TIME ZONE 'Africa/Luanda')::date)`
+        : `COALESCE(date(date), date(created_at))`;
       if (dateFrom) {
-        query += ` AND (${dayExpr}) >= $${idx++}`;
+        query += db.engine === 'postgres'
+          ? ` AND ${dayExpr} >= $${idx++}::date`
+          : ` AND ${dayExpr} >= $${idx++}`;
         params.push(String(dateFrom).slice(0, 10));
       }
       if (dateTo) {
-        query += ` AND (${dayExpr}) <= $${idx++}`;
+        query += db.engine === 'postgres'
+          ? ` AND ${dayExpr} <= $${idx++}::date`
+          : ` AND ${dayExpr} <= $${idx++}`;
         params.push(String(dateTo).slice(0, 10));
       }
       query += ` ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`;

@@ -5,6 +5,7 @@ import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
+import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { resolveUserBranch, branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
@@ -396,11 +397,12 @@ function ProductPickerDialog({
     const q = search.trim().toLowerCase();
     const rows = !q
       ? products.slice(0, 1000)
-      : products.filter(p =>
-          p.name.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          p.barcode?.toLowerCase().includes(q)
-        ).slice(0, 1000);
+      : products.filter(p => {
+          const name = String(p.name || '').toLowerCase();
+          const sku = String(p.sku || '').toLowerCase();
+          const barcode = String(p.barcode || '').toLowerCase();
+          return name.includes(q) || sku.includes(q) || barcode.includes(q);
+        }).slice(0, 1000);
     if (!priorityProductId) return rows;
     const idx = rows.findIndex((p) => p.id === priorityProductId);
     if (idx <= 0) return rows;
@@ -411,7 +413,7 @@ function ProductPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="max-w-4xl max-h-[80vh]">
+      <DialogContent className="flex max-h-[85vh] max-w-4xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <span>{t.purchaseInvoicesUi.productListTitle}</span>
@@ -426,7 +428,7 @@ function ProductPickerDialog({
           onChange={e => setSearch(e.target.value)}
           autoFocus
         />
-        <ScrollArea className="h-[400px]">
+        <div className="min-h-[12rem] flex-1 overflow-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -507,13 +509,13 @@ function ProductPickerDialog({
                     <br />
                     <Button variant="link" size="sm" className="mt-2 gap-1" onClick={onCreateNew}>
                       <Plus className="h-4 w-4" /> {t.purchaseInvoicesUi.productPickerCreateNew}
-                    </Button>
+                  </Button>
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -1384,14 +1386,34 @@ export default function PurchaseInvoices() {
     productsBranchId,
     { light: true, enabled: mode === 'create' || poCreateOpen },
   );
+  // Insert uses the same catalog as Inventory / Adjust In. The light product
+  // query can come back empty on this server while that grid still has every SKU.
+  const {
+    rows: purchaseCatalog,
+    loading: purchaseCatalogLoading,
+    refresh: refreshPurchaseCatalog,
+  } = useInventoryGrid({
+    branchId: productsBranchId,
+    consolidated: false,
+    enabled: (mode === 'create' || poCreateOpen) && Boolean(productsBranchId),
+  });
+  const pickerProducts = useMemo(() => {
+    if (purchaseCatalog.length === 0) return products;
+    if (products.length === 0) return purchaseCatalog;
+    const ids = new Set(purchaseCatalog.map((p) => p.id));
+    const extras = products.filter((p) => p.id && !ids.has(p.id));
+    return extras.length ? [...extras, ...purchaseCatalog] : purchaseCatalog;
+  }, [purchaseCatalog, products]);
+  const pickerLoading = pickerProducts.length === 0 && (purchaseCatalogLoading || productsLoading);
 
   // Force a fresh product list when opening create/PO — Inventory creates can land
   // while this hook was disabled or still holding a warm 3-minute cache.
   useEffect(() => {
     if (mode === 'create' || poCreateOpen) {
+      void refreshPurchaseCatalog();
       void refreshProducts({ force: true });
     }
-  }, [mode, poCreateOpen, productsBranchId, refreshProducts]);
+  }, [mode, poCreateOpen, productsBranchId, refreshProducts, refreshPurchaseCatalog]);
 
   useEffect(() => {
     if (!(productPickerOpen || poProductPickerOpen)) return;
@@ -1399,8 +1421,9 @@ export default function PurchaseInvoices() {
       skipPickerRefreshRef.current = false;
       return;
     }
+    void refreshPurchaseCatalog();
     void refreshProducts({ force: true });
-  }, [productPickerOpen, poProductPickerOpen, refreshProducts]);
+  }, [productPickerOpen, poProductPickerOpen, refreshProducts, refreshPurchaseCatalog]);
 
   const openCreateProductFromPicker = useCallback((
     source: 'invoice' | 'po',
@@ -2285,7 +2308,7 @@ export default function PurchaseInvoices() {
       if (prev.length === 0) return prev;
       let changed = false;
       const next = prev.map((line) => {
-        const product = products.find((p) => p.id === line.productId);
+        const product = pickerProducts.find((p) => p.id === line.productId);
         const nextStock = product?.stock;
         if (
           String(line.warehouseId || '') === String(warehouseId)
@@ -2304,7 +2327,7 @@ export default function PurchaseInvoices() {
       });
       return changed ? next : prev;
     });
-  }, [products]);
+  }, [pickerProducts]);
 
   useEffect(() => {
     if (mode !== 'create') return;
@@ -2312,7 +2335,7 @@ export default function PurchaseInvoices() {
     const warehouseName = String(form.warehouseName || '').trim();
     if (!warehouseId) return;
     applyWarehouseToLines(warehouseId, warehouseName);
-  }, [mode, form.warehouseId, form.warehouseName, products, applyWarehouseToLines]);
+  }, [mode, form.warehouseId, form.warehouseName, pickerProducts, applyWarehouseToLines]);
 
   const applyLinesFromPurchaseOrder = useCallback(
     (order: PurchaseOrder) => {
@@ -2323,7 +2346,7 @@ export default function PurchaseInvoices() {
         const qty = Number(it.quantity || 0);
         if (qty <= 0) continue;
         const unitCost = Number(it.unitCost || 0);
-        const product = products.find((p) => p.id === it.productId);
+        const product = pickerProducts.find((p) => p.id === it.productId);
         const ivaRate =
           product?.taxRate != null && product.taxRate > 0
             ? product.taxRate
@@ -2377,7 +2400,7 @@ export default function PurchaseInvoices() {
         description: t.purchaseInvoicesUi.fillFromOrderToastDesc.replace('{orderNo}', order.orderNumber),
       });
     },
-    [form.warehouseId, form.warehouseName, currentBranch, products, toast, t],
+    [form.warehouseId, form.warehouseName, currentBranch, pickerProducts, toast, t],
   );
 
   const handleOpenProductPicker = useCallback(() => {
@@ -3674,18 +3697,18 @@ export default function PurchaseInvoices() {
                     />
                     {poNewItem.productId && !poProductSearch && (
                       <div className="absolute inset-0 flex items-center px-3 pointer-events-none">
-                        <span className="text-sm truncate">{products.find(p => p.id === poNewItem.productId)?.name || t.purchaseInvoicesUi.poProductFallback}</span>
+                        <span className="text-sm truncate">{pickerProducts.find(p => p.id === poNewItem.productId)?.name || t.purchaseInvoicesUi.poProductFallback}</span>
                       </div>
                     )}
                     {poProductDropdownOpen && (
                       <div className="absolute z-[200] top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[220px] overflow-y-auto">
                         {(() => {
                           const q = poProductSearch.toLowerCase();
-                          const filtered = products.filter(p =>
+                          const filtered = pickerProducts.filter(p =>
                             p.isActive !== false &&
-                            (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode?.toLowerCase().includes(q))
+                            (!q || String(p.name || '').toLowerCase().includes(q) || String(p.sku || '').toLowerCase().includes(q) || String(p.barcode || '').toLowerCase().includes(q))
                           ).slice(0, 80);
-                          if (productsLoading && products.length === 0) {
+                          if (pickerLoading && pickerProducts.length === 0) {
                             return <div className="p-3 text-sm text-muted-foreground text-center">{t.common.loading}</div>;
                           }
                           if (filtered.length === 0) {
@@ -3754,7 +3777,7 @@ export default function PurchaseInvoices() {
                   </TableHeader>
                   <TableBody>
                     {poForm.items.map(item => {
-                      const prod = products.find(p => p.id === item.productId);
+                      const prod = pickerProducts.find(p => p.id === item.productId);
                       return (
                         <TableRow key={item.productId}>
                           <TableCell>{prod?.name || item.productId}</TableCell>
@@ -3782,7 +3805,7 @@ export default function PurchaseInvoices() {
               <Button variant="outline" onClick={() => setPoCreateOpen(false)}>{t.common.cancel}</Button>
               <Button disabled={!poForm.supplierId || !poForm.branchId || poForm.items.length === 0} onClick={() => {
                 const items = poForm.items.map(item => {
-                  const prod = products.find(p => p.id === item.productId);
+                  const prod = pickerProducts.find(p => p.id === item.productId);
                   const subtotal = item.quantity * item.unitCost;
                   return {
                     productId: item.productId,
@@ -4482,8 +4505,8 @@ export default function PurchaseInvoices() {
           setProductPickerOpen(false);
           setPickerSeed(null);
         }}
-        products={products}
-        productsLoading={productsLoading}
+        products={pickerProducts}
+        productsLoading={pickerLoading}
         onSelect={handleAddProduct}
         onCreateNew={() => openCreateProductFromPicker('invoice')}
         onCopyProduct={(p) => openCreateProductFromPicker('invoice', { copyFrom: p })}
@@ -4497,8 +4520,8 @@ export default function PurchaseInvoices() {
           setPoProductPickerOpen(false);
           setPickerSeed(null);
         }}
-        products={products}
-        productsLoading={productsLoading}
+        products={pickerProducts}
+        productsLoading={pickerLoading}
         onSelect={(p) => {
           setPoNewItem(prev => ({ ...prev, productId: p.id, unitCost: p.cost || 0 }));
           setPoProductSearch(p.name);
@@ -4526,8 +4549,8 @@ export default function PurchaseInvoices() {
         }}
         product={editProduct}
         copySource={copySourceProduct}
-        copyCatalog={products}
-        catalogProducts={products}
+        copyCatalog={pickerProducts}
+        catalogProducts={pickerProducts}
         scopeBranchId={productsBranchId}
         defaultSupplierName={String((form as { supplierName?: string }).supplierName || '')}
         onEditExisting={(p) => {
@@ -4540,6 +4563,7 @@ export default function PurchaseInvoices() {
           const savedProduct = isUpdate
             ? await updateProduct(savedDraft, writeOpts)
             : await addProductToStock(savedDraft, writeOpts);
+          void refreshPurchaseCatalog();
           const seed = { search: savedProduct.name || savedProduct.sku || '', id: savedProduct.id };
           setPickerSeed(seed);
           skipPickerRefreshRef.current = true;

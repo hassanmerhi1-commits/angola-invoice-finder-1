@@ -8,6 +8,7 @@ import { isDemoMode } from '@/lib/api/config';
 import { branchIdsEquivalent, resolveUserBranch } from '@/lib/branchAccess';
 import { unwrapListPayload } from '@/lib/listCache';
 import { lsGet, lsSet } from '@/lib/dbHelper';
+import { timestampLocalDate } from '@/lib/workingDayAccess';
 
 const STORAGE_KEY = 'kwanzaerp_purchase_invoices';
 const LEGACY_MIGRATED_KEY = 'kwanzaerp_purchase_invoices_migrated_to_api';
@@ -358,6 +359,29 @@ export function invoiceBelongsToBranch(
   return false;
 }
 
+function purchaseIssueDay(invoice: { date?: string; createdAt?: string }): string {
+  return timestampLocalDate(invoice.date || invoice.createdAt || '');
+}
+
+function sortPurchasesOnRange<T extends { date?: string; createdAt?: string }>(
+  docs: T[],
+  dateFrom?: string,
+  dateTo?: string,
+): T[] {
+  const from = String(dateFrom || '').slice(0, 10);
+  const to = String(dateTo || '').slice(0, 10);
+  const ranged = (from || to)
+    ? docs.filter((d) => {
+        const day = purchaseIssueDay(d);
+        if (!day) return false;
+        if (from && day < from) return false;
+        if (to && day > to) return false;
+        return true;
+      })
+    : docs;
+  return ranged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+}
+
 // ---------- CRUD ----------
 
 export async function getPurchaseInvoices(
@@ -391,34 +415,14 @@ export async function getPurchaseInvoices(
     if (resolvedBranch) {
       docs = docs.filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
     }
-    const from = opts?.dateFrom?.slice(0, 10);
-    const to = opts?.dateTo?.slice(0, 10);
-    if (from || to) {
-      docs = docs.filter((d) => {
-        const day = String(d.date || d.createdAt || '').slice(0, 10);
-        if (from && day && day < from) return false;
-        if (to && day && day > to) return false;
-        return true;
-      });
-    }
-    return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return sortPurchasesOnRange(docs, opts?.dateFrom, opts?.dateTo);
   }
 
   let docs = lsGet<PurchaseInvoice[]>(STORAGE_KEY, []).map(normalizeInvoiceWarehouse);
   if (resolvedBranch) {
     docs = docs.filter((d) => invoiceBelongsToBranch(d, resolvedBranch, branchCatalog));
   }
-  const from = opts?.dateFrom?.slice(0, 10);
-  const to = opts?.dateTo?.slice(0, 10);
-  if (from || to) {
-    docs = docs.filter((d) => {
-      const day = String(d.date || d.createdAt || '').slice(0, 10);
-      if (from && day && day < from) return false;
-      if (to && day && day > to) return false;
-      return true;
-    });
-  }
-  return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return sortPurchasesOnRange(docs, opts?.dateFrom, opts?.dateTo);
 }
 
 export async function getPurchaseInvoiceById(id: string): Promise<PurchaseInvoice | undefined> {

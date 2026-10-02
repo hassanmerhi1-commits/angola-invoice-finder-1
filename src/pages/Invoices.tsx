@@ -325,11 +325,14 @@ export default function Invoices() {
     }));
 
     const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`;
+    const rangeFrom = dateFrom.slice(0, 10);
+    const rangeTo = dateTo.slice(0, 10);
+    const onPickedDays = (doc: ERPDocument) => invoiceFallsOnRange(doc, rangeFrom, rangeTo);
     // Drop previous branch/tab rows immediately; seed only this scope's cache.
     setSelectedDocId(null);
-    const cached = getCachedList<ERPDocument[]>(cacheKey) ?? [];
+    const cached = (getCachedList<ERPDocument[]>(cacheKey) ?? []).filter(onPickedDays);
     const seeded = pinnedInvoiceDocsRef.current.reduce(
-      (acc, doc) => upsertInvoiceDocument(acc, doc),
+      (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
       cached,
     );
     setDocuments(seeded);
@@ -358,18 +361,18 @@ export default function Invoices() {
     const paintDocs = (rows: ERPDocument[]) => {
       if (cancelled) return;
       const withPinned = pinnedInvoiceDocsRef.current.reduce(
-        (acc, doc) => upsertInvoiceDocument(acc, doc),
-        rows,
+        (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
+        rows.filter(onPickedDays),
       );
       setDocuments(withPinned);
       setCachedList(cacheKey, withPinned);
-      persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
+      persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current.filter(onPickedDays));
       const invoiceId = focusInvoiceId;
       if (!invoiceId || withPinned.some((d) => d.id === invoiceId || d.documentNumber === focusQ)) return;
       void getSaleInvoiceAsDocument(invoiceId, branchNames).then((full) => {
-        if (!full || cancelled) return;
+        if (!full || cancelled || !onPickedDays(full)) return;
         pinnedInvoiceDocsRef.current = upsertInvoiceDocument(pinnedInvoiceDocsRef.current, full);
-        persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
+        persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current.filter(onPickedDays));
         const next = upsertInvoiceDocument(withPinned, full);
         setDocuments(next);
         setCachedList(cacheKey, next);
@@ -813,12 +816,15 @@ export default function Invoices() {
               if (full) hits.push(full);
             }
           }
-          if (cancelled || !hits.length) return;
-          for (const doc of hits) {
+          const from = dateFrom.slice(0, 10);
+          const to = dateTo.slice(0, 10);
+          const onDay = hits.filter((doc) => invoiceFallsOnRange(doc, from, to));
+          if (cancelled || !onDay.length) return;
+          for (const doc of onDay) {
             pinnedInvoiceDocsRef.current = upsertInvoiceDocument(pinnedInvoiceDocsRef.current, doc);
           }
           persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
-          setDocuments((prev) => hits.reduce((acc, doc) => upsertInvoiceDocument(acc, doc), prev));
+          setDocuments((prev) => onDay.reduce((acc, doc) => upsertInvoiceDocument(acc, doc), prev));
         } catch {
           /* keep the dated list */
         }
@@ -828,7 +834,7 @@ export default function Invoices() {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [searchTerm, documents, branches]);
+  }, [searchTerm, documents, branches, dateFrom, dateTo]);
 
   const selectedDoc = filteredDocs.find(d => d.id === selectedDocId);
 

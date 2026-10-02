@@ -109,42 +109,51 @@ module.exports = function(broadcastTable) {
         }
       };
       if (requestIds.length) {
-        await loadExtra('clientRequestIds', () => (
-          db.engine === 'postgres'
-            ? db.query(
-              'SELECT * FROM sales WHERE client_request_id = ANY($1::text[]) OR id::text = ANY($1::text[])',
-              [requestIds],
-            )
-            : db.query(
+        await loadExtra('clientRequestIds', () => {
+          if (db.engine !== 'postgres') {
+            return db.query(
               `SELECT * FROM sales WHERE client_request_id IN (${requestIds.map(() => '?').join(',')}) OR id IN (${requestIds.map(() => '?').join(',')})`,
               [...requestIds, ...requestIds],
-            )
-        ));
+            );
+          }
+          const extraParams = [requestIds];
+          const dateSql = dateRangeSql(db, 'created_at', extraParams, from, to);
+          return db.query(
+            `SELECT * FROM sales WHERE (client_request_id = ANY($1::text[]) OR id::text = ANY($1::text[]))${dateSql}`,
+            extraParams,
+          );
+        });
       }
       if (extraIds.length) {
-        await loadExtra('ids', () => (
-          db.engine === 'postgres'
-            ? db.query(
-              'SELECT * FROM sales WHERE id::text = ANY($1::text[]) OR client_request_id = ANY($1::text[])',
-              [extraIds],
-            )
-            : db.query(
+        await loadExtra('ids', () => {
+          if (db.engine !== 'postgres') {
+            return db.query(
               `SELECT * FROM sales WHERE id IN (${extraIds.map(() => '?').join(',')}) OR client_request_id IN (${extraIds.map(() => '?').join(',')})`,
               [...extraIds, ...extraIds],
-            )
-        ));
+            );
+          }
+          const extraParams = [extraIds];
+          const dateSql = dateRangeSql(db, 'created_at', extraParams, from, to);
+          return db.query(
+            `SELECT * FROM sales WHERE (id::text = ANY($1::text[]) OR client_request_id = ANY($1::text[]))${dateSql}`,
+            extraParams,
+          );
+        });
       }
       if (invoiceNumbers.length) {
         await loadExtra('invoiceNumbers', () => {
           if (db.engine === 'postgres') {
+            const extraParams = [
+              invoiceNumbers.map((n) => n.toUpperCase()),
+              invoiceNumbers.map((n) => `%${n}%`),
+            ];
+            const dateSql = dateRangeSql(db, 'created_at', extraParams, from, to);
             return db.query(
               `SELECT * FROM sales
-               WHERE UPPER(TRIM(invoice_number)) = ANY($1::text[])
-                  OR invoice_number ILIKE ANY($2::text[])`,
-              [
-                invoiceNumbers.map((n) => n.toUpperCase()),
-                invoiceNumbers.map((n) => `%${n}%`),
-              ],
+               WHERE (UPPER(TRIM(invoice_number)) = ANY($1::text[])
+                  OR invoice_number ILIKE ANY($2::text[]))
+               ${dateSql}`,
+              extraParams,
             );
           }
           const clauses = invoiceNumbers

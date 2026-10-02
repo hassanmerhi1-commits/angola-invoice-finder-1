@@ -1012,9 +1012,12 @@ export const api = {
         (opts?.ids || []).map((id) => String(id || '').trim()).filter(Boolean),
       )].slice(0, 80);
       if (extraIds.length) params.set('ids', extraIds.join(','));
+      const datedList = !!(opts?.dateFrom || opts?.dateTo);
       const invoiceNumbers = [...new Set([
         ...(opts?.invoiceNumbers || []),
-        ...pendingRows.map((row) => row.invoiceNumber || row.invoice_number),
+        // A dated list must not ILIKE every older invoice that shares a fragment
+        // of a pending number. Those rows were showing up under any chosen day.
+        ...(datedList ? [] : pendingRows.map((row) => row.invoiceNumber || row.invoice_number)),
       ].map((n) => String(n || '').trim()).filter(Boolean))].slice(0, 80);
       if (invoiceNumbers.length) params.set('invoiceNumbers', invoiceNumbers.join(','));
       const qs = params.toString();
@@ -1094,12 +1097,28 @@ export const api = {
           wideParams.set('limit', '2000');
           const wide = await apiFetch<any[]>(`/sales?${wideParams.toString()}`);
           if (Array.isArray(wide.data) && wide.data.length) {
+            // Use the wide read only to drop pending copies that already exist
+            // on the server. Merging it into the list put every older sale back
+            // under the day the user had picked.
             pendingMod.prunePendingSalesCacheForServerRows(wide.data);
-            merged = mergeSaleRows(merged, wide.data);
             stillPending = readPendingSalesCache(branchId);
           }
         }
-        merged = mergeSaleRows(merged, [...localRows, ...stillPending]);
+        const rangeFrom = opts?.dateFrom?.slice(0, 10) || '';
+        const rangeTo = opts?.dateTo?.slice(0, 10) || '';
+        const onPickedDays = (row: Record<string, unknown>) => {
+          if (!rangeFrom && !rangeTo) return true;
+          const day = timestampLocalDate(row.created_at || row.createdAt || row.date);
+          if (!day) return false;
+          if (rangeFrom && day < rangeFrom) return false;
+          if (rangeTo && day > rangeTo) return false;
+          return true;
+        };
+        merged = mergeSaleRows(
+          merged,
+          [...localRows, ...stillPending].filter(onPickedDays),
+        );
+        if (rangeFrom || rangeTo) merged = merged.filter(onPickedDays);
         const cityRows = merged.filter((row) => !row.pendingSync && !row.pending_sync);
         const acked: string[] = [];
         for (const local of localPending) {
