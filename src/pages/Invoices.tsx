@@ -62,7 +62,7 @@ import { useCreditNotes, useDebitNotes } from '@/hooks/useFiscalDocuments';
 import { getProFormas } from '@/lib/proforma';
 import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
-import { timestampLocalTime } from '@/lib/workingDayAccess';
+import { timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
 import { DocumentFlowViewer } from '@/components/documents/DocumentFlowViewer';
 import { setContextMenuResolver } from '@/lib/contextMenuRegistry';
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
@@ -74,6 +74,31 @@ import { VoidInvoiceDialog } from '@/components/invoice/VoidInvoiceDialog';
 function isProvisionalInvoiceNumber(documentNumber: string): boolean {
   const n = String(documentNumber || '').trim().toUpperCase();
   return n.startsWith('OFF-') || n.startsWith('LOCAL-');
+}
+
+/** Calendar day of the date column, as YYYY-MM-DD. A stored Date string such as "Wed Jul 15 ..." is not a day. */
+function invoiceIssueDay(doc: ERPDocument): string {
+  const raw = String(doc.issueDate || '').trim();
+  const parsed = timestampLocalDate(raw);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(parsed)) return parsed;
+  const head = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(head) ? head : '';
+}
+
+function invoiceFallsOnRange(doc: ERPDocument, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  const day = invoiceIssueDay(doc);
+  if (!day) return false;
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+}
+
+function formatInvoiceDay(doc: ERPDocument, locale: string): string {
+  const day = invoiceIssueDay(doc);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return '—';
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).toLocaleDateString(locale);
 }
 
 /** HH:MM for the list. Older documents were stored without a time. */
@@ -325,14 +350,10 @@ export default function Invoices() {
       dateFrom,
       dateTo,
       limit: 500,
-      ids: uniqueInvoiceKeys([
-        focusInvoiceId,
-        ...pinnedInvoiceDocsRef.current.map((d) => d.id),
-      ]),
-      invoiceNumbers: uniqueInvoiceKeys([
-        focusQ,
-        ...pinnedInvoiceDocsRef.current.map((d) => d.documentNumber),
-      ]),
+      // Only the invoice opened from search. Sending every pinned number made the
+      // server add older sales (substring match) on top of the chosen day.
+      ids: uniqueInvoiceKeys([focusInvoiceId]),
+      invoiceNumbers: uniqueInvoiceKeys([focusQ]),
     };
     const paintDocs = (rows: ERPDocument[]) => {
       if (cancelled) return;
@@ -750,15 +771,10 @@ export default function Invoices() {
     const from = dateFrom.slice(0, 10);
     const to = dateTo.slice(0, 10);
     return documents.filter((d) => {
+      if (!invoiceFallsOnRange(d, from, to)) return false;
+      if (!q) return true;
       const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
-      // The search box still opens an older invoice. A date range must not.
-      if (q && hay.includes(q)) return true;
-      if (from || to) {
-        const day = String(d.issueDate || '').slice(0, 10);
-        if (from && day < from) return false;
-        if (to && day > to) return false;
-      }
-      return true;
+      return hay.includes(q);
     });
   }, [documents, searchTerm, dateFrom, dateTo]);
 
@@ -906,10 +922,8 @@ export default function Invoices() {
       pinnedInvoiceDocsRef.current = upsertInvoiceDocument(pinnedInvoiceDocsRef.current, doc);
       persistPinnedInvoiceDocs(pinnedInvoiceDocsRef.current);
       setDocuments((prev) => upsertInvoiceDocument(prev, doc));
-      if (doc.issueDate && !dateHoldRef.current) {
-        if (dateFrom && doc.issueDate < dateFrom) setDateFrom(doc.issueDate);
-        if (dateTo && doc.issueDate > dateTo) setDateTo(doc.issueDate);
-      }
+      // Do not stretch From/To to this invoice. That reloaded every sale in between,
+      // so picking 30-09 still listed July and August further down.
       setSelectedDocId(doc.id);
       scrollToNexorRow(doc.id);
       void openEditDocumentRef.current(doc);
@@ -953,7 +967,7 @@ export default function Invoices() {
         /* keep empty grid rather than toast on every focus */
       }
     })();
-  }, [location.search, location.hash, location.state, documents, dateFrom, dateTo, listLoading, branches]);
+  }, [location.search, location.hash, location.state, documents, listLoading, branches]);
 
   useEffect(() => {
     const selected = documents.find((d) => d.id === selectedDocId) || null;
@@ -1436,7 +1450,7 @@ export default function Invoices() {
                       )}
                     </td>
                     <td className="px-3 py-1.5 text-muted-foreground">
-                      <div>{new Date(doc.issueDate).toLocaleDateString(locale)}</div>
+                      <div>{formatInvoiceDay(doc, locale)}</div>
                       {documentIssueHour(doc) && (
                         <div className="text-[10px] tabular-nums opacity-70">{documentIssueHour(doc)}</div>
                       )}
