@@ -3537,8 +3537,17 @@ export const api = {
     },
     createDebitNote: (data: Record<string, unknown>) =>
       apiFetch<any>('/fiscal-documents/debit-notes', { method: 'POST', body: JSON.stringify(data) }),
-    listTransportDocuments: (branchId?: string) => {
-      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+    listTransportDocuments: (
+      branchId?: string,
+      opts?: { dateFrom?: string; dateTo?: string; limit?: number; offset?: number },
+    ) => {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branchId', branchId);
+      if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
+      if (opts?.dateTo) params.set('dateTo', opts.dateTo);
+      if (opts?.limit) params.set('limit', String(opts.limit));
+      if (opts?.offset) params.set('offset', String(opts.offset));
+      const qs = params.toString() ? `?${params.toString()}` : '';
       return apiFetch<any[]>(`/fiscal-documents/transport-documents${qs}`);
     },
     createTransportDocument: (data: Record<string, unknown>) =>

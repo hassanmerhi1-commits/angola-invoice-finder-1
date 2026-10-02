@@ -4,6 +4,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
+const { dateRangeSql } = require('../lib/dateRangeFilter');
 const {
   processCreditNote,
   processDebitNote,
@@ -155,18 +156,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         params.push(branchId);
         query += ` AND branch_id = $${params.length}`;
       }
-      const from = String(dateFrom || '').trim().slice(0, 10);
-      const to = String(dateTo || '').trim().slice(0, 10);
-      if (from) {
-        params.push(`${from}T00:00:00`);
-        query += ` AND created_at >= $${params.length}`;
-      }
-      if (to) {
-        params.push(to);
-        query += db.engine === 'postgres'
-          ? ` AND created_at < ($${params.length}::date + INTERVAL '1 day')`
-          : ` AND date(created_at) <= date($${params.length})`;
-      }
+      query += dateRangeSql(db, 'created_at', params, dateFrom, dateTo);
       query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
       params.push(limit, offset);
       const result = await db.query(query, params);
@@ -340,14 +330,23 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
 
   router.get('/transport-documents', async (req, res) => {
     try {
-      const { branchId } = req.query;
+      const { parseListPagination } = require('../lib/listPagination');
+      const { branchId, dateFrom, dateTo } = req.query;
+      const from = String(dateFrom || '').trim().slice(0, 10);
+      const to = String(dateTo || '').trim().slice(0, 10);
+      const { limit, offset } = parseListPagination(req, {
+        defaultLimit: 200,
+        maxLimit: from && to ? 10000 : 2000,
+      });
       let query = 'SELECT * FROM transport_documents WHERE 1=1';
       const params = [];
       if (branchId) {
         params.push(branchId);
         query += ` AND branch_id = $${params.length}`;
       }
-      query += ' ORDER BY created_at DESC';
+      query += dateRangeSql(db, 'created_at', params, from, to);
+      query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      params.push(limit, offset);
       const result = await db.query(query, params);
       res.json(result.rows.map(mapTransportRow));
     } catch (err) {

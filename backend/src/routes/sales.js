@@ -6,6 +6,7 @@ const { peekSequenceNumber } = require('../accounting');
 const { enqueueSaleCreated } = require('../sync/outbox');
 const { signSaleInvoice } = require('../agt/signSale');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
+const { dateRangeSql } = require('../lib/dateRangeFilter');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 
@@ -80,18 +81,7 @@ module.exports = function(broadcastTable) {
         params.push(branchId);
         query += ` AND branch_id = $${params.length}`;
       }
-      if (from) {
-        params.push(from);
-        query += db.engine === 'postgres'
-          ? ` AND created_at >= ($${params.length}::date AT TIME ZONE 'Africa/Luanda')`
-          : ` AND created_at >= $${params.length}||'T00:00:00'`;
-      }
-      if (to) {
-        params.push(to);
-        query += db.engine === 'postgres'
-          ? ` AND created_at < (($${params.length}::date + INTERVAL '1 day') AT TIME ZONE 'Africa/Luanda')`
-          : ` AND date(created_at) <= date($${params.length})`;
-      }
+      query += dateRangeSql(db, 'created_at', params, from, to);
       query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
       params.push(limit, offset);
       const result = await db.query(query, params);

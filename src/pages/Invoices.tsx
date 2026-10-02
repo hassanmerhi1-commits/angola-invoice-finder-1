@@ -366,7 +366,7 @@ export default function Invoices() {
         }
 
         if (type === 'guia_remessa') {
-          const gtRes = await api.fiscalDocuments.listTransportDocuments(listBranchId);
+          const gtRes = await api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts);
           const rows = (gtRes.data || []) as TransportDocument[];
           transportByIdRef.current = new Map(rows.map((row) => [row.id, row]));
           const mapped = rows.map((row) =>
@@ -462,7 +462,7 @@ export default function Invoices() {
           const [purchaseDocs, cnRes, gtRes] = await Promise.all([
             getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice, listOpts),
             api.fiscalDocuments.listCreditNotes(listBranchId, listOpts),
-            api.fiscalDocuments.listTransportDocuments(listBranchId),
+            api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts),
           ]);
           const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
@@ -487,7 +487,7 @@ export default function Invoices() {
             : Promise.resolve({ data: [] as CreditNote[] }),
           proformaDocsPromise,
           loadFiscalTransport
-            ? api.fiscalDocuments.listTransportDocuments(listBranchId)
+            ? api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts)
             : Promise.resolve({ data: [] as TransportDocument[] }),
         ]);
 
