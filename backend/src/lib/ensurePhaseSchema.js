@@ -678,6 +678,10 @@ async function ensureStockMovementLookupIndexes(db) {
         `CREATE INDEX IF NOT EXISTS idx_stock_movements_product_created
          ON stock_movements (product_id, created_at DESC)`,
       );
+      await db.query(
+        `CREATE INDEX IF NOT EXISTS idx_stock_movements_product_wh_created
+         ON stock_movements (product_id, warehouse_id, created_at DESC)`,
+      );
     } catch (err) {
       console.warn('[SCHEMA] stock_movements product_created index:', err.message);
     }

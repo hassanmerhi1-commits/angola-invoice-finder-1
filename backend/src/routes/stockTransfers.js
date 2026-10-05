@@ -34,10 +34,20 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const { branchId } = req.query;
+      const openOnly = ['1', 'true', 'yes'].includes(String(req.query.openOnly || '').toLowerCase());
       let query = 'SELECT * FROM stock_transfers';
       const params = [];
-      if (branchId) { query += ' WHERE from_branch_id = $1 OR to_branch_id = $1'; params.push(branchId); }
+      const where = [];
+      if (branchId) {
+        where.push('(from_branch_id = $1 OR to_branch_id = $1)');
+        params.push(branchId);
+      }
+      if (openOnly) {
+        where.push(`LOWER(COALESCE(status, '')) IN ('pending', 'in_transit')`);
+      }
+      if (where.length) query += ` WHERE ${where.join(' AND ')}`;
       query += ' ORDER BY created_at DESC';
+      if (openOnly) query += ' LIMIT 300';
       const result = await db.query(query, params);
       const transfers = result.rows || [];
       if (transfers.length > 0) {

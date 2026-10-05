@@ -903,7 +903,7 @@ export function InventoryPendingTransfersPanel({
   const loadTransfers = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.stockTransfers.list();
+      const res = await api.stockTransfers.list(undefined, { openOnly: true });
       if (res.error) throw new Error(res.error);
       setTransfers((res.data || []).map((row) => mapStockTransferRow(row as Record<string, unknown>)));
     } catch (error) {

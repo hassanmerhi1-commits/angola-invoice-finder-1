@@ -36,6 +36,133 @@ const {
 
 const SEQUENCE_DOCUMENT_TYPES = new Set(Object.keys(DOCUMENT_SEQUENCE_CONFIG));
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Latest movements for a few product ids.
+ * A single WHERE product_id IN (...) AND warehouse_id = ? ORDER BY created_at DESC
+ * often walks idx_stock_movements_warehouse_created (newest warehouse rows first)
+ * until it happens to hit this SKU. On a busy branch that is the whole ledger.
+ * One index lookup per product id stays on (product_id, warehouse_id, created_at).
+ */
+async function selectLatestStockMovements(db, {
+  ids,
+  warehouseId,
+  referenceType,
+  dateFrom,
+  dateTo,
+  adjustmentsOnly,
+  limit,
+}) {
+  const lim = Math.min(Math.max(parseInt(String(limit || ''), 10) || 200, 1), 5000);
+  const uuidIds = (ids || []).map((id) => String(id || '').trim()).filter((id) => UUID_RE.test(id));
+  const warehouseUuid = UUID_RE.test(String(warehouseId || '').trim())
+    ? String(warehouseId).trim()
+    : '';
+
+  if (db.engine === 'postgres' && uuidIds.length > 0) {
+    const params = [uuidIds];
+    let inner = 'product_id = pid.id';
+    let p = 2;
+    if (warehouseUuid) {
+      params.push(warehouseUuid);
+      inner += ` AND warehouse_id = $${p++}::uuid`;
+    }
+    if (referenceType) {
+      params.push(referenceType);
+      inner += ` AND reference_type = $${p++}`;
+    }
+    const from = String(dateFrom || '').trim();
+    const to = String(dateTo || '').trim();
+    if (from) {
+      params.push(`${from}T00:00:00`);
+      inner += ` AND created_at >= $${p++}::timestamptz`;
+    }
+    if (to) {
+      params.push(to);
+      inner += ` AND created_at < ($${p++}::date + INTERVAL '1 day')`;
+    }
+    if (adjustmentsOnly) {
+      inner += ` AND COALESCE(reference_type, '') <> 'adjustment_void'
+        AND COALESCE(notes, '') NOT LIKE '%[ANULADO]%'
+        AND (
+          reference_number ~* '^AJ-'
+          OR LOWER(COALESCE(reference_type, '')) IN (
+            'adjustment', 'correction', 'damage', 'initial', 'loss', 'expired',
+            'internal_use', 'sample', 'donation'
+          )
+        )`;
+    }
+    params.push(lim);
+    const limitRef = `$${p}`;
+    const result = await db.query(
+      `SELECT sm.id, sm.product_id, sm.warehouse_id, sm.movement_type,
+              sm.quantity, sm.unit_cost, sm.reference_type, sm.reference_id,
+              sm.reference_number, sm.notes, sm.created_by, sm.created_at
+       FROM unnest($1::uuid[]) AS pid(id)
+       JOIN LATERAL (
+         SELECT id, product_id, warehouse_id, movement_type,
+                quantity, unit_cost, reference_type, reference_id,
+                reference_number, notes, created_by, created_at
+         FROM stock_movements
+         WHERE ${inner}
+         ORDER BY created_at DESC
+         LIMIT ${limitRef}
+       ) sm ON true
+       ORDER BY sm.created_at DESC
+       LIMIT ${limitRef}`,
+      params,
+    );
+    return result.rows || [];
+  }
+
+  let query = `SELECT sm.id, sm.product_id, sm.warehouse_id, sm.movement_type,
+      sm.quantity, sm.unit_cost, sm.reference_type, sm.reference_id,
+      sm.reference_number, sm.notes, sm.created_by, sm.created_at
+      FROM stock_movements sm
+      WHERE 1=1`;
+  const params = [];
+  let idx = 1;
+  const filterIds = uuidIds.length > 0 ? uuidIds : (ids || []).map((id) => String(id || '').trim()).filter(Boolean);
+  if (filterIds.length > 0) {
+    query += ` AND sm.product_id IN (${filterIds.map(() => `$${idx++}`).join(', ')})`;
+    params.push(...filterIds);
+  }
+  if (warehouseId) {
+    query += ` AND sm.warehouse_id = $${idx++}`;
+    params.push(warehouseId);
+  }
+  if (referenceType) {
+    query += ` AND sm.reference_type = $${idx++}`;
+    params.push(referenceType);
+  }
+  const from = String(dateFrom || '').trim();
+  const to = String(dateTo || '').trim();
+  if (from) {
+    query += ` AND sm.created_at >= $${idx++}::timestamptz`;
+    params.push(`${from}T00:00:00`);
+  }
+  if (to) {
+    query += ` AND sm.created_at < ($${idx++}::date + INTERVAL '1 day')`;
+    params.push(to);
+  }
+  if (adjustmentsOnly) {
+    query += ` AND COALESCE(sm.reference_type, '') <> 'adjustment_void'
+      AND COALESCE(sm.notes, '') NOT LIKE '%[ANULADO]%'
+      AND (
+        sm.reference_number ~* '^AJ-'
+        OR LOWER(COALESCE(sm.reference_type, '')) IN (
+          'adjustment', 'correction', 'damage', 'initial', 'loss', 'expired',
+          'internal_use', 'sample', 'donation'
+        )
+      )`;
+  }
+  query += ` ORDER BY sm.created_at DESC LIMIT $${idx++}`;
+  params.push(lim);
+  const result = await db.query(query, params);
+  return result.rows || [];
+}
+
 function mapStockMovementRow(row) {
   const createdBy = String(row.created_by || '').trim();
   const createdByName = String(row.created_by_name || '').trim();
@@ -117,51 +244,16 @@ module.exports = function(broadcastTable) {
         return res.json([]);
       }
 
-      // No joins on the ledger scan. Names are filled from a small id lookup afterwards.
-      let query = `SELECT sm.id, sm.product_id, sm.warehouse_id, sm.movement_type,
-        sm.quantity, sm.unit_cost, sm.reference_type, sm.reference_id,
-        sm.reference_number, sm.notes, sm.created_by, sm.created_at
-        FROM stock_movements sm
-        WHERE 1=1`;
-      const params = [];
-      let idx = 1;
-      if (ids.length > 0) {
-        query += ` AND sm.product_id IN (${ids.map(() => `$${idx++}`).join(', ')})`;
-        params.push(...ids);
-      }
-      if (warehouseId) { query += ` AND sm.warehouse_id = $${idx++}`; params.push(warehouseId); }
-      if (referenceType) { query += ` AND sm.reference_type = $${idx++}`; params.push(referenceType); }
-
-      const from = String(dateFrom || '').trim();
-      const to = String(dateTo || '').trim();
-      if (from) {
-        query += ` AND sm.created_at >= $${idx++}::timestamptz`;
-        params.push(`${from}T00:00:00`);
-      }
-      if (to) {
-        query += ` AND sm.created_at < ($${idx++}::date + INTERVAL '1 day')`;
-        params.push(to);
-      }
-
       const onlyAdj = String(adjustmentsOnly || '').toLowerCase();
-      if (onlyAdj === '1' || onlyAdj === 'true' || onlyAdj === 'yes') {
-        // Include AJ-* stock entry/exit docs even when reason was purchase/transfer.
-        query += ` AND COALESCE(sm.reference_type, '') <> 'adjustment_void'
-          AND COALESCE(sm.notes, '') NOT LIKE '%[ANULADO]%'
-          AND (
-            sm.reference_number ~* '^AJ-'
-            OR LOWER(COALESCE(sm.reference_type, '')) IN (
-              'adjustment', 'correction', 'damage', 'initial', 'loss', 'expired',
-              'internal_use', 'sample', 'donation'
-            )
-          )`;
-      }
-
-      const lim = Math.min(Math.max(parseInt(String(limit || ''), 10) || 200, 1), 5000);
-      query += ` ORDER BY sm.created_at DESC LIMIT $${idx++}`;
-      params.push(lim);
-      const result = await db.query(query, params);
-      const rows = result.rows || [];
+      const rows = await selectLatestStockMovements(db, {
+        ids,
+        warehouseId,
+        referenceType,
+        dateFrom,
+        dateTo,
+        adjustmentsOnly: onlyAdj === '1' || onlyAdj === 'true' || onlyAdj === 'yes',
+        limit,
+      });
       if (rows.length === 0) {
         return res.json([]);
       }

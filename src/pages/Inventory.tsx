@@ -167,29 +167,6 @@ export default function Inventory() {
     deleteProduct,
   } = useProducts(catalogListBranchId, { light: true, enabled: false });
 
-  // Warm every other switchable branch's grid in the background so hopping between
-  // branches (HQ workflow) hits an instant cache instead of a cold, several-second
-  // network round trip each time. Staggered + skips branches already warm.
-  useEffect(() => {
-    if (!canSwitchBranch) return;
-    const branchList = allBranches.length > 0 ? allBranches : branches;
-    const targets = branchList.filter(
-      (b) => b.id && b.id !== listBranchId && !isInventoryGridCacheFresh(b.id, false, 90_000),
-    );
-    if (targets.length === 0) return;
-    let cancelled = false;
-    const timers = targets.map((b, i) =>
-      setTimeout(() => {
-        if (cancelled) return;
-        void fetchInventoryGrid({ branchId: b.id, consolidated: false }).catch(() => {});
-      }, 800 + i * 600),
-    );
-    return () => {
-      cancelled = true;
-      timers.forEach(clearTimeout);
-    };
-  }, [canSwitchBranch, allBranches, branches, listBranchId]);
-
   const productsById = useMemo(
     () => new Map(inventoryRows.map((p) => [p.id, p])),
     [inventoryRows],
@@ -322,6 +299,8 @@ export default function Inventory() {
   const stockMovementsScopeRef = useRef<string>('');
   const stockMovementsLoadedAtRef = useRef(0);
   const stockMovementsGenRef = useRef(0);
+  const stockMovementsInflightRef = useRef('');
+  const stockMovementsCacheRef = useRef(new Map<string, { at: number; rows: StockMovement[] }>());
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [stockMovementsLoading, setStockMovementsLoading] = useState(false);
@@ -329,7 +308,14 @@ export default function Inventory() {
   const loadStockMovements = useCallback(async (force = false) => {
     const sku = String(selectedProduct?.sku || '').trim();
     const scopeKey = `${isHeadOffice ? 'hq' : String(currentBranch?.id || '')}|${sku || 'none'}`;
-    if (
+    const cached = stockMovementsCacheRef.current.get(scopeKey);
+    if (cached) {
+      setStockMovements(cached.rows);
+      setStockMovementsLoading(false);
+      stockMovementsScopeRef.current = scopeKey;
+      stockMovementsLoadedAtRef.current = cached.at;
+      if (!force && Date.now() - cached.at < 60_000) return;
+    } else if (
       !force
       && stockMovementsScopeRef.current === scopeKey
       && Date.now() - stockMovementsLoadedAtRef.current < 60_000
@@ -337,6 +323,7 @@ export default function Inventory() {
     ) {
       return;
     }
+    if (!force && stockMovementsInflightRef.current === scopeKey) return;
     const gen = ++stockMovementsGenRef.current;
     // Product tabs: fetch only this SKU's movements (not the last 500 of everything).
     if (!sku) {
@@ -346,7 +333,8 @@ export default function Inventory() {
       stockMovementsLoadedAtRef.current = Date.now();
       return;
     }
-    setStockMovementsLoading(true);
+    stockMovementsInflightRef.current = scopeKey;
+    if (!cached) setStockMovementsLoading(true);
     try {
       const result = await api.transactions.stockMovements({
         warehouseId: isHeadOffice ? undefined : currentBranch?.id,
@@ -379,31 +367,21 @@ export default function Inventory() {
           createdAt: m.created_at || m.createdAt || '',
         }));
         setStockMovements(mapped);
-      } else {
+        const at = Date.now();
+        stockMovementsCacheRef.current.set(scopeKey, { at, rows: mapped });
+      } else if (!cached) {
         setStockMovements([]);
       }
     } catch {
       if (gen !== stockMovementsGenRef.current) return;
-      setStockMovements([]);
+      if (!cached) setStockMovements([]);
     }
+    if (stockMovementsInflightRef.current === scopeKey) stockMovementsInflightRef.current = '';
     if (gen !== stockMovementsGenRef.current) return;
     setStockMovementsLoading(false);
     stockMovementsScopeRef.current = scopeKey;
     stockMovementsLoadedAtRef.current = Date.now();
   }, [currentBranch?.id, isHeadOffice, selectedProduct?.id, selectedProduct?.sku]);
-
-  const MOVEMENT_TABS = useMemo(
-    () =>
-      new Set([
-        'extracto',
-        'mes',
-        'grafico',
-        'preco-compra',
-        'cost-history',
-        'vendas-mensais',
-      ]),
-    [],
-  );
 
   const sellingPriceBySku = useMemo(
     () => buildSellingPriceBySku(inventoryRows, sellingPriceHints),
@@ -640,15 +618,41 @@ export default function Inventory() {
   );
 
   useEffect(() => {
+    if (!canSwitchBranch || selectedProduct) return;
+    const branchList = allBranches.length > 0 ? allBranches : branches;
+    const targets = branchList.filter(
+      (b) => b.id && b.id !== listBranchId && !isInventoryGridCacheFresh(b.id, false, 90_000),
+    );
+    if (targets.length === 0) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        for (const b of targets) {
+          if (cancelled) return;
+          try {
+            await fetchInventoryGrid({ branchId: b.id, consolidated: false });
+          } catch {
+            /* next branch */
+          }
+        }
+      })();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [canSwitchBranch, selectedProduct, allBranches, branches, listBranchId]);
+
+  useEffect(() => {
     if (!selectedProduct?.sku) {
       setStockMovements([]);
       setStockMovementsLoading(false);
       return;
     }
-    // Prefetch as soon as a row is selected so Extracto / Mês / Qtd detalhada open from cache.
+    // One fetch per product. Tab clicks must not start another ledger scan.
     void loadStockMovements();
     prefetchStockBySku(String(selectedProduct.sku).trim(), selectedProduct.id);
-  }, [activeTab, loadStockMovements, MOVEMENT_TABS, selectedProduct?.id, selectedProduct?.sku]);
+  }, [loadStockMovements, selectedProduct?.id, selectedProduct?.sku]);
 
   const gridProducts = useMemo(() => {
     let rows = displayProducts;
@@ -749,26 +753,6 @@ export default function Inventory() {
     inventoryRows,
     openEditProductDialog,
   ]);
-
-  // The first movement request of a session carries a warm-up cost the later ones do not.
-  // Spend it on the first row while the user is still reading the list, so the first tab
-  // they actually open does not have to wait for it.
-  const movementPathWarmedRef = useRef(false);
-  useEffect(() => {
-    if (movementPathWarmedRef.current) return;
-    const first = gridProducts[0];
-    const sku = String(first?.sku || '').trim();
-    if (!sku) return;
-    movementPathWarmedRef.current = true;
-    void api.transactions
-      .stockMovements({
-        warehouseId: isHeadOffice ? undefined : currentBranch?.id,
-        sku,
-        productId: first.id,
-        limit: 1,
-      })
-      .catch(() => undefined);
-  }, [gridProducts, isHeadOffice, currentBranch?.id]);
 
   const navigateProduct = useCallback((direction: -1 | 1) => {
     if (!gridProducts.length) return;

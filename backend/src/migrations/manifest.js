@@ -82,6 +82,7 @@ const MIGRATION_FILES = [
   '075_coa_ledger_audit_speed.sql',
   '076_drop_jel_entry_date_trigger.sql',
   '077_expenses_payee_nif.sql',
+  '078_stock_movements_product_wh_created.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

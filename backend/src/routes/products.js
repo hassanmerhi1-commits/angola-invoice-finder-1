@@ -1966,12 +1966,7 @@ module.exports = function(broadcastTable) {
        LIMIT 1`,
       [row.sku],
     );
-    let src = sibling.rows[0];
-    if (!src) {
-      const bySku = await loadLatestPurchaseSupplierBySku();
-      const hit = bySku.get(canonicalSkuString(row.sku).toLowerCase());
-      if (hit) src = hit;
-    }
+    const src = sibling.rows[0];
     if (!src) return row;
     return {
       ...row,

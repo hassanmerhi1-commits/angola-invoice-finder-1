@@ -1677,8 +1677,12 @@ export const api = {
 
   // Stock Transfers
   stockTransfers: {
-    list: async (branchId?: string) => {
-      const endpoint = `/stock-transfers${branchId ? `?branchId=${branchId}` : ''}`;
+    list: async (branchId?: string, opts?: { openOnly?: boolean }) => {
+      const sp = new URLSearchParams();
+      if (branchId) sp.set('branchId', branchId);
+      if (opts?.openOnly) sp.set('openOnly', '1');
+      const qs = sp.toString();
+      const endpoint = `/stock-transfers${qs ? `?${qs}` : ''}`;
       if (isElectronMode()) {
         const apiResult = await apiFetch<any[]>(endpoint);
         if (apiResult.data !== undefined) return apiResult;
