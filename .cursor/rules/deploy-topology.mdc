@@ -14,35 +14,68 @@ alwaysApply: true
 
 ## Live server = OTHER physical machine
 
-- Runs Docker (`nexor-backend`), Postgres, and serves the API clients talk to
+- No Docker. Native **PostgreSQL 18** on `127.0.0.1:5432` (db `kwanza_erp`) + the backend as the
+  Windows service **`NexorBackend`** (NSSM). Install dir `C:\NEXOR ERP`, creds in `database.env`.
 - Server checkout (on that machine): typically `C:\Users\user\Documents\GitHub\angola-invoice-finder`
 - Health on the **server**: `http://127.0.0.1:3000/api/health`
 - Clients (Electron / browsers / this PC) connect to that server over the network (often Tailscale)
 
+## The server operator works in the DESKTOP APP, not the browser
+
+The server PC is also a till. The user is almost always on the NEXOR icon there.
+
+`electron/main.cjs` `getRendererSource()`: when the IP file says `postgres`, `isServerMode` is true
+and it always returns `getLocalRendererSource()` — the UI **packed into the installer**. So:
+
+- **Backend-only fix** → server apply (below) is enough; the app picks it up after the restart.
+- **Any `src/` (UI) fix** → `npm run build:webapp` only updates `http://SERVER:3000/app` and the
+  laptop thin clients. It does **nothing** for the server's desktop icon. That needs a rebuilt
+  installer. Do not report a UI fix as applied on the server until a new installer is installed.
+
+Version stays **1.3.8**, so publish by moving the tag (triggers `.github/workflows/build-and-release.yml`):
+
+```powershell
+git tag -f v1.3.8 <sha>
+git push origin refs/tags/v1.3.8 --force
+```
+
+Then on the server: download `NEXOR-ERP-1.3.8-x64.exe` from the v1.3.8 release, close NEXOR, run as
+administrator. electron-updater will not offer it automatically (same version number).
+
 ## Release + apply workflow
 
-1. **Here (client):** implement → commit → tag → `git push origin main` + tag (e.g. `v1.1.x`)
-2. **On the server machine:** pull/reset to `origin/main`, rebuild backend, rebuild webapp, run DB repair scripts if needed
-3. Never pretend step 2 succeeded if Docker is only available on the server
+1. **Here (client):** implement → commit → `git push origin main` (+ move the tag when UI changed)
+2. **On the server machine:** pull/reset to `origin/main`, rebuild webapp, migrate, restart service
+3. Never pretend step 2 succeeded — it can only run on the server PC
 
-### Server apply (run on server, not this client)
+### Server apply (run on server, not this client — Administrator PowerShell)
 
 ```powershell
 cd "C:\Users\user\Documents\GitHub\angola-invoice-finder"
 git fetch origin
 git reset --hard origin/main
-docker compose up -d --build backend
 npm run build:webapp
+cd backend
+npm run migrate
+npm run ensure-schema
+Restart-Service NexorBackend
 Invoke-RestMethod http://127.0.0.1:3000/api/health
-# when a repair script shipped:
-# docker exec -it nexor-backend node scripts/<repair-script>.js
 ```
 
-`npm run build:webapp` must copy `dist/` into `backend/webapp/` (the npm script does this). If `http://SERVER:3000/app` is a white page, the HTML is pointing at missing JS — on the server run `.\scripts\fix-webapp-on-server.ps1` then Ctrl+F5.
+The service does **not** run migrations on start (the old docker entrypoint did), so `npm run migrate`
+is required after every pull. `Restart-Service` fails without elevation. `npm run build:webapp` copies
+`dist/` into `backend/webapp/`. If `http://SERVER:3000/app` is a white page, the HTML points at missing
+JS — on the server run `.\scripts\fix-webapp-on-server.ps1` then Ctrl+F5.
 
 ## Agent behavior
 
 - **Never commit, tag, or `git push` (no release) unless the user explicitly asks** in that message. Finish the code fix, then ask before releasing.
-- After the user asks to “release and apply”: push from this machine, then give **server** apply steps — do not invent local Docker success
+- When the user does ask to send/release and the change touched `src/`, publish the installer in the
+  same pass — the server desktop app is the thing they are looking at. Do not leave them with
+  "it works in the browser".
+- After the user asks to “release and apply”: push from this machine, then give **server** apply steps — never invent local success
 - Do not re-ask “where is the server?” — use this rule
+- Do not bump the version off 1.3.8 (AGT license). Do not commit `.tmp-ci-logs.zip` or `docker-compose.override.yml`.
+- PowerShell here is PS 7; commit messages use `git commit -m @"..."@` (bash HEREDOC fails). `gh` is not
+  authenticated — use the public GitHub REST API to check runs/releases.
 - If remote shell/SSH to the server is not configured in the session, say clearly that apply must be run on the server PC (or ask once for SSH host to add here)
