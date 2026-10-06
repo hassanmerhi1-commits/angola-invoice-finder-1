@@ -102,9 +102,6 @@ export interface Sale {
   agtStatus?: 'pending' | 'validated' | 'rejected' | 'submitted' | 'approved';
   agtCode?: string;
   agtValidatedAt?: string;
-  agtStatus?: 'pending' | 'validated' | 'rejected';
-  agtCode?: string;
-  agtValidatedAt?: string;
   createdAt: string;
   syncedAt?: string;
   syncedToMain?: boolean;

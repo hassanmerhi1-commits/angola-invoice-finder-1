@@ -3,6 +3,9 @@ import { TranslationKeys } from "./en";
 export const pt: TranslationKeys = {
   // Common
   common: {
+    user: "Utilizador",
+    type: "Tipo",
+    new: "Novo",
     save: "Guardar",
     saveChanges: "Guardar Alterações",
     cancel: "Cancelar",
@@ -271,6 +274,7 @@ export const pt: TranslationKeys = {
 
   // POS
   pos: {
+    noStockProducts: "Nenhum produto com existências disponíveis. Ajuste o filtro ou seleccione outra filial.",
     title: "Ponto de Venda",
     subtitle: "Processar vendas e gerar facturas",
     searchProducts: "Pesquisar produtos...",
@@ -300,6 +304,7 @@ export const pt: TranslationKeys = {
   },
 
   posUi: {
+    credit: "A prazo",
     scannerReady: "Scanner Pronto",
     clientLabel: "Cliente",
     walkInCustomer: "Consumidor final",
@@ -631,6 +636,7 @@ export const pt: TranslationKeys = {
   },
 
   chartsUi: {
+    methodMobile: "Mobile",
     paymentMethods: "Métodos de Pagamento",
     methodCash: "Numerário",
     methodCard: "Cartão",
@@ -1883,6 +1889,7 @@ export const pt: TranslationKeys = {
   },
 
   reportsUi: {
+    date: "Data",
     // Common
     exportExcel: "Exportar Excel",
     print: "Imprimir",
@@ -2975,7 +2982,6 @@ export const pt: TranslationKeys = {
     colRemainingQty: "Restante",
     colPayment: "Pagamento",
     colCashier: "Caixa",
-    colItems: "Itens",
     invoiceFullyCredited: "Totalmente creditada",
     selectInvoiceHint: "Escolha uma factura de venda concluída. Só produtos dessa venda podem ser creditados.",
     creditSummarySubtotal: "Subtotal",
@@ -3883,6 +3889,7 @@ export const pt: TranslationKeys = {
   },
 
   approvalsUi: {
+    noPendingRequests: "Sem pedidos pendentes",
     title: "Aprovações",
     subtitle: "Fluxos de aprovação para documentos e transacções",
     tabRequests: "Pedidos",
@@ -4251,6 +4258,7 @@ export const pt: TranslationKeys = {
   },
 
   branchesUi: {
+    deleteSuccess: "Filial removida.",
     title: "Gestão de Filiais",
     subtitle: "Gerir as filiais e localizações da empresa",
     newBranch: "Nova Filial",
@@ -5037,6 +5045,7 @@ export const pt: TranslationKeys = {
   },
 
   purchaseOrdersUi: {
+    approveOrder: "Aprovar Encomenda",
     // Status
     statusDraft: "Rascunho",
     statusPending: "Pendente",
@@ -5076,6 +5085,8 @@ export const pt: TranslationKeys = {
   },
 
   purchaseInvoicesUi: {
+    approveFailedTitle: "Falha ao aprovar",
+    approveFailedDesc: "Não foi possível aprovar a factura de compra",
     // Status (faturas de compra)
     statusConfirmed: "Confirmado",
     statusCancelled: "Anulado",
@@ -6038,6 +6049,7 @@ export const pt: TranslationKeys = {
   },
 
   chartOfAccountsUi: {
+    accountNameLabel: "Nome da Conta",
     tabCustomers: "Clientes",
     tabSuppliers: "Fornecedores",
     tabCash: "Caixa",

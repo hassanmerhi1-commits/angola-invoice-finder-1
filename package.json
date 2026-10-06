@@ -17,6 +17,7 @@
     "build:webapp": "vite build --mode webapp && node scripts/copy-webapp.mjs",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "preview": "vite preview",
     "electron:dev": "node scripts/electron-dev-preflight.cjs && concurrently --success first -n vite,electron \"npm run dev\" \"wait-on http://localhost:18080 -t 120000 && node scripts/launch-electron-dev.cjs\"",
     "rebuild:backend": "node scripts/rebuild-backend-native.mjs",

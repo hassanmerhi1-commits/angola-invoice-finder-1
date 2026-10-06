@@ -720,7 +720,7 @@ export default function POS() {
       const friendly = /authentication required|não autenticad|unauthorized|401|invalid.*(token|session)|expired.*(token|session)|token.*expired|sess(ã|a)o.*expir/i.test(detail)
         ? t.posUi.checkoutAuthRequired
         : /stock insuficiente|chk_products_stock_nonneg/i.test(detail)
-          ? t.documentsUi.insufficientStockToCompleteSaleInvoice
+          ? t.documentFormUi.insufficientStockToCompleteSaleInvoice
           : /failed to fetch|timeout|econnrefused|network/i.test(detail)
             ? t.posUi.checkoutNetworkError
             : detail;

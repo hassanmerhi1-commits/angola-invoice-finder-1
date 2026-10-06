@@ -9,6 +9,7 @@ const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { dateRangeSql } = require('../lib/dateRangeFilter');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
+const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 
 function isPaymentMethodConstraintError(err) {
   const msg = String(err?.message || err || '');
@@ -54,6 +55,8 @@ async function commitSaleCreation(client, sale, body) {
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
+  router.use(attachUserBranchScope);
+
   // READ — default capped list; items loaded in one IN() query (no N+1).
   router.get('/', async (req, res) => {
     try {
@@ -75,10 +78,14 @@ module.exports = function(broadcastTable) {
         defaultLimit: 200,
         maxLimit: dated ? 10000 : 2000,
       });
+      const scopedBranchId = resolveListBranchId(req, branchId);
+      if (scopedBranchId === undefined) {
+        return res.json([]);
+      }
       let query = 'SELECT * FROM sales WHERE 1=1';
       const params = [];
-      if (branchId) {
-        params.push(branchId);
+      if (scopedBranchId) {
+        params.push(scopedBranchId);
         query += ` AND branch_id = $${params.length}`;
       }
       query += dateRangeSql(db, 'created_at', params, from, to);

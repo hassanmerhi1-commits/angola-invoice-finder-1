@@ -2,6 +2,7 @@
  * Balan�o Patrimonial (Balance Sheet) � live balances from chart of accounts + journals.
  */
 
+import { useMemo, useState } from 'react';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

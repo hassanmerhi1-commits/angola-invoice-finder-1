@@ -63,7 +63,7 @@ module.exports = function(broadcastTable) {
   const router = express.Router();
 
   // Get all journal entries with lines
-  router.get('/', async (req, res) => {
+  router.get('/', requirePermission('accounting_view', 'accounting_create', 'accounting_journal'), async (req, res) => {
     try {
       const { branchId, referenceType, startDate, endDate, q, accountCode } = req.query;
       const dated = !!(String(startDate || '').trim() && String(endDate || '').trim());
@@ -174,7 +174,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Get single journal entry
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', requirePermission('accounting_view', 'accounting_create', 'accounting_journal'), async (req, res) => {
     try {
       const { id } = req.params;
       const result = await db.query(`${ENTRY_HEADER_SELECT} WHERE je.id = $1`, [id]);
@@ -195,7 +195,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Get entries by reference
-  router.get('/reference/:type/:id', async (req, res) => {
+  router.get('/reference/:type/:id', requirePermission('accounting_view', 'accounting_create', 'accounting_journal'), async (req, res) => {
     try {
       const { type, id } = req.params;
       const result = await db.query(
@@ -352,7 +352,7 @@ module.exports = function(broadcastTable) {
   });
 
   // Summary: totals by reference type
-  router.get('/reports/summary', async (req, res) => {
+  router.get('/reports/summary', requirePermission('accounting_view', 'accounting_create', 'accounting_journal'), async (req, res) => {
     try {
       const { startDate, endDate, branchId } = req.query;
       let query = `

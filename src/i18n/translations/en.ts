@@ -1,6 +1,9 @@
 export const en = {
   // Common
   common: {
+    user: "User",
+    type: "Type",
+    new: "New",
     save: "Save",
     saveChanges: "Save changes",
     cancel: "Cancel",
@@ -269,6 +272,7 @@ export const en = {
 
   // POS
   pos: {
+    noStockProducts: "No products with available stock. Change branch or filters.",
     title: "Point of Sale",
     subtitle: "Process sales and generate invoices",
     searchProducts: "Search products...",
@@ -298,6 +302,7 @@ export const en = {
   },
 
   posUi: {
+    credit: "On account",
     scannerReady: "Scanner Ready",
     clientLabel: "Client",
     walkInCustomer: "Walk-in customer",
@@ -629,6 +634,7 @@ export const en = {
   },
 
   chartsUi: {
+    methodMobile: "Mobile",
     paymentMethods: "Payment methods",
     methodCash: "Cash",
     methodCard: "Card",
@@ -1881,6 +1887,7 @@ export const en = {
   },
 
   reportsUi: {
+    date: "Date",
     // Common
     exportExcel: "Export Excel",
     print: "Print",
@@ -2973,7 +2980,6 @@ export const en = {
     colRemainingQty: "Remaining",
     colPayment: "Payment",
     colCashier: "Cashier",
-    colItems: "Items",
     invoiceFullyCredited: "Fully credited",
     selectInvoiceHint: "Choose a completed sale invoice. Only products from that sale can be credited.",
     creditSummarySubtotal: "Subtotal",
@@ -3880,6 +3886,7 @@ export const en = {
   },
 
   approvalsUi: {
+    noPendingRequests: "No pending requests",
     title: "Approvals",
     subtitle: "Approval workflows for documents and transactions",
     tabRequests: "Requests",
@@ -4248,6 +4255,7 @@ export const en = {
   },
 
   branchesUi: {
+    deleteSuccess: "Branch removed.",
     title: "Branch management",
     subtitle: "Manage company branches and locations",
     newBranch: "New branch",
@@ -5035,6 +5043,7 @@ export const en = {
   },
 
   purchaseOrdersUi: {
+    approveOrder: "Approve Order",
     // Status
     statusDraft: "Draft",
     statusPending: "Pending",
@@ -5074,6 +5083,8 @@ export const en = {
   },
 
   purchaseInvoicesUi: {
+    approveFailedTitle: "Failed to approve",
+    approveFailedDesc: "Could not approve the invoice",
     // Status (purchase invoices)
     statusConfirmed: "Confirmed",
     statusCancelled: "Cancelled",
@@ -6036,6 +6047,7 @@ export const en = {
   },
 
   chartOfAccountsUi: {
+    accountNameLabel: "Account name",
     tabCustomers: "Customers",
     tabSuppliers: "Suppliers",
     tabCash: "Cash",
