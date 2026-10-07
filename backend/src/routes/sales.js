@@ -9,7 +9,7 @@ const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { dateRangeSql } = require('../lib/dateRangeFilter');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
-const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
+const { attachUserBranchScope, resolveListBranchId, resolveWriteBranchId } = require('../middleware/branchScope');
 
 function isPaymentMethodConstraintError(err) {
   const msg = String(err?.message || err || '');
@@ -205,6 +205,20 @@ module.exports = function(broadcastTable) {
   // CREATE: Delegated to Transaction Engine
   // POS cashiers (pos_access) and back-office invoicing (invoice_create) may create sales.
   router.post('/', requirePermission('pos_access', 'invoice_create'), async (req, res) => {
+    // A branch-locked user may only sell from their own branch. Correct the
+    // branch instead of rejecting: a bad branchId must never be the reason a
+    // cashier cannot finish a sale. Head office keeps forceBranchId null and is
+    // untouched. processSale reads only saleData.branchId, so this is the single
+    // field that decides where the stock movement and journal entry land.
+    const writeBranchId = resolveWriteBranchId(req.branchScope, req.body?.branchId);
+    if (req.body && writeBranchId && req.body.branchId !== writeBranchId) {
+      console.warn(
+        `[SALES CREATE] branch corrected user=${String(req.user?.id || '?').slice(0, 8)} `
+        + `sent=${String(req.body.branchId || 'none').slice(0, 8)} `
+        + `used=${String(writeBranchId).slice(0, 8)}`,
+      );
+      req.body.branchId = writeBranchId;
+    }
     let client = await db.pool.connect();
     const { trackFirstSqlError } = require('../lib/trackFirstSqlError');
     trackFirstSqlError(client);

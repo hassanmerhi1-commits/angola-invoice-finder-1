@@ -203,6 +203,18 @@ function resolveListBranchId(req, requestedBranchId) {
   return raw || undefined;
 }
 
+/**
+ * Branch a write must land on. A branch-locked user's own branch always wins,
+ * so a forged or stale branchId cannot post stock and journal entries onto
+ * another branch's books. Head office keeps whatever it asked for. Returns null
+ * when nothing is known, leaving the caller's own required-param check to
+ * reject it — this must never invent a branch.
+ */
+function resolveWriteBranchId(scope, requestedBranchId) {
+  if (scope?.forceBranchId) return scope.forceBranchId;
+  return normalizeRequestedBranchId(requestedBranchId) || null;
+}
+
 /** Warehouse / branch filter for stock movements (same rules as products). */
 function resolveWarehouseId(req, requestedWarehouseId) {
   return resolveListBranchId(req, requestedWarehouseId);
@@ -211,6 +223,7 @@ function resolveWarehouseId(req, requestedWarehouseId) {
 module.exports = {
   attachUserBranchScope,
   resolveListBranchId,
+  resolveWriteBranchId,
   normalizeRequestedBranchId,
   resolveWarehouseId,
   normalizeIsMain,
