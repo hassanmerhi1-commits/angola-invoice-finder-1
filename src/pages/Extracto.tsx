@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Button } from '@/components/ui/button';
+import { ListLoadState } from '@/components/ListLoadState';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -86,6 +87,7 @@ export default function Extracto() {
   const [dateFrom, setDateFrom] = useState(yearStartIso);
   const [dateTo, setDateTo] = useState(localISODate);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [lines, setLines] = useState<AccountStatementMovement[]>([]);
   const [openingBalance, setOpeningBalance] = useState(0);
   const [periodDebit, setPeriodDebit] = useState(0);
@@ -209,6 +211,7 @@ export default function Extracto() {
     }
     const generation = ++fetchGen.current;
     setLoading(true);
+    setLoadError(null);
     void (async () => {
       try {
         const res = await api.payments.statement(partyKind, selectedId);
@@ -233,6 +236,7 @@ export default function Extracto() {
         if (generation === fetchGen.current) {
           setRawPayload(null);
           setLines([]);
+          setLoadError(err instanceof Error ? err.message : String(err));
           toast.error(ui.loadFailed);
         }
       } finally {
@@ -571,7 +575,13 @@ export default function Extracto() {
                   </tbody>
                 </table>
                 {movementCount === 0 && !loading && (
-                  <div className="py-8 text-center text-sm text-muted-foreground">{ui.noMovements}</div>
+                  <ListLoadState
+                    loading={false}
+                    error={loadError}
+                    onRetry={() => setRefreshNonce((n) => n + 1)}
+                  >
+                    <div className="py-8 text-center text-sm text-muted-foreground">{ui.noMovements}</div>
+                  </ListLoadState>
                 )}
               </div>
             </div>

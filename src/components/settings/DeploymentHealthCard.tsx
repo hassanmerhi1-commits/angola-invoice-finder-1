@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Database,
+  GitCommitHorizontal,
   HardDrive,
   Loader2,
   RefreshCw,
@@ -22,6 +23,13 @@ function formatBytes(bytes: number): string {
 }
 
 type DeploymentStatus = Awaited<ReturnType<typeof api.deployment.status>>['data'];
+
+const UI_COMMIT = typeof __BUILD_COMMIT__ === 'string' ? __BUILD_COMMIT__ : 'unknown';
+
+function shortCommit(value?: string | null): string {
+  if (!value || value === 'unknown') return '—';
+  return value.slice(0, 7);
+}
 
 export function DeploymentHealthCard() {
   const { t, language } = useTranslation();
@@ -55,6 +63,11 @@ export function DeploymentHealthCard() {
 
   const hasWarnings = (status?.warnings?.length ?? 0) > 0;
   const allClear = status?.ok && !hasWarnings;
+  // Informational only: after a backend-only apply the packed UI legitimately
+  // trails the server, so this must not flip the card to "needs attention".
+  const buildMismatch = Boolean(
+    status?.commit && UI_COMMIT !== 'unknown' && status.commit !== UI_COMMIT,
+  );
 
   return (
     <Card className={hasWarnings ? 'border-amber-500/50' : undefined}>
@@ -103,6 +116,36 @@ export function DeploymentHealthCard() {
                 </p>
               </div>
             </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="rounded-md border bg-muted/30 px-3 py-2">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <GitCommitHorizontal className="h-3.5 w-3.5" />
+                  {d.serverBuild}
+                </p>
+                <p className="font-mono text-xs">{shortCommit(status.commit)}</p>
+              </div>
+              <div
+                className={
+                  buildMismatch
+                    ? 'rounded-md border border-amber-500/50 bg-amber-500/5 px-3 py-2'
+                    : 'rounded-md border bg-muted/30 px-3 py-2'
+                }
+              >
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <GitCommitHorizontal className="h-3.5 w-3.5" />
+                  {d.appBuild}
+                </p>
+                <p className="font-mono text-xs">{shortCommit(UI_COMMIT)}</p>
+              </div>
+            </div>
+
+            {buildMismatch && (
+              <p className="flex gap-2 text-xs text-amber-800 dark:text-amber-200 rounded-md border border-amber-500/30 px-2 py-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>{d.buildMismatch}</span>
+              </p>
+            )}
 
             <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-1">
               <p className="text-xs text-muted-foreground flex items-center gap-1">

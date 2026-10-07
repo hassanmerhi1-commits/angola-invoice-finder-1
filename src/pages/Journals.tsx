@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   Plus, Search, Edit2, Trash2, RefreshCw,
   Eye, Download, CheckCircle, XCircle,
-  ExternalLink, Undo2, Loader2,
+  ExternalLink, Undo2, Loader2, AlertTriangle,
 } from 'lucide-react';
 import { mapAuditLogRow, type AuditLogRow } from '@/lib/auditLogDisplay';
 import { AuditDetailPanel } from '@/components/audit/AuditDetailPanel';
@@ -128,6 +128,7 @@ function useJournalEntries(
     () => getCachedList<JournalDisplayEntry[]>(cacheKey) ?? [],
   );
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [total, setTotal] = useState(0);
   const [periodTotals, setPeriodTotals] = useState({ debit: 0, credit: 0 });
@@ -149,11 +150,13 @@ function useJournalEntries(
     const cached = getCachedList<JournalDisplayEntry[]>(key) ?? [];
     setEntries(cached);
     setIsLoading(cached.length === 0);
+    setLoadError(null);
 
     try {
       const response = await api.journalEntries.list(listParams(0));
       if (response.error) {
         console.warn('[Journals] Failed to load journal entries:', response.error);
+        setLoadError(response.error);
         setIsLoading(false);
         return;
       }
@@ -169,6 +172,7 @@ function useJournalEntries(
       setHasMore(!!payload.hasMore || mapped.length < Number(payload.total ?? mapped.length));
     } catch (err) {
       console.warn('[Journals] Failed to load journal entries:', err);
+      setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
     }
@@ -223,6 +227,7 @@ function useJournalEntries(
     entries,
     refetch: () => loadAll({ force: true }),
     isLoading,
+    loadError,
     loadingMore,
     loadMore,
     hasMore,
@@ -691,6 +696,7 @@ export default function Journals() {
     entries,
     refetch,
     isLoading: listLoading,
+    loadError: listLoadError,
     loadingMore,
     loadMore,
     hasMore,
@@ -1575,6 +1581,15 @@ export default function Journals() {
               {t.common.loading}
             </div>
           )}
+          {!listLoading && entries.length > 0 && listLoadError && (
+            <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-center gap-2 border-b border-amber-500/40 bg-amber-500/10 py-1.5 text-xs text-amber-800 dark:text-amber-200">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {t.common.loadFailedStale}
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => void refetch()}>
+                {t.common.retry}
+              </Button>
+            </div>
+          )}
           <table className={cn('w-full text-xs', listLoading && entries.length > 0 && 'opacity-60 pointer-events-none')}>
             <thead className="bg-muted/60 border-b sticky top-0 z-10">
               <tr>
@@ -1657,7 +1672,16 @@ export default function Journals() {
               <p className="text-sm">{t.common.loading}</p>
             </div>
           )}
-          {!listLoading && entries.length === 0 && (
+          {!listLoading && entries.length === 0 && listLoadError && (
+            <div className="flex flex-col items-center gap-3 py-12 text-center">
+              <AlertTriangle className="h-7 w-7 text-amber-600" />
+              <p className="max-w-md text-sm text-muted-foreground">{t.common.loadFailed}</p>
+              <Button variant="outline" size="sm" onClick={() => void refetch()}>
+                {t.common.retry}
+              </Button>
+            </div>
+          )}
+          {!listLoading && entries.length === 0 && !listLoadError && (
             <div className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</div>
           )}
           {!listLoading && hasMore && (

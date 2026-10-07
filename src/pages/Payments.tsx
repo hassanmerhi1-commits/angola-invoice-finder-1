@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/useERP';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { ListLoadState } from '@/components/ListLoadState';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -91,6 +92,7 @@ function usePaymentsData(branchId?: string) {
   const [payments, setPayments] = useState<Payment[]>(() => getCachedList<Payment[]>(`payments:${scope}`) ?? []);
   const [openItems, setOpenItems] = useState<OpenItem[]>(() => getCachedList<OpenItem[]>(`openItems:${scope}`) ?? []);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async (opts?: { force?: boolean }) => {
     const payKey = `payments:${scope}`;
@@ -106,6 +108,7 @@ function usePaymentsData(branchId?: string) {
       return;
     }
     setLoading(true);
+    setLoadError(null);
     try {
       const [paymentsRes, openRes] = await Promise.all([
         api.payments.list({ ...(branchId ? { branchId } : {}), limit: 200 }),
@@ -113,6 +116,7 @@ function usePaymentsData(branchId?: string) {
       ]);
       if (paymentsRes.error) {
         console.error('[PAYMENTS] List error:', paymentsRes.error);
+        setLoadError(paymentsRes.error);
       }
       if (paymentsRes.data) {
         const mapped = paymentsRes.data.map(mapPaymentRow);
@@ -126,6 +130,7 @@ function usePaymentsData(branchId?: string) {
       }
     } catch (e) {
       console.error('[PAYMENTS] Failed to load:', e);
+      setLoadError(e instanceof Error ? e.message : String(e));
     }
     setLoading(false);
   }, [branchId, scope]);
@@ -153,7 +158,7 @@ function usePaymentsData(branchId?: string) {
     return res.data;
   }, [refresh]);
 
-  return { payments, openItems, loading, refresh, createPayment };
+  return { payments, openItems, loading, loadError, refresh, createPayment };
 }
 
 export default function Payments() {
@@ -171,7 +176,7 @@ export default function Payments() {
   // Defer party lists until the pay dialog opens (60s SWR still applies after first load).
   const { clients, refreshClients } = useClients(!showNewDialog);
   const { suppliers, refreshSuppliers } = useSuppliers(!showNewDialog);
-  const { payments, openItems, loading, refresh, createPayment } = usePaymentsData(apiBranchId);
+  const { payments, openItems, loading, loadError, refresh, createPayment } = usePaymentsData(apiBranchId);
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const focusedPaymentId = readFocusId(location, 'paymentId', 'payment', 'paymentId');
   const [paymentType, setPaymentType] = useState<'receipt' | 'payment'>('receipt');
@@ -748,10 +753,12 @@ export default function Payments() {
               </tbody>
             </table>
             {filteredPayments.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">
-                <Receipt className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p>{t.paymentsUi.noneFound.replace('{kind}', activeTab === 'receipts' ? t.documents.receipt.toLowerCase() : t.documents.payment.toLowerCase())}</p>
-              </div>
+              <ListLoadState loading={loading} error={loadError} onRetry={() => void refresh({ force: true })}>
+                <div className="text-center py-12 text-muted-foreground">
+                  <Receipt className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                  <p>{t.paymentsUi.noneFound.replace('{kind}', activeTab === 'receipts' ? t.documents.receipt.toLowerCase() : t.documents.payment.toLowerCase())}</p>
+                </div>
+              </ListLoadState>
             )}
           </TabsContent>
         )}
@@ -797,10 +804,12 @@ export default function Payments() {
             </tbody>
           </table>
           {filteredOpenItems.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>{t.paymentsUi.noneOpenItems}</p>
-            </div>
+            <ListLoadState loading={loading} error={loadError} onRetry={() => void refresh({ force: true })}>
+              <div className="text-center py-12 text-muted-foreground">
+                <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p>{t.paymentsUi.noneOpenItems}</p>
+              </div>
+            </ListLoadState>
           )}
         </TabsContent>
       </Tabs>

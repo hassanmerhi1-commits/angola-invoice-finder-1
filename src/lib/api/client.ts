@@ -3020,6 +3020,7 @@ export const api = {
         };
         duplicateDatabases: { path: string; sizeBytes: number; sizeMb?: number }[];
         warnings: { code: string; message: string; paths?: string[] }[];
+        commit?: string | null;
         checkedAt: string;
       }>('/deployment/status'),
   },

@@ -43,7 +43,7 @@ const { lanCors, securityHeaders, rateLimiter, apiAuthGate } = require('./middle
 const { requestContext } = require('./middleware/requestContext');
 const { DiscoveryBroadcaster } = require('./discovery');
 
-const { readAppVersion, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb, readSchemaVersionFromDb } = require('./lib/deploymentStatus');
+const { readAppVersion, GIT_COMMIT, EXPECTED_SCHEMA_VERSION, recordAppMetaForDb, readSchemaVersionFromDb } = require('./lib/deploymentStatus');
 const { buildSchemaChecks } = require('./lib/schemaChecks');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -224,6 +224,8 @@ app.get('/api/health', async (req, res) => {
       time: row.rows[0]?.now,
       unified: true,
       appVersion: APP_VERSION,
+      commit: GIT_COMMIT,
+      commitShort: GIT_COMMIT ? GIT_COMMIT.slice(0, 7) : null,
       backendPackageVersion: BACKEND_PACKAGE_VERSION,
       shellVersion: process.env.NEXOR_APP_VERSION || null,
       backendEntry: process.env.NEXOR_BACKEND_ENTRY || null,

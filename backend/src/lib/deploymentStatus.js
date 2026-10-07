@@ -57,6 +57,41 @@ function readAppVersion() {
   return 'unknown';
 }
 
+/**
+ * Commit the running code was deployed from. Read straight out of .git instead
+ * of shelling out, so it still answers where the git binary is absent. Resolved
+ * once at load: the answer must describe the code this process actually loaded,
+ * not a newer checkout that nobody has restarted into yet.
+ */
+function readGitCommit() {
+  if (process.env.NEXOR_COMMIT) return String(process.env.NEXOR_COMMIT).trim();
+  const roots = [
+    path.resolve(__dirname, '../../..'),
+    path.resolve(__dirname, '../../../..'),
+  ];
+  for (const root of roots) {
+    try {
+      const gitDir = path.join(root, '.git');
+      if (!fs.existsSync(gitDir) || !fs.statSync(gitDir).isDirectory()) continue;
+      const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+      if (!head.startsWith('ref:')) return head;
+      const ref = head.slice(4).trim();
+      const refPath = path.join(gitDir, ref);
+      if (fs.existsSync(refPath)) return fs.readFileSync(refPath, 'utf8').trim();
+      const packedPath = path.join(gitDir, 'packed-refs');
+      if (fs.existsSync(packedPath)) {
+        for (const line of fs.readFileSync(packedPath, 'utf8').split('\n')) {
+          const [sha, name] = line.trim().split(/\s+/);
+          if (name === ref && sha) return sha;
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+const GIT_COMMIT = readGitCommit();
+
 function statDbFile(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath)) return null;
@@ -312,6 +347,7 @@ async function buildDeploymentStatus(db) {
     },
     duplicateDatabases,
     warnings,
+    commit: GIT_COMMIT,
     checkedAt: new Date().toISOString(),
   };
 }
@@ -364,7 +400,9 @@ async function recordAppMetaForDb(db, appVersion) {
 
 module.exports = {
   EXPECTED_SCHEMA_VERSION,
+  GIT_COMMIT,
   readAppVersion,
+  readGitCommit,
   readSchemaVersionFromDb,
   buildDeploymentStatus,
   recordAppMeta,

@@ -16,6 +16,9 @@ export const pt: TranslationKeys = {
     loading: "A carregar...",
     updating: "A actualizar…",
     noResults: "Nenhum resultado encontrado",
+    loadFailed: "Não foi possível carregar esta lista. Verifique a ligação ao servidor e tente novamente.",
+    loadFailedStale: "A mostrar os últimos dados carregados — a actualização falhou.",
+    retry: "Tentar novamente",
     error: "Erro",
     success: "Sucesso",
     confirm: "Confirmar",
@@ -85,6 +88,9 @@ export const pt: TranslationKeys = {
   },
 
   deploymentUi: {
+    serverBuild: "Versão do servidor",
+    appBuild: "Versão deste ecrã",
+    buildMismatch: "Este ecrã foi compilado a partir de um commit diferente do que o servidor está a executar. Isso é normal logo após uma actualização só do backend. Se faltar uma correcção que esperava, reconstrua o webapp no servidor ou reinstale o NEXOR neste PC.",
     title: "Base de dados e instalação",
     description: "Confirme um único ficheiro de dados, versão da app, schema e cópias de segurança.",
     refresh: "Atualizar",

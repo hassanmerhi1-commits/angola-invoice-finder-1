@@ -14,6 +14,9 @@ export const en = {
     loading: "Loading...",
     updating: "Updating…",
     noResults: "No results found",
+    loadFailed: "Could not load this list. Check the connection to the server, then try again.",
+    loadFailedStale: "Showing the last data that loaded — the refresh failed.",
+    retry: "Try again",
     error: "Error",
     success: "Success",
     confirm: "Confirm",
@@ -83,6 +86,9 @@ export const en = {
   },
 
   deploymentUi: {
+    serverBuild: "Server build",
+    appBuild: "This screen's build",
+    buildMismatch: "This screen was built from a different commit than the server is running. That is normal right after a backend-only update. If a fix you expect is missing, rebuild the webapp on the server, or reinstall NEXOR on this PC.",
     title: "Database & deployment",
     description: "Verify one database file, app version, schema, and backups before go-live.",
     refresh: "Refresh",
