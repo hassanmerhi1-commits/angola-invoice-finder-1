@@ -20,7 +20,7 @@ const {
   replaceStockAdjustment,
   applyPurchaseSupplierToProducts,
 } = require('../transactionEngine');
-const { attachUserBranchScope, resolveWarehouseId, applyWriteBranchOverride } = require('../middleware/branchScope');
+const { attachUserBranchScope, resolveWarehouseId, applyWriteBranchOverride, applyTransactionBodyScope } = require('../middleware/branchScope');
 const { requirePermission } = require('../middleware/requirePermission');
 const { isUniqueSkuBranchError } = require('../lib/productSkuResolve');
 const { processTransactionBody } = require('../transactionProcessor');
@@ -602,6 +602,7 @@ module.exports = function(broadcastTable) {
     'purchase_receive',
     'inventory_adjust',
   ), async (req, res) => {
+    applyTransactionBodyScope(req, req.body, 'TX PROCESS');
     const client = await db.pool.connect();
     try {
       const txType = String(req.body?.transactionType || '').toLowerCase();

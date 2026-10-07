@@ -210,6 +210,20 @@ function resolveListBranchId(req, requestedBranchId) {
  * when nothing is known, leaving the caller's own required-param check to
  * reject it — this must never invent a branch.
  */
+function branchKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/-/g, '');
+}
+
+/** True when a locked user is touching a row that belongs to another branch. */
+function isForeignBranch(scope, branchId) {
+  const forced = scope?.forceBranchId;
+  if (!forced || branchId == null || String(branchId).trim() === '') return false;
+  const left = branchKey(forced);
+  const right = branchKey(branchId);
+  if (!left || !right) return false;
+  return left !== right;
+}
+
 function resolveWriteBranchId(scope, requestedBranchId) {
   if (scope?.forceBranchId) return scope.forceBranchId;
   return normalizeRequestedBranchId(requestedBranchId) || null;
@@ -241,6 +255,33 @@ function applyWriteBranchOverride(req, body, keys, logLabel) {
   return writeId;
 }
 
+/**
+ * Header branch plus every stock line's warehouse. Purchase invoices, purchase
+ * returns, and adjustments post through one body; the warehouse on the line is
+ * what actually moves stock. A locked user cannot aim either at another branch.
+ */
+function applyTransactionBodyScope(req, body, logLabel = 'TX PROCESS') {
+  if (!body) return null;
+  const writeId = applyWriteBranchOverride(req, body, ['branchId'], logLabel);
+  const forced = req.branchScope?.forceBranchId;
+  if (!forced || !Array.isArray(body.stockEntries)) return writeId;
+  let corrected = 0;
+  for (const entry of body.stockEntries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const sent = entry.warehouseId ?? entry.warehouse_id;
+    if (sent != null && String(sent).trim() && String(sent) !== String(forced)) corrected += 1;
+    entry.warehouseId = forced;
+    if (entry.warehouse_id != null) entry.warehouse_id = forced;
+  }
+  if (corrected > 0) {
+    console.warn(
+      `[${logLabel}] warehouse corrected user=${String(req.user?.id || '?').slice(0, 8)} `
+      + `lines=${corrected} used=${String(forced).slice(0, 8)}`,
+    );
+  }
+  return writeId;
+}
+
 /** Warehouse / branch filter for stock movements (same rules as products). */
 function resolveWarehouseId(req, requestedWarehouseId) {
   return resolveListBranchId(req, requestedWarehouseId);
@@ -250,7 +291,9 @@ module.exports = {
   attachUserBranchScope,
   resolveListBranchId,
   resolveWriteBranchId,
+  isForeignBranch,
   applyWriteBranchOverride,
+  applyTransactionBodyScope,
   normalizeRequestedBranchId,
   resolveWarehouseId,
   normalizeIsMain,

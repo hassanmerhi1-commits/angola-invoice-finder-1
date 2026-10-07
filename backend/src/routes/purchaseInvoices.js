@@ -4,6 +4,7 @@ const db = require('../db');
 const { toRow, fromRow } = require('../purchaseInvoiceMappers');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildPurchaseInvoiceBranchFilter } = require('../lib/branchIdMatch');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { parseListPagination } = require('../lib/listPagination');
 
@@ -209,10 +210,16 @@ function rowParams(r) {
 
 module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', async (req, res) => {
     try {
-      const { branchId, status, dateFrom, dateTo } = req.query;
+      const { status, dateFrom, dateTo } = req.query;
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.json({ items: [], limit: 0, offset: 0, hasMore: false });
+      }
+      const branchId = scopedBranchId || '';
       const { limit, offset } = parseListPagination(req, { defaultLimit: 100, maxLimit: 500 });
       // List payload omits heavy JSON blobs so LAN clients do not time out / hang.
       let query = `SELECT id, invoice_number, supplier_account_code, supplier_name, supplier_id,
@@ -292,7 +299,9 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   router.get('/:id/posting-status', async (req, res) => {
     try {
       const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
-      if (!saved.rows[0]) return res.status(404).json({ error: 'Not found' });
+      if (!saved.rows[0] || isForeignBranch(req.branchScope, saved.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
       const inv = fromRow(saved.rows[0]);
       const client = await db.pool.connect();
       try {
@@ -319,7 +328,9 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   router.get('/:id', async (req, res) => {
     try {
       const result = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
-      if (!result.rows[0]) return res.status(404).json({ error: 'Not found' });
+      if (!result.rows[0] || isForeignBranch(req.branchScope, result.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
       res.json(fromRow(result.rows[0]));
     } catch (error) {
       console.error('[PURCHASE INVOICES]', error);
@@ -349,6 +360,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   });
 
   router.post('/', requirePermission('purchase_create'), async (req, res) => {
+    applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id', 'warehouseId', 'warehouse_id'], 'PURCHASE INVOICE');
     const client = await db.pool.connect();
     try {
       const row = toRow(req.body);
@@ -365,6 +377,10 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       }
 
       const skipAccounting = req.body?.skipAccounting === true || req.body?.metadataOnly === true;
+      const priorInvoice = await db.query('SELECT branch_id FROM purchase_invoices WHERE id = $1', [row.id]);
+      if (priorInvoice.rows[0] && isForeignBranch(req.branchScope, priorInvoice.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
 
       const { resolveBranchRow } = require('../lib/branchIdMatch');
       const warehouseRaw = String(row.warehouse_id || row.branch_id || '').trim();
@@ -583,6 +599,11 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
 
   router.put('/:id', requirePermission('purchase_create'), async (req, res) => {
     try {
+      applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id', 'warehouseId', 'warehouse_id'], 'PURCHASE INVOICE');
+      const existing = await db.query('SELECT branch_id FROM purchase_invoices WHERE id = $1', [req.params.id]);
+      if (existing.rows[0] && isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
       const row = toRow({ ...req.body, id: req.params.id });
       const dup = await findDuplicateSupplierInvoice(row.supplier_id, row.supplier_invoice_no, row.id);
       if (dup) {
@@ -689,7 +710,9 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     const client = await db.pool.connect();
     try {
       const saved = await db.query('SELECT * FROM purchase_invoices WHERE id = $1', [req.params.id]);
-      if (!saved.rows[0]) return res.status(404).json({ error: 'Not found' });
+      if (!saved.rows[0] || isForeignBranch(req.branchScope, saved.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
       const inv = fromRow(saved.rows[0]);
 
       let txResult = null;

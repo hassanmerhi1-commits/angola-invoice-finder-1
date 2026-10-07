@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
+const { attachUserBranchScope, resolveListBranchId, resolveWriteBranchId } = require('../middleware/branchScope');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { dateRangeSql } = require('../lib/dateRangeFilter');
 const {
@@ -141,19 +142,27 @@ async function loadDebitNote(id) {
   return mapDebitNoteRow(noteRes.rows[0], itemsRes.rows);
 }
 
+function fiscalWriteBranchId(req) {
+  const requested = req.body?.branchId || req.user?.branchId;
+  return resolveWriteBranchId(req.branchScope, requested) || requested || null;
+}
+
 module.exports = function fiscalDocumentsRouter(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/credit-notes', async (req, res) => {
     try {
       const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
       const { branchId, dateFrom, dateTo } = req.query;
+      const scopedBranchId = resolveListBranchId(req, branchId);
+      if (scopedBranchId === undefined) return res.json([]);
       const light = parseTruthyQuery(req.query.light);
       const { limit, offset } = parseListPagination(req, { defaultLimit: 200, maxLimit: 1000 });
       let query = 'SELECT * FROM credit_notes WHERE 1=1';
       const params = [];
-      if (branchId) {
-        params.push(branchId);
+      if (scopedBranchId) {
+        params.push(scopedBranchId);
         query += ` AND branch_id = $${params.length}`;
       }
       query += dateRangeSql(db, 'created_at', params, dateFrom, dateTo);
@@ -194,7 +203,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         ...req.body,
         issuedBy: req.body.issuedBy || req.user.id,
         issuedByName: req.body.issuedByName || req.user.name,
-        branchId: req.body.branchId || req.user.branchId,
+        branchId: fiscalWriteBranchId(req),
       };
       const note = await processCreditNote(client, body);
       await client.query('COMMIT');
@@ -245,10 +254,14 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
 
   router.post('/credit-notes/:id/cancel', requireAuth, requirePermission('credit_note_create'), async (req, res) => {
     try {
+      const forced = req.branchScope?.forceBranchId;
       const result = await db.query(
-        `UPDATE credit_notes SET status = 'cancelled'
-         WHERE id = $1 AND status = 'draft' RETURNING id`,
-        [req.params.id],
+        forced
+          ? `UPDATE credit_notes SET status = 'cancelled'
+             WHERE id = $1 AND status = 'draft' AND branch_id = $2 RETURNING id`
+          : `UPDATE credit_notes SET status = 'cancelled'
+             WHERE id = $1 AND status = 'draft' RETURNING id`,
+        forced ? [req.params.id, forced] : [req.params.id],
       );
       if (!result.rows.length) {
         return res.status(400).json({ error: 'Only draft credit notes can be cancelled' });
@@ -262,11 +275,12 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
 
   router.get('/debit-notes', async (req, res) => {
     try {
-      const { branchId } = req.query;
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) return res.json([]);
       let query = 'SELECT * FROM debit_notes WHERE 1=1';
       const params = [];
-      if (branchId) {
-        params.push(branchId);
+      if (scopedBranchId) {
+        params.push(scopedBranchId);
         query += ` AND branch_id = $${params.length}`;
       }
       query += ' ORDER BY created_at DESC';
@@ -293,7 +307,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         ...req.body,
         issuedBy: req.body.issuedBy || req.user.id,
         issuedByName: req.body.issuedByName || req.user.name,
-        branchId: req.body.branchId || req.user.branchId,
+        branchId: fiscalWriteBranchId(req),
       };
       const note = await processDebitNote(client, body);
       await client.query('COMMIT');
@@ -332,6 +346,8 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
     try {
       const { parseListPagination } = require('../lib/listPagination');
       const { branchId, dateFrom, dateTo } = req.query;
+      const scopedBranchId = resolveListBranchId(req, branchId);
+      if (scopedBranchId === undefined) return res.json([]);
       const from = String(dateFrom || '').trim().slice(0, 10);
       const to = String(dateTo || '').trim().slice(0, 10);
       const { limit, offset } = parseListPagination(req, {
@@ -340,8 +356,8 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       });
       let query = 'SELECT * FROM transport_documents WHERE 1=1';
       const params = [];
-      if (branchId) {
-        params.push(branchId);
+      if (scopedBranchId) {
+        params.push(scopedBranchId);
         query += ` AND branch_id = $${params.length}`;
       }
       query += dateRangeSql(db, 'created_at', params, from, to);
@@ -362,7 +378,7 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
         ...req.body,
         issuedBy: req.body.issuedBy || req.user.id,
         issuedByName: req.body.issuedByName || req.user.name,
-        branchId: req.body.branchId || req.user.branchId,
+        branchId: fiscalWriteBranchId(req),
       };
       const doc = await processTransportDocument(client, body);
       await client.query('COMMIT');

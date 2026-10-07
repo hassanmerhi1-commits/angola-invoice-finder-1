@@ -15,6 +15,7 @@ const {
   syncOpenSessionExpensesFromLedger,
 } = require('../lib/caixaCashRefund');
 const { resolveBranchFilterId, normalizeBranchIdKey } = require('../lib/branchIdMatch');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 const { notifyExpenseApprovalChange } = require('../lib/notifications');
 const {
   assertCanUsePostingDate,
@@ -341,11 +342,14 @@ async function ensureExpensesTable() {
 
 module.exports = function expensesRouter(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', async (req, res) => {
     try {
       await ensureExpensesTable();
-      const branchId = String(req.query.branchId || '').trim();
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) return res.json({ data: [] });
+      const branchId = scopedBranchId ? String(scopedBranchId).trim() : '';
       const params = [];
       let sql = 'SELECT * FROM expenses';
       if (branchId) {
@@ -371,7 +375,9 @@ module.exports = function expensesRouter(broadcastTable) {
     try {
       await ensureExpensesTable();
       const result = await db.query('SELECT * FROM expenses WHERE id = $1 LIMIT 1', [req.params.id]);
-      if (!result.rows[0]) return res.status(404).json({ error: 'Expense not found' });
+      if (!result.rows[0] || isForeignBranch(req.branchScope, result.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Expense not found' });
+      }
       res.json({ data: mapRow(result.rows[0]) });
     } catch (error) {
       res.status(500).json({ error: error.message || 'Failed to load expense' });
@@ -382,6 +388,7 @@ module.exports = function expensesRouter(broadcastTable) {
     try {
       await ensureExpensesTable();
       const body = req.body || {};
+      applyWriteBranchOverride(req, body, ['branchId', 'branch_id'], 'EXPENSE');
       try {
         assertExpensePaymentScope(req.user, body);
       } catch (scopeErr) {
@@ -391,6 +398,9 @@ module.exports = function expensesRouter(broadcastTable) {
       const now = new Date().toISOString();
       const prior = await db.query('SELECT * FROM expenses WHERE id = $1 LIMIT 1', [id]);
       const priorRow = prior.rows[0] || null;
+      if (priorRow && isForeignBranch(req.branchScope, priorRow.branch_id)) {
+        return res.status(404).json({ error: 'Expense not found' });
+      }
       const priorStatus = String(priorRow?.status || '');
       const wasAlreadyPaid = priorStatus === 'paid';
       const status = wasAlreadyPaid
@@ -561,7 +571,9 @@ module.exports = function expensesRouter(broadcastTable) {
       const paidByForGl = req.user?.id || req.body?.paidByUserId || null;
       const paidAt = new Date().toISOString();
       const existing = await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
-      if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
+      if (!existing.rows[0] || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Expense not found' });
+      }
       try {
         assertExpensePaymentScope(req.user, mapRow(existing.rows[0]));
         assertExpenseCanPay(req.user);
@@ -648,7 +660,9 @@ module.exports = function expensesRouter(broadcastTable) {
     try {
       await ensureExpensesTable();
       const existing = await db.query('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
-      if (!existing.rows[0]) return res.status(404).json({ error: 'Expense not found' });
+      if (!existing.rows[0] || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Expense not found' });
+      }
       const row = mapRow(existing.rows[0]);
       if (row.status !== 'paid') {
         return res.status(400).json({ error: 'Expense must be paid before posting to ledger' });
