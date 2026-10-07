@@ -215,6 +215,32 @@ function resolveWriteBranchId(scope, requestedBranchId) {
   return normalizeRequestedBranchId(requestedBranchId) || null;
 }
 
+/**
+ * Mutates `body` so a branch-locked write cannot land on another branch.
+ * `keys` are aliases that all become the resolved id (e.g. warehouseId / warehouse_id).
+ * Missing branch is filled in for locked users; head office is left alone.
+ */
+function applyWriteBranchOverride(req, body, keys, logLabel) {
+  if (!body || !Array.isArray(keys) || keys.length === 0) return null;
+  const requested = keys
+    .map((k) => body[k])
+    .find((v) => v != null && String(v).trim() !== '');
+  const writeId = resolveWriteBranchId(req.branchScope, requested);
+  if (!writeId) return null;
+  const changed = keys.some((k) => body[k] !== writeId);
+  if (changed) {
+    if (requested && String(requested) !== String(writeId)) {
+      console.warn(
+        `[${logLabel}] branch corrected user=${String(req.user?.id || '?').slice(0, 8)} `
+        + `sent=${String(requested).slice(0, 8)} `
+        + `used=${String(writeId).slice(0, 8)}`,
+      );
+    }
+    for (const k of keys) body[k] = writeId;
+  }
+  return writeId;
+}
+
 /** Warehouse / branch filter for stock movements (same rules as products). */
 function resolveWarehouseId(req, requestedWarehouseId) {
   return resolveListBranchId(req, requestedWarehouseId);
@@ -224,6 +250,7 @@ module.exports = {
   attachUserBranchScope,
   resolveListBranchId,
   resolveWriteBranchId,
+  applyWriteBranchOverride,
   normalizeRequestedBranchId,
   resolveWarehouseId,
   normalizeIsMain,

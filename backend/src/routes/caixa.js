@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const { resolveBranchFilterId } = require('../lib/branchIdMatch');
 const { requirePermission } = require('../middleware/requirePermission');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride } = require('../middleware/branchScope');
 const { buildCaixaReconciliation } = require('../lib/caixaReconciliation');
 const { applyCaixaClose } = require('../sync/caixaIngest');
 const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPosting');
@@ -288,6 +289,7 @@ let lastCoaSyncAt = 0;
 
 function caixaRouter(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   /** List cash registers (caixas) — plain SELECT (COA sync runs at startup / ?sync=1). */
   router.get('/registers', async (req, res) => {
@@ -301,7 +303,11 @@ function caixaRouter(broadcastTable) {
         await ensureTreasuryRegistersFromCoa();
       }
 
-      const branchId = String(req.query.branchId || '').trim();
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.json({ data: [] });
+      }
+      const branchId = scopedBranchId ? String(scopedBranchId).trim() : '';
       const branchJoin = db.engine === 'postgres'
         ? `LEFT JOIN branches b ON b.id::text = c.branch_id::text`
         : `LEFT JOIN branches b ON CAST(b.id AS TEXT) = CAST(c.branch_id AS TEXT)`;
@@ -358,6 +364,7 @@ function caixaRouter(broadcastTable) {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });
       }
+      applyWriteBranchOverride(req, req.body, ['branchId'], 'CAIXA ENSURE');
       const branchId = String(req.body?.branchId || '').trim();
       const branchName = String(req.body?.branchName || '').trim();
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
@@ -428,6 +435,7 @@ function caixaRouter(broadcastTable) {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });
       }
+      applyWriteBranchOverride(req, req.body, ['branchId'], 'CAIXA CREATE');
       const branchId = String(req.body?.branchId || '').trim();
       const branchName = String(req.body?.branchName || '').trim();
       const name = String(req.body?.name || '').trim();
@@ -507,6 +515,10 @@ function caixaRouter(broadcastTable) {
 
       const existing = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
       if (!existing.rows[0]) return res.status(404).json({ error: 'Caixa not found' });
+      const forced = req.branchScope?.forceBranchId;
+      if (forced && String(existing.rows[0].branch_id) !== String(forced)) {
+        return res.status(404).json({ error: 'Caixa not found' });
+      }
 
       const now = new Date().toISOString();
       await db.query(
@@ -530,7 +542,11 @@ function caixaRouter(broadcastTable) {
 
   router.get('/reconciliation', async (req, res) => {
     try {
-      const branchId = String(req.query.branchId || '').trim();
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.status(400).json({ error: 'branchId required' });
+      }
+      const branchId = String(scopedBranchId || req.query.branchId || '').trim();
       const date = String(req.query.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
       const session = {
         openingBalance: req.query.sessionOpening,
@@ -554,7 +570,11 @@ function caixaRouter(broadcastTable) {
         // Do not return null — clients treat null as "confirmed closed" and may drop sticky state.
         return res.status(503).json({ error: 'Caixa tables not available on server' });
       }
-      const branchId = String(req.query.branchId || '').trim();
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.status(400).json({ error: 'branchId required' });
+      }
+      const branchId = String(scopedBranchId || req.query.branchId || '').trim();
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
       const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
@@ -604,6 +624,7 @@ function caixaRouter(broadcastTable) {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });
       }
+      applyWriteBranchOverride(req, req.body, ['branchId'], 'CAIXA OPEN');
       const {
         id,
         caixaId,
@@ -729,6 +750,7 @@ function caixaRouter(broadcastTable) {
   // deposit/reforço, or transfer leg) against the branch-specific caixa account (45x).
   router.post('/gl/post', requirePermission('pos_access', 'caixa_open', 'caixa_close', 'admin_settings'), async (req, res) => {
     try {
+      applyWriteBranchOverride(req, req.body, ['branchId'], 'CAIXA GL');
       const result = await postCaixaGlMovement(req.body || {});
       if (broadcastTable) {
         try { await broadcastTable('journal_entries'); } catch (_) { /* non-fatal */ }
@@ -779,6 +801,12 @@ function caixaRouter(broadcastTable) {
       }
       const { id } = req.params;
       const body = req.body || {};
+      applyWriteBranchOverride(req, body, ['branchId'], 'CAIXA CLOSE');
+      const existingSession = await db.query('SELECT branch_id FROM caixa_sessions WHERE id = $1', [id]);
+      const forced = req.branchScope?.forceBranchId;
+      if (forced && existingSession.rows[0] && String(existingSession.rows[0].branch_id) !== String(forced)) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
       const closingBalance = body.closingBalance ?? body.countedCash;
       const closedAt = body.closedAt || new Date().toISOString();
       const result = await applyCaixaClose({

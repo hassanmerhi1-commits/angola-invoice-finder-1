@@ -20,7 +20,7 @@ const {
   replaceStockAdjustment,
   applyPurchaseSupplierToProducts,
 } = require('../transactionEngine');
-const { attachUserBranchScope, resolveWarehouseId } = require('../middleware/branchScope');
+const { attachUserBranchScope, resolveWarehouseId, applyWriteBranchOverride } = require('../middleware/branchScope');
 const { requirePermission } = require('../middleware/requirePermission');
 const { isUniqueSkuBranchError } = require('../lib/productSkuResolve');
 const { processTransactionBody } = require('../transactionProcessor');
@@ -311,6 +311,7 @@ module.exports = function(broadcastTable) {
   });
 
   router.post('/stock-movements', requirePermission('inventory_adjust', 'accounting_create'), async (req, res) => {
+    applyWriteBranchOverride(req, req.body, ['warehouseId', 'warehouse_id'], 'STOCK MOVEMENT');
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -333,6 +334,7 @@ module.exports = function(broadcastTable) {
 
   /** Stock adjust entry/exit: movements + weighted cost (IN) + journal — single atomic transaction. */
   router.post('/stock-adjustment', requirePermission('inventory_adjust', 'accounting_create'), async (req, res) => {
+    applyWriteBranchOverride(req, req.body, ['warehouseId', 'warehouse_id'], 'STOCK ADJUSTMENT');
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');

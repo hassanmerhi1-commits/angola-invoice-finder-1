@@ -9,16 +9,23 @@ const { listCustomerReceivables } = require('../lib/customerReceivablesList');
 const { listChecklistDues } = require('../lib/openItemsBriefing');
 const { loadAccountStatement, listStatementParties } = require('../lib/accountStatement');
 const { requirePermission } = require('../middleware/requirePermission');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride } = require('../middleware/branchScope');
 const { ensureYearPeriods, fetchPeriods, getPeriodById } = require('../lib/accountingPeriods');
 const { auditErpSafe } = require('../lib/erpAudit');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
+  router.use(attachUserBranchScope);
+
   // READ
   router.get('/', async (req, res) => {
     try {
       const { entityType, entityId, branchId, dateFrom, dateTo } = req.query;
+      const scopedBranchId = resolveListBranchId(req, branchId);
+      if (scopedBranchId === undefined) {
+        return res.json([]);
+      }
       let query = `
         SELECT p.*,
           COALESCE(
@@ -37,7 +44,7 @@ module.exports = function(broadcastTable) {
       let idx = 1;
       if (entityType) { query += ` AND p.entity_type = $${idx++}`; params.push(entityType); }
       if (entityId) { query += ` AND p.entity_id = $${idx++}`; params.push(entityId); }
-      if (branchId) { query += ` AND p.branch_id = $${idx++}`; params.push(branchId); }
+      if (scopedBranchId) { query += ` AND p.branch_id = $${idx++}`; params.push(scopedBranchId); }
       const from = String(dateFrom || '').trim().slice(0, 10);
       const to = String(dateTo || '').trim().slice(0, 10);
       if (from) {
@@ -65,6 +72,7 @@ module.exports = function(broadcastTable) {
 
   // CREATE: Delegated to Transaction Engine
   router.post('/', requirePermission('accounting_payment', 'accounting_receipt'), async (req, res) => {
+    applyWriteBranchOverride(req, req.body, ['branchId'], 'PAYMENTS CREATE');
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -117,8 +125,11 @@ module.exports = function(broadcastTable) {
       } catch (repairErr) {
         console.warn('[PAYMENTS] customer receivables backfill skipped:', repairErr.message);
       }
-      const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
-      const rows = await listCustomerReceivables(db, { branchId, sinceDays: null });
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.json([]);
+      }
+      const rows = await listCustomerReceivables(db, { branchId: scopedBranchId || '', sinceDays: null });
       res.json(rows);
     } catch (error) {
       console.error('[PAYMENTS RECEIVABLES ERROR]', error);
@@ -140,8 +151,11 @@ module.exports = function(broadcastTable) {
   // READ: Supplier payables (open items + confirmed purchase invoices missing open items)
   router.get('/payables-aging', async (req, res) => {
     try {
-      const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
-      const rows = await listSupplierPayables(db, { branchId, sinceDays: null });
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.json([]);
+      }
+      const rows = await listSupplierPayables(db, { branchId: scopedBranchId || '', sinceDays: null });
       res.json(rows);
     } catch (error) {
       console.error('[PAYMENTS PAYABLES ERROR]', error);

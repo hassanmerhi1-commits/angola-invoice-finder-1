@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveListBranchId, resolveWriteBranchId } = require('../src/middleware/branchScope');
+const { resolveListBranchId, resolveWriteBranchId, applyWriteBranchOverride } = require('../src/middleware/branchScope');
 
 const FILIAL = '11111111-1111-1111-1111-111111111111';
 const OTHER = '22222222-2222-2222-2222-222222222222';
@@ -35,4 +35,32 @@ test('head office reads every branch unless it picks one', () => {
   assert.equal(resolveListBranchId({ branchScope: headOffice }, undefined), null);
   assert.equal(resolveListBranchId({ branchScope: headOffice }, 'all'), null);
   assert.equal(resolveListBranchId({ branchScope: headOffice }, FILIAL), FILIAL);
+});
+
+test('applyWriteBranchOverride corrects a forged branch on a locked user', () => {
+  const body = { branchId: OTHER };
+  const used = applyWriteBranchOverride({ branchScope: lockedToFilial, user: { id: 'u1' } }, body, ['branchId'], 'TEST');
+  assert.equal(used, FILIAL);
+  assert.equal(body.branchId, FILIAL);
+});
+
+test('applyWriteBranchOverride fills a missing warehouse id for a locked user', () => {
+  const body = {};
+  applyWriteBranchOverride({ branchScope: lockedToFilial }, body, ['warehouseId', 'warehouse_id'], 'TEST');
+  assert.equal(body.warehouseId, FILIAL);
+  assert.equal(body.warehouse_id, FILIAL);
+});
+
+test('applyWriteBranchOverride leaves head office writes alone', () => {
+  const body = { branchId: OTHER };
+  const used = applyWriteBranchOverride({ branchScope: headOffice }, body, ['branchId'], 'TEST');
+  assert.equal(used, OTHER);
+  assert.equal(body.branchId, OTHER);
+});
+
+test('applyWriteBranchOverride does not invent a branch for head office', () => {
+  const body = {};
+  const used = applyWriteBranchOverride({ branchScope: headOffice }, body, ['branchId'], 'TEST');
+  assert.equal(used, null);
+  assert.equal(body.branchId, undefined);
 });
