@@ -9,6 +9,8 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
+const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
+const { scopedSql } = require('../lib/searchScopedSql');
 
 const QUICK_KEYS = ['clients', 'products', 'suppliers', 'sales', 'purchaseInvoices'];
 const MORE_KEYS = [
@@ -96,8 +98,9 @@ function emptyPayload(q) {
   };
 }
 
-function queries(p) {
-  // p = [contains %q%, limit, prefix q%]
+function queries(p, bid) {
+  // p = [contains %q%, limit, prefix q%, optional branchId as $4]
+  const br = (sqls, clause = 'AND branch_id = $4') => runSearch(scopedSql(sqls, bid, clause), p);
   return {
     clients: () => runSearch([
       `SELECT id, name, nif, phone FROM clients
@@ -110,7 +113,7 @@ function queries(p) {
               OR LOWER(IFNULL(phone,'')) LIKE LOWER($1) OR LOWER(IFNULL(email,'')) LIKE LOWER($1))
        ORDER BY name ASC LIMIT $2`,
     ], p),
-    products: () => runSearch([
+    products: () => br([
       `SELECT id, name, sku, barcode, stock FROM products
        WHERE COALESCE(is_active, true) = true
          AND (sku ILIKE $3 OR name ILIKE $3 OR name ILIKE $1 OR sku ILIKE $1 OR barcode ILIKE $1 OR category ILIKE $1)
@@ -120,7 +123,7 @@ function queries(p) {
          AND (LOWER(name) LIKE LOWER($1) OR LOWER(IFNULL(sku,'')) LIKE LOWER($1)
               OR LOWER(IFNULL(barcode,'')) LIKE LOWER($1) OR LOWER(IFNULL(category,'')) LIKE LOWER($1))
        ORDER BY name ASC LIMIT $2`,
-    ], p),
+    ]),
     suppliers: () => runSearch([
       `SELECT id, name, nif, phone FROM suppliers
        WHERE COALESCE(is_active, true) = true
@@ -133,7 +136,7 @@ function queries(p) {
               OR LOWER(IFNULL(contact_person,'')) LIKE LOWER($1))
        ORDER BY name ASC LIMIT $2`,
     ], p),
-    sales: () => runSearch([
+    sales: () => br([
       `SELECT id, invoice_number, customer_name, total, status FROM sales
        WHERE invoice_number ILIKE $3 OR invoice_number ILIKE $1 OR customer_name ILIKE $1 OR customer_nif ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
@@ -142,8 +145,8 @@ function queries(p) {
           OR LOWER(IFNULL(customer_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(customer_nif,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    purchaseInvoices: () => runSearch([
+    ]),
+    purchaseInvoices: () => br([
       `SELECT id, invoice_number, supplier_name, total, status FROM purchase_invoices
        WHERE invoice_number ILIKE $3 OR invoice_number ILIKE $1 OR supplier_name ILIKE $1
           OR supplier_invoice_no ILIKE $1 OR supplier_nif ILIKE $1
@@ -153,8 +156,8 @@ function queries(p) {
           OR LOWER(IFNULL(supplier_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(supplier_invoice_no,'')) LIKE LOWER($1)
        ORDER BY date DESC LIMIT $2`,
-    ], p),
-    purchaseOrders: () => runSearch([
+    ]),
+    purchaseOrders: () => br([
       `SELECT id, order_number, supplier_name, total, status FROM purchase_orders
        WHERE order_number ILIKE $3 OR order_number ILIKE $1 OR supplier_name ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
@@ -162,8 +165,8 @@ function queries(p) {
        WHERE LOWER(IFNULL(order_number,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(supplier_name,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    salesOrders: () => runSearch([
+    ]),
+    salesOrders: () => br([
       `SELECT id, order_number, client_name, client_nif, total, status FROM sales_orders
        WHERE order_number ILIKE $3 OR order_number ILIKE $1 OR client_name ILIKE $1 OR client_nif ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
@@ -172,8 +175,8 @@ function queries(p) {
           OR LOWER(IFNULL(client_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(client_nif,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    proformas: () => runSearch([
+    ]),
+    proformas: () => br([
       `SELECT id, proforma_number, client_name, client_nif, total, status FROM proformas
        WHERE proforma_number ILIKE $3 OR proforma_number ILIKE $1 OR client_name ILIKE $1 OR client_nif ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
@@ -182,8 +185,8 @@ function queries(p) {
           OR LOWER(IFNULL(client_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(client_nif,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    creditNotes: () => runSearch([
+    ]),
+    creditNotes: () => br([
       `SELECT id, document_number, customer_name, customer_nif, total, status FROM credit_notes
        WHERE document_number ILIKE $3 OR document_number ILIKE $1 OR customer_name ILIKE $1 OR customer_nif ILIKE $1
           OR original_invoice_number ILIKE $1
@@ -193,8 +196,8 @@ function queries(p) {
           OR LOWER(IFNULL(customer_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(original_invoice_number,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    debitNotes: () => runSearch([
+    ]),
+    debitNotes: () => br([
       `SELECT id, document_number, customer_name, customer_nif, total, status FROM debit_notes
        WHERE document_number ILIKE $3 OR document_number ILIKE $1 OR customer_name ILIKE $1 OR customer_nif ILIKE $1
           OR original_invoice_number ILIKE $1
@@ -204,8 +207,8 @@ function queries(p) {
           OR LOWER(IFNULL(customer_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(original_invoice_number,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    transportDocuments: () => runSearch([
+    ]),
+    transportDocuments: () => br([
       `SELECT id, document_number, destination_name, vehicle_plate, related_invoice_number, status
        FROM transport_documents
        WHERE document_number ILIKE $3 OR document_number ILIKE $1 OR destination_name ILIKE $1 OR vehicle_plate ILIKE $1
@@ -217,8 +220,8 @@ function queries(p) {
           OR LOWER(IFNULL(destination_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(vehicle_plate,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    expenses: () => runSearch([
+    ]),
+    expenses: () => br([
       `SELECT id, expense_number, description, payee_name, invoice_number, status FROM expenses
        WHERE expense_number ILIKE $3 OR expense_number ILIKE $1 OR description ILIKE $1 OR payee_name ILIKE $1
           OR invoice_number ILIKE $1 OR payee_nif ILIKE $1
@@ -229,8 +232,8 @@ function queries(p) {
           OR LOWER(IFNULL(payee_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(invoice_number,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    payments: () => runSearch([
+    ]),
+    payments: () => br([
       `SELECT id, payment_number, payment_type, entity_name, reference, amount FROM payments
        WHERE payment_number ILIKE $3 OR payment_number ILIKE $1 OR entity_name ILIKE $1 OR reference ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
@@ -239,8 +242,8 @@ function queries(p) {
           OR LOWER(IFNULL(entity_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(reference,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    journals: () => runSearch([
+    ]),
+    journals: () => br([
       `SELECT id, entry_number, description, reference_type FROM journal_entries
        WHERE entry_number ILIKE $3 OR entry_number ILIKE $1 OR description ILIKE $1
        ORDER BY entry_date DESC, created_at DESC LIMIT $2`,
@@ -248,7 +251,7 @@ function queries(p) {
        WHERE LOWER(IFNULL(entry_number,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(description,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
+    ]),
     accounts: () => runSearch([
       `SELECT id, code, name FROM chart_of_accounts
        WHERE COALESCE(is_active, true) = true
@@ -260,7 +263,7 @@ function queries(p) {
               OR LOWER(IFNULL(description,'')) LIKE LOWER($1))
        ORDER BY code ASC LIMIT $2`,
     ], p),
-    bankAccounts: () => runSearch([
+    bankAccounts: () => br([
       `SELECT id, name, bank_name, account_number, iban FROM bank_accounts
        WHERE COALESCE(is_active, true) = true
          AND (name ILIKE $1 OR bank_name ILIKE $1 OR account_number ILIKE $1 OR iban ILIKE $1)
@@ -270,8 +273,8 @@ function queries(p) {
          AND (LOWER(IFNULL(name,'')) LIKE LOWER($1) OR LOWER(IFNULL(bank_name,'')) LIKE LOWER($1)
               OR LOWER(IFNULL(account_number,'')) LIKE LOWER($1))
        ORDER BY name ASC LIMIT $2`,
-    ], p),
-    stockTransfers: () => runSearch([
+    ]),
+    stockTransfers: () => br([
       `SELECT id, transfer_number, from_branch_name, to_branch_name, status FROM stock_transfers
        WHERE transfer_number ILIKE $3 OR transfer_number ILIKE $1 OR from_branch_name ILIKE $1 OR to_branch_name ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
@@ -280,8 +283,8 @@ function queries(p) {
           OR LOWER(IFNULL(from_branch_name,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(to_branch_name,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    importOrders: () => runSearch([
+    ], 'AND (from_branch_id = $4 OR to_branch_id = $4)'),
+    importOrders: () => br([
       `SELECT id, order_number, supplier_name, customs_declaration_number, status FROM import_orders
        WHERE order_number ILIKE $3 OR order_number ILIKE $1 OR supplier_name ILIKE $1 OR customs_declaration_number ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
@@ -289,8 +292,8 @@ function queries(p) {
        WHERE LOWER(IFNULL(order_number,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(supplier_name,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
-    users: () => runSearch([
+    ]),
+    users: () => br([
       `SELECT id, name, email, username FROM users
        WHERE COALESCE(is_active, true) = true
          AND (name ILIKE $3 OR name ILIKE $1 OR email ILIKE $1 OR username ILIKE $1)
@@ -299,8 +302,8 @@ function queries(p) {
        WHERE COALESCE(is_active, 1) = 1
          AND (LOWER(name) LIKE LOWER($1) OR LOWER(IFNULL(email,'')) LIKE LOWER($1))
        ORDER BY name ASC LIMIT $2`,
-    ], p),
-    branches: () => runSearch([
+    ]),
+    branches: () => br([
       `SELECT id, name, code, phone FROM branches
        WHERE name ILIKE $3 OR name ILIKE $1 OR code ILIKE $1 OR phone ILIKE $1 OR address ILIKE $1
        ORDER BY name ASC LIMIT $2`,
@@ -308,7 +311,7 @@ function queries(p) {
        WHERE LOWER(name) LIKE LOWER($1) OR LOWER(IFNULL(code,'')) LIKE LOWER($1)
           OR LOWER(IFNULL(phone,'')) LIKE LOWER($1)
        ORDER BY name ASC LIMIT $2`,
-    ], p),
+    ], 'AND id = $4'),
     categories: () => runSearch([
       `SELECT id, name, description FROM categories
        WHERE COALESCE(is_active, true) = true
@@ -319,23 +322,23 @@ function queries(p) {
          AND (LOWER(name) LIKE LOWER($1) OR LOWER(IFNULL(description,'')) LIKE LOWER($1))
        ORDER BY name ASC LIMIT $2`,
     ], p),
-    caixas: () => runSearch([
+    caixas: () => br([
       `SELECT id, name, branch_name, status FROM caixas
        WHERE name ILIKE $3 OR name ILIKE $1 OR branch_name ILIKE $1
        ORDER BY name ASC LIMIT $2`,
       `SELECT id, name, branch_name, status FROM caixas
        WHERE LOWER(name) LIKE LOWER($1) OR LOWER(IFNULL(branch_name,'')) LIKE LOWER($1)
        ORDER BY name ASC LIMIT $2`,
-    ], p),
+    ]),
     // Cheap document-number match only — joined client/supplier scans blocked the whole search.
-    openItems: () => runSearch([
+    openItems: () => br([
       `SELECT id, document_number, entity_type, entity_id, status FROM open_items
        WHERE document_number ILIKE $3 OR document_number ILIKE $1
        ORDER BY created_at DESC LIMIT $2`,
       `SELECT id, document_number, entity_type, entity_id, status FROM open_items
        WHERE LOWER(IFNULL(document_number,'')) LIKE LOWER($1)
        ORDER BY created_at DESC LIMIT $2`,
-    ], p),
+    ]),
   };
 }
 
@@ -470,8 +473,8 @@ function serialize(key, rows) {
   }
 }
 
-async function runKeys(keys, p) {
-  const runners = queries(p);
+async function runKeys(keys, p, bid) {
+  const runners = queries(p, bid);
   const raw = {};
   await Promise.all(keys.map(async (key) => {
     const fn = runners[key];
@@ -482,6 +485,7 @@ async function runKeys(keys, p) {
 
 module.exports = function searchRouter() {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', requireAuth, async (req, res) => {
     try {
@@ -490,12 +494,19 @@ module.exports = function searchRouter() {
       if (q.length < 2) {
         return res.json(payload);
       }
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        payload.scope = 'all';
+        return res.json(payload);
+      }
       const scopeRaw = String(req.query.scope || 'all').toLowerCase();
       const scope = scopeRaw === 'quick' || scopeRaw === 'more' ? scopeRaw : 'all';
       const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 6));
-      const p = [likeContains(q), limit, likePrefix(q)];
+      const p = scopedBranchId
+        ? [likeContains(q), limit, likePrefix(q), scopedBranchId]
+        : [likeContains(q), limit, likePrefix(q)];
       const keys = scope === 'quick' ? QUICK_KEYS : scope === 'more' ? MORE_KEYS : QUICK_KEYS.concat(MORE_KEYS);
-      const raw = await runKeys(keys, p);
+      const raw = await runKeys(keys, p, scopedBranchId);
       keys.forEach((key) => {
         payload[key] = serialize(key, raw[key]?.rows);
       });

@@ -36,6 +36,8 @@ export interface Product {
   priceOverride?: boolean;
   /** When true, HQ/Sede tax_rate cascade skips this branch row. */
   vatOverride?: boolean;
+  /** Admin confirmation that a VAT change should rewrite historical documents. */
+  forceVatChange?: boolean;
   cost: number;
   firstCost: number;
   lastCost: number;
@@ -93,7 +95,17 @@ export interface Sale {
   /** Registered ERP client id (required for on-account / credit sales). */
   clientId?: string;
   dueDate?: string;
-  status: 'completed' | 'voided' | 'pending';
+  status: 'completed' | 'voided' | 'pending' | 'paid';
+  branch_id?: string;
+  cashier_id?: string;
+  cashier_name?: string;
+  due_date?: string;
+  fiscal_status?: string;
+  fiscalStatus?: string;
+  invoice_type?: 'FT' | 'FR' | 'FS';
+  agt_status?: Sale['agtStatus'];
+  agt_code?: string;
+  client_request_id?: string;
   /** AGT fiscal document type: FT, FR, or FS */
   invoiceType?: 'FT' | 'FR' | 'FS';
   saftHash?: string; // For AGT compliance
@@ -235,7 +247,7 @@ export interface StockMovement {
   createdByName?: string;
   type: 'IN' | 'OUT';
   quantity: number;
-  reason: 'purchase' | 'sale' | 'transfer_in' | 'transfer_out' | 'adjustment' | 'damage' | 'return' | 'initial';
+  reason: 'purchase' | 'sale' | 'transfer_in' | 'transfer_out' | 'adjustment' | 'damage' | 'return' | 'initial' | string;
   referenceId?: string; // PO ID, Sale ID, Transfer ID
   referenceNumber?: string; // PO number, Invoice number, etc.
   costAtTime?: number; // Cost at the time of movement
@@ -404,6 +416,9 @@ export interface DebitNoteItem {
   taxRate: number;
   taxAmount: number;
   subtotal: number;
+  sourceProductId?: string;
+  soldQty?: number;
+  originalUnitPrice?: number;
 }
 
 // Transport Document - Guia de Transporte
@@ -463,12 +478,12 @@ export interface CompanyInfo {
   address: string;
   city: string;
   province: string;
-  postalCode: string;
+  postalCode?: string;
   country: string;
   phone: string;
-  email: string;
-  activityCode: string; // CAE code
-  fiscalYear: string;
+  email?: string;
+  activityCode?: string; // CAE code
+  fiscalYear?: string;
 }
 
 // SAF-T Export Package

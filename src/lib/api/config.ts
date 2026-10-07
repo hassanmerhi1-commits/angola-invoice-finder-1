@@ -358,9 +358,11 @@ export function clearStaleClientConfigIfServerMachine(): void {
   }
 }
 
-export type EmbeddedBackendWaitResult =
-  | { ok: true; baseUrl: string }
-  | { ok: false; error: string };
+export type EmbeddedBackendWaitResult = {
+  ok: boolean;
+  baseUrl?: string;
+  error?: string;
+};
 
 /**
  * Packaged app: login must wait for embedded Express — preload often runs before the port is bound.
@@ -472,7 +474,7 @@ export async function waitForEmbeddedBackendHealth(
       }
 
       const baseUrl = await getApiUrlAsync({ waitForPortMs: 2500 });
-      const healthOk = async (base: string): Promise<{ ok: true } | { ok: false; fatal?: string }> => {
+      const healthOk = async (base: string): Promise<{ ok: boolean; fatal?: string }> => {
         const parsePayload = (payload: unknown, statusOk: boolean) => {
           if (statusOk && isEmbeddedHealthPayload(payload)) return { ok: true as const };
           const p = payload as Record<string, unknown> | null;

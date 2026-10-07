@@ -164,7 +164,11 @@ export function useReportsPeriod(): ReportsPeriodValue {
 export function useSharedReportFilters(defaults?: { dateFrom?: string; dateTo?: string }) {
   const period = useReportsPeriodOptional();
   const localBranch = useSyncedBranchFilter();
-  const fallback = defaults ?? presetRange('thisMonth');
+  const month = presetRange('thisMonth');
+  const fallback = {
+    from: defaults?.dateFrom || month.from,
+    to: defaults?.dateTo || month.to,
+  };
   const [localFrom, setLocalFrom] = useState(fallback.from);
   const [localTo, setLocalTo] = useState(fallback.to);
   const [localCompare, setLocalCompare] = useState(false);

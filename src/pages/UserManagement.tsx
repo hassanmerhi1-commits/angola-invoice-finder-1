@@ -70,13 +70,14 @@ import {
   Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ListLoadState } from '@/components/ListLoadState';
 
 export default function UserManagement() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
   const { branches } = useBranchContext();
   const isAdmin = currentUser?.role === 'admin';
-  const { users, isLoading, createUser, updateUser, deleteUser, toggleUserActive } = useUsers();
+  const { users, isLoading, loadError, createUser, updateUser, deleteUser, toggleUserActive, refreshUsers } = useUsers();
   
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -351,10 +352,12 @@ export default function UserManagement() {
               </div>
             </CardHeader>
             <CardContent>
-              {isLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-                </div>
+              {users.length === 0 ? (
+                <ListLoadState loading={isLoading} error={loadError} onRetry={() => void refreshUsers()}>
+                  <div className="text-center py-12 text-muted-foreground">
+                    No users found
+                  </div>
+                </ListLoadState>
               ) : (
                 <Table>
                   <TableHeader>

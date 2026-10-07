@@ -596,8 +596,8 @@ export async function createDocument(
     fiscalLocked:
       data.fiscalLocked === true
       || type === 'fatura_venda' && (data.status === 'confirmed' || data.status === 'paid')
-      || (type === 'nota_credito' || type === 'nota_debito' || type === 'guia_remessa')
-        && (data.status === 'confirmed' || data.status === 'paid'),
+      || ((type === 'nota_debito' || type === 'guia_remessa')
+        && (data.status === 'confirmed' || data.status === 'paid')),
     agtStatus: data.agtStatus,
     agtCode: data.agtCode,
   };

@@ -53,7 +53,7 @@ function expenseGlAccount(category?: ExpenseCategory): string {
 }
 
 export type CaixaGlPostResult =
-  | { ok: true; entryNumber?: string; alreadyPosted?: boolean }
+  | { ok: true; entryNumber?: string; alreadyPosted?: boolean; error?: string }
   | { ok: false; error: string };
 
 /**
@@ -1795,7 +1795,7 @@ export async function executeMoneyTransfer(
   reason: string,
   createdBy: string,
   notes?: string
-): Promise<{ success: boolean; transfer?: MoneyTransfer; error?: string }> {
+): Promise<{ success: boolean; transfer?: MoneyTransfer; error?: string; glError?: string }> {
   
   let sourceBalance = 0;
   let sourceDescription = '';

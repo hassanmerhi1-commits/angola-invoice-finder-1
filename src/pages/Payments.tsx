@@ -685,7 +685,7 @@ export default function Payments() {
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder={t.paymentsUi.searchPlaceholder} value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-8 h-8 w-48 text-sm" />
         </div>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={refresh}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => void refresh()}>
           <RefreshCw className="w-4 h-4" />
         </Button>
       </div>

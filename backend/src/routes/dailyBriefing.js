@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { isTruthySql } = require('../lib/sqlDialect');
 const { queryLowStockProducts } = require('../lib/lowStock');
+const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 
 const LOOKBACK_DAYS = 14;
 
@@ -18,9 +19,20 @@ async function queryLowStock(branchId) {
 
 module.exports = function dailyBriefingRoutes() {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', async (req, res) => {
-    const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
+    const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+    if (scopedBranchId === undefined) {
+      return res.json({
+        lowStock: [],
+        receivables: [],
+        payables: [],
+        unprintedInvoices: [],
+        priceChanges: [],
+      });
+    }
+    const branchId = scopedBranchId ? String(scopedBranchId).trim() : '';
     const since = daysAgoIso(LOOKBACK_DAYS);
     const warnings = [];
 

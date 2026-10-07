@@ -52,16 +52,16 @@ export interface PurchaseInvoiceLine {
   packaging: number;
   unitPrice: number;
   discountPct: number;
-  discountPct2: number;
-  totalQty: number;
-  total: number;
-  ivaRate: number;
-  ivaAmount: number;
-  totalWithIva: number;
+  discountPct2?: number;
+  totalQty?: number;
+  total?: number;
+  ivaRate?: number;
+  ivaAmount?: number;
+  totalWithIva?: number;
   warehouseId: string;
-  warehouseName: string;
-  currentStock: number;
-  unit: string;
+  warehouseName?: string;
+  currentStock?: number;
+  unit?: string;
   barcode?: string;
   // Multi-price levels (read-only from product master)
   price1?: number;
@@ -70,6 +70,8 @@ export interface PurchaseInvoiceLine {
   price4?: number;
   lastCost?: number;
   avgCost?: number;
+  taxRate?: number;
+  price?: number;
 }
 
 export interface PurchaseInvoiceJournalLine {
@@ -97,6 +99,7 @@ export interface PurchaseInvoice {
   department?: string;
   ref2?: string;
   date: string;
+  issueTime?: string;
   paymentDate: string;
   project?: string;
   currency: string;
@@ -306,7 +309,7 @@ export function scopeBelongsToBranch(
     subtotal: 0,
     ivaTotal: 0,
     total: 0,
-    status: 'draft',
+    status: 'draft' as const,
     branchId: ids[0] || '',
     branchName: '',
     supplierBalance: 0,
@@ -315,7 +318,7 @@ export function scopeBelongsToBranch(
     createdAt: '',
     updatedAt: '',
   };
-  return invoiceBelongsToBranch(stub, branchId, branchCatalog);
+  return invoiceBelongsToBranch(stub as PurchaseInvoice, branchId, branchCatalog);
 }
 
 export function invoiceBelongsToBranch(

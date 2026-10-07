@@ -235,7 +235,7 @@ export default function AccountLedgerDialog({
         ?? await awaitPrefetchedLedger(account.id, startDate, endDate);
       if (reqId !== reqIdRef.current) return;
       if (warm) {
-        setEntries(warm as LedgerEntry[]);
+        setEntries(warm as unknown as LedgerEntry[]);
         setTruncated(warm.length >= LEDGER_FETCH_LIMIT);
         setIsLoading(false);
         return;

@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { countLowStockProducts } = require('../lib/lowStock');
+const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 
 function num(value) {
   const n = Number(value);
@@ -10,10 +11,27 @@ function num(value) {
 
 module.exports = function () {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', async (req, res) => {
     try {
-      const { branchId } = req.query;
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.json({
+          todaySales: { count: 0, total: 0 },
+          monthSales: { count: 0, total: 0 },
+          openAR: { count: 0, total: 0 },
+          openAP: { count: 0, total: 0 },
+          lowStockCount: 0,
+          pendingApprovals: 0,
+          recentMovements: [],
+          monthExpenses: 0,
+          suppliers: 0,
+          categories: 0,
+          purchaseOrders: 0,
+        });
+      }
+      const branchId = scopedBranchId || '';
       const today = new Date().toISOString().split('T')[0];
       const monthStart = `${today.slice(0, 7)}-01`;
 
@@ -80,7 +98,12 @@ module.exports = function () {
           .catch(emptyCount),
         db.query('SELECT COUNT(*) AS count FROM suppliers WHERE is_active = 1').catch(emptyCount),
         db.query('SELECT COUNT(*) AS count FROM categories WHERE is_active = 1').catch(emptyCount),
-        db.query('SELECT COUNT(*) AS count FROM purchase_orders').catch(emptyCount),
+        db.query(
+          branchId
+            ? 'SELECT COUNT(*) AS count FROM purchase_orders WHERE branch_id = $1'
+            : 'SELECT COUNT(*) AS count FROM purchase_orders',
+          branchId ? [branchId] : [],
+        ).catch(emptyCount),
       ]);
 
       const openAR = {

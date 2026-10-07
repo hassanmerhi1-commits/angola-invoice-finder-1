@@ -18,17 +18,33 @@ import { getCachedList, setCachedList } from '@/lib/listCache';
 import { useTransactionHistory } from './useTransactionHistory';
 
 export function useProForma(branchId?: string) {
+  const cacheKey = `proformas:${branchId ?? 'all'}`;
   const [proformas, setProformas] = useState<ProForma[]>(
-    () => getCachedList<ProForma[]>(`proformas:${branchId ?? 'all'}`) ?? [],
+    () => getCachedList<ProForma[]>(cacheKey) ?? [],
   );
+  const [isLoading, setIsLoading] = useState(() => !(getCachedList<ProForma[]>(cacheKey)?.length));
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { log: logTransaction } = useTransactionHistory();
 
   const refresh = useCallback(async () => {
-    await updateExpiredProFormas();
-    const data = await getProFormas(branchId);
-    setProformas(data);
-    setCachedList(`proformas:${branchId ?? 'all'}`, data);
-  }, [branchId]);
+    setIsLoading(true);
+    try {
+      const res = await api.proformas.list(branchId);
+      if (res.error) {
+        setLoadError(res.error);
+        return;
+      }
+      await updateExpiredProFormas();
+      const data = await getProFormas(branchId);
+      setProformas(data);
+      setCachedList(cacheKey, data);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load pro formas');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [branchId, cacheKey]);
 
   useEffect(() => {
     refresh();
@@ -257,6 +273,8 @@ export function useProForma(branchId?: string) {
 
   return {
     proformas,
+    isLoading,
+    loadError,
     refresh,
     createProForma,
     updateProFormaStatus,

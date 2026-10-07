@@ -3,6 +3,7 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 const { generateSequenceNumber } = require('../accounting');
 const { recordStockMovement, auditLog } = require('../transactionEngine');
 
@@ -147,10 +148,14 @@ async function loadOrderById(id) {
 
 module.exports = function importOrdersRoutes(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', async (req, res) => {
     try {
-      const { branchId, status } = req.query;
+      const { status } = req.query;
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) return res.json([]);
+      const branchId = scopedBranchId || '';
       let query = 'SELECT * FROM import_orders WHERE 1=1';
       const params = [];
       let idx = 1;
@@ -176,7 +181,9 @@ module.exports = function importOrdersRoutes(broadcastTable) {
   router.get('/:id', async (req, res) => {
     try {
       const order = await loadOrderById(req.params.id);
-      if (!order) return res.status(404).json({ error: 'Not found' });
+      if (!order || isForeignBranch(req.branchScope, order.branchId)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
       res.json(order);
     } catch (error) {
       console.error('[IMPORT ORDERS]', error);
@@ -185,6 +192,7 @@ module.exports = function importOrdersRoutes(broadcastTable) {
   });
 
   router.post('/', requirePermission('purchase_create'), async (req, res) => {
+    applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id'], 'IMPORT ORDER');
     const client = await db.pool.connect();
     try {
       const body = req.body || {};
@@ -297,9 +305,11 @@ module.exports = function importOrdersRoutes(broadcastTable) {
       if (!VALID_STATUSES.has(nextStatus)) {
         return res.status(400).json({ error: 'Invalid status' });
       }
-      const current = await db.query('SELECT id, status FROM import_orders WHERE id = $1', [req.params.id]);
+      const current = await db.query('SELECT id, status, branch_id FROM import_orders WHERE id = $1', [req.params.id]);
       const row = current.rows[0];
-      if (!row) return res.status(404).json({ error: 'Not found' });
+      if (!row || isForeignBranch(req.branchScope, row.branch_id)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
 
       const prev = String(row.status || 'draft').toLowerCase();
       if (prev === nextStatus) {
@@ -340,13 +350,14 @@ module.exports = function importOrdersRoutes(broadcastTable) {
   router.post('/:id/receive', requirePermission('purchase_receive'), async (req, res) => {
     const client = await db.pool.connect();
     try {
+      applyWriteBranchOverride(req, req.body, ['warehouseId', 'warehouse_id', 'branchId', 'branch_id'], 'IMPORT RECEIVE');
       const receivedBy = req.body?.receivedBy || req.body?.received_by;
       const warehouseId = req.body?.warehouseId || req.body?.warehouse_id || req.body?.branchId || req.body?.branch_id;
 
       await client.query('BEGIN');
       const orderRes = await client.query('SELECT * FROM import_orders WHERE id = $1 FOR UPDATE', [req.params.id]);
       const order = orderRes.rows[0];
-      if (!order) {
+      if (!order || isForeignBranch(req.branchScope, order.branch_id)) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'Not found' });
       }

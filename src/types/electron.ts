@@ -11,6 +11,7 @@ export interface DiscoveredServer {
   id: string;
   name: string;
   ip: string;
+  address?: string;
   port: number;
   version?: string;
   lastSeen?: string;
@@ -25,10 +26,12 @@ export interface SetupConfig {
     databasePath?: string;
     serverIp?: string;
     serverPort?: number;
+    httpPort?: number;
   } | null;
   clientConfig?: {
     serverIp?: string;
     serverPort?: number;
+    httpPort?: number;
   } | null;
 }
 
@@ -87,7 +90,7 @@ export interface ElectronAPI {
     init: () => Promise<{ success: boolean; mode?: string; error?: string }>;
     getAll: (table: string, companyId?: string) => Promise<{ success: boolean; data: any[] }>;
     getById: (table: string, id: string, companyId?: string) => Promise<{ success: boolean; data: any }>;
-    insert: (table: string, data: any, companyId?: string) => Promise<{ success: boolean; error?: string }>;
+    insert: (table: string, data: any, companyId?: string) => Promise<{ success: boolean; data?: any; error?: string }>;
     update: (table: string, id: string, data: any, companyId?: string) => Promise<{ success: boolean; error?: string }>;
     delete: (table: string, id: string, companyId?: string) => Promise<{ success: boolean; error?: string }>;
     query: (sql: string, params?: any[], companyId?: string) => Promise<{ success: boolean; data?: any[]; error?: string }>;
@@ -235,7 +238,7 @@ export interface ElectronAPI {
       openedBrowser?: boolean;
       url?: string;
     }>;
-    install: () => Promise<{ success: boolean }>;
+    install: () => Promise<{ success: boolean; error?: string }>;
     getVersion: () => Promise<string>;
     getDiagnostics: () => Promise<{
       loaded: boolean;
@@ -257,6 +260,7 @@ export interface ElectronAPI {
     setConfig: (config: HotUpdateConfig) => Promise<{ success: boolean; config?: HotUpdateConfig; error?: string }>;
     checkServer: (url: string) => Promise<{ success: boolean; available?: boolean; version?: { version: string }; error?: string }>;
     reload: () => Promise<{ success: boolean; source?: string; error?: string }>;
+    check?: () => Promise<{ success: boolean; error?: string }>;
     getSource: () => Promise<{ success: boolean; source: 'server' | 'local' | 'unknown' }>;
   };
 
@@ -277,6 +281,11 @@ export interface ElectronAPI {
     transmitWithRetry: (payload: any, signatureData: any) => Promise<AGTTransmissionResult>;
     checkStatus: (invoiceNumber: string) => Promise<AGTStatusResult>;
     voidInvoice: (invoiceNumber: string, reason: string) => Promise<{ success: boolean; errorMessage?: string }>;
+  };
+
+  clientLocal?: {
+    ensureOfflineFirst?: () => Promise<unknown>;
+    getAgtPendingCount?: () => Promise<unknown>;
   };
 
   // Transaction Engine (direct PostgreSQL operations)
@@ -304,6 +313,8 @@ export interface DBStatus {
   mode: 'server' | 'client' | 'standalone' | 'unconfigured';
   path: string | null;
   serverAddress: string | null;
+  serverPort?: number;
+  port?: number;
   wsPort: number;
   connected: boolean;
   expressBackend?: boolean;

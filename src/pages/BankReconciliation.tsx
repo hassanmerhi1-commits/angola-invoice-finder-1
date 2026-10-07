@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
+import { ListLoadState } from '@/components/ListLoadState';
 import {
   Upload, CheckCircle2, AlertTriangle, XCircle, ArrowRightLeft,
   FileSpreadsheet, Search, Download, Link2, Unlink, Scale,
@@ -89,6 +90,10 @@ export default function BankReconciliation() {
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [allTransactions, setAllTransactions] = useState<BankTransaction[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [reconError, setReconError] = useState<string | null>(null);
+  const [listRetry, setListRetry] = useState(0);
   const [glBalance, setGlBalance] = useState<number | null>(null);
   const [glStatus, setGlStatus] = useState<'idle' | 'loading' | 'ok' | 'missing' | 'error'>('idle');
 
@@ -118,11 +123,14 @@ export default function BankReconciliation() {
       try {
         const res = await api.bankReconciliations.get(selectedAccountId);
         if (cancelled) return;
+        setReconError(res.error || null);
         const serverRows = Array.isArray(res.data?.statementRows) ? res.data.statementRows as BankStatementRow[] : [];
         if (serverRows.length > 0) {
           setStatementRows(serverRows);
+          setReconError(null);
         } else if (localRows.length > 0) {
           setStatementRows(localRows);
+          setReconError(null);
           // Migrate local → server once.
           void api.bankReconciliations.save(selectedAccountId, {
             statementRows: localRows,
@@ -131,15 +139,20 @@ export default function BankReconciliation() {
         } else {
           setStatementRows([]);
         }
-      } catch {
-        if (!cancelled) setStatementRows(localRows);
+      } catch (e) {
+        if (!cancelled) {
+          setStatementRows(localRows);
+          if (localRows.length === 0) {
+            setReconError(e instanceof Error ? e.message : 'Failed to load');
+          }
+        }
       } finally {
         if (!cancelled) setReconHydrated(true);
       }
     })();
 
     return () => { cancelled = true; };
-  }, [selectedAccountId, listBranchId]);
+  }, [selectedAccountId, listBranchId, listRetry]);
 
   // Persist statement rows: localStorage immediately, server debounced.
   useEffect(() => {
@@ -170,9 +183,24 @@ export default function BankReconciliation() {
   }, [statementRows, selectedAccountId, reconHydrated, listBranchId]);
 
   useEffect(() => {
-    getBankAccounts(listBranchId).then(setAccounts);
-    getBankTransactions().then(setAllTransactions);
-  }, [listBranchId]);
+    let cancelled = false;
+    setAccountsLoading(true);
+    Promise.all([getBankAccounts(listBranchId), getBankTransactions()])
+      .then(([acc, tx]) => {
+        if (cancelled) return;
+        setAccounts(acc);
+        setAllTransactions(tx);
+        setAccountsError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setAccountsError(e instanceof Error ? e.message : 'Failed to load');
+      })
+      .finally(() => {
+        if (!cancelled) setAccountsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [listBranchId, listRetry]);
 
   const loadMatchRules = useCallback(async () => {
     try {
@@ -801,13 +829,21 @@ export default function BankReconciliation() {
                         ))}
                         {filteredStatementRows.length === 0 && (
                           <TableRow>
-                            <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                              {t.bankReconciliationUi.noneForTab
-                                .replace('{kind}', activeTab === 'unmatched'
-                                  ? t.bankReconciliationUi.kindPendingLower
-                                  : activeTab === 'matched'
-                                    ? t.bankReconciliationUi.kindMatchedLower
-                                    : '')}
+                            <TableCell colSpan={7} className="p-0">
+                              <ListLoadState
+                                loading={!reconHydrated}
+                                error={reconError}
+                                onRetry={() => setListRetry((n) => n + 1)}
+                              >
+                                <div className="text-center py-8 text-muted-foreground">
+                                  {t.bankReconciliationUi.noneForTab
+                                    .replace('{kind}', activeTab === 'unmatched'
+                                      ? t.bankReconciliationUi.kindPendingLower
+                                      : activeTab === 'matched'
+                                        ? t.bankReconciliationUi.kindMatchedLower
+                                        : '')}
+                                </div>
+                              </ListLoadState>
                             </TableCell>
                           </TableRow>
                         )}
@@ -843,8 +879,16 @@ export default function BankReconciliation() {
                     ))}
                     {accountTransactions.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          {t.bankReconciliationUi.noSystemTransactions}
+                        <TableCell colSpan={5} className="p-0">
+                          <ListLoadState
+                            loading={accountsLoading}
+                            error={accountsError}
+                            onRetry={() => setListRetry((n) => n + 1)}
+                          >
+                            <div className="text-center py-8 text-muted-foreground">
+                              {t.bankReconciliationUi.noSystemTransactions}
+                            </div>
+                          </ListLoadState>
                         </TableCell>
                       </TableRow>
                     )}

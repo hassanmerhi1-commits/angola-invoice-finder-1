@@ -8,7 +8,7 @@ export interface DatabaseStatus {
   databasePath: string | null;
   serverIp: string | null;
   serverPort: number;
-  mode: 'server' | 'client' | 'local' | 'unknown';
+  mode: 'server' | 'client' | 'local' | 'standalone' | 'unknown';
   lastChecked: Date | null;
 }
 

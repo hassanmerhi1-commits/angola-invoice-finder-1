@@ -5,6 +5,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 
 function newId() {
   return crypto.randomUUID();
@@ -160,10 +161,13 @@ async function auditProformaEvent(req, { recordId, action, description, newValue
 
 module.exports = function proformasRoutes(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', requireAuth, async (req, res) => {
     try {
-      const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) return res.json([]);
+      const branchId = scopedBranchId ? String(scopedBranchId).trim() : '';
       let query = 'SELECT * FROM proformas';
       const params = [];
       if (branchId) {
@@ -187,7 +191,7 @@ module.exports = function proformasRoutes(broadcastTable) {
   router.get('/:id', requireAuth, async (req, res) => {
     try {
       const result = await db.query('SELECT * FROM proformas WHERE id = $1 LIMIT 1', [req.params.id]);
-      if (!result.rows.length) {
+      if (!result.rows.length || isForeignBranch(req.branchScope, result.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Pro forma not found' });
       }
       const items = await loadItemsForProforma(req.params.id);
@@ -201,6 +205,7 @@ module.exports = function proformasRoutes(broadcastTable) {
   router.post('/', requireAuth, requirePermission('proforma_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
+      applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id'], 'PROFORMA');
       const header = bodyToHeader(req.body);
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
       await client.query('BEGIN');
@@ -277,6 +282,11 @@ module.exports = function proformasRoutes(broadcastTable) {
     const client = await db.pool.connect();
     try {
       const id = req.params.id;
+      const existing = await db.query('SELECT branch_id FROM proformas WHERE id = $1 LIMIT 1', [id]);
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Pro forma not found' });
+      }
+      applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id'], 'PROFORMA');
       const header = bodyToHeader({ ...req.body, id });
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
       await client.query('BEGIN');
@@ -373,10 +383,10 @@ module.exports = function proformasRoutes(broadcastTable) {
   router.delete('/:id', requireAuth, requirePermission('proforma_create', 'admin_settings'), async (req, res) => {
     try {
       const existing = await db.query(
-        'SELECT id, proforma_number FROM proformas WHERE id = $1 AND status != $2 LIMIT 1',
+        'SELECT id, proforma_number, branch_id FROM proformas WHERE id = $1 AND status != $2 LIMIT 1',
         [req.params.id, 'converted'],
       );
-      if (!existing.rows.length) {
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Pro forma not found or already converted' });
       }
       const result = await db.query(

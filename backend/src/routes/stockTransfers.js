@@ -4,6 +4,7 @@ const db = require('../db');
 const { createStockTransfer, processTransferApprove, processTransferReceive } = require('../transactionEngine');
 const { requirePermission } = require('../middleware/requirePermission');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 
 function mapStockTransferError(error) {
   const raw = error?.message || String(error);
@@ -29,18 +30,20 @@ function stockTransferErrorStatus(message) {
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   // READ
   router.get('/', async (req, res) => {
     try {
-      const { branchId } = req.query;
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) return res.json([]);
       const openOnly = ['1', 'true', 'yes'].includes(String(req.query.openOnly || '').toLowerCase());
       let query = 'SELECT * FROM stock_transfers';
       const params = [];
       const where = [];
-      if (branchId) {
+      if (scopedBranchId) {
         where.push('(from_branch_id = $1 OR to_branch_id = $1)');
-        params.push(branchId);
+        params.push(scopedBranchId);
       }
       if (openOnly) {
         where.push(`LOWER(COALESCE(status, '')) IN ('pending', 'in_transit')`);
@@ -76,6 +79,9 @@ module.exports = function(broadcastTable) {
 
   // CREATE: Delegated to Transaction Engine
   router.post('/', requirePermission('inventory_transfer'), async (req, res) => {
+    // Locked users may only ship FROM their own branch. Destination stays as sent
+    // so a real transfer between shops still works.
+    applyWriteBranchOverride(req, req.body, ['fromBranchId', 'from_branch_id'], 'STOCK TRANSFER');
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -107,6 +113,10 @@ module.exports = function(broadcastTable) {
 
   // APPROVE: Delegated to Transaction Engine (stock OUT)
   router.post('/:id/approve', requirePermission('inventory_transfer'), async (req, res) => {
+    const peek = await db.query('SELECT from_branch_id FROM stock_transfers WHERE id = $1', [req.params.id]);
+    if (!peek.rows[0] || isForeignBranch(req.branchScope, peek.rows[0].from_branch_id)) {
+      return res.status(404).json({ error: 'Transferência não encontrada' });
+    }
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -147,6 +157,10 @@ module.exports = function(broadcastTable) {
 
   // RECEIVE: Delegated to Transaction Engine (stock IN + journal)
   router.post('/:id/receive', requirePermission('inventory_transfer'), async (req, res) => {
+    const peek = await db.query('SELECT to_branch_id FROM stock_transfers WHERE id = $1', [req.params.id]);
+    if (!peek.rows[0] || isForeignBranch(req.branchScope, peek.rows[0].to_branch_id)) {
+      return res.status(404).json({ error: 'Transferência não encontrada' });
+    }
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
@@ -191,11 +205,17 @@ module.exports = function(broadcastTable) {
     try {
       await client.query('BEGIN');
       const result = await client.query(
-        'SELECT id, status FROM stock_transfers WHERE id = $1 FOR UPDATE',
+        'SELECT id, status, from_branch_id, to_branch_id FROM stock_transfers WHERE id = $1 FOR UPDATE',
         [req.params.id],
       );
       const row = result.rows[0];
       if (!row) throw new Error('Transferência não encontrada');
+      if (
+        isForeignBranch(req.branchScope, row.from_branch_id)
+        && isForeignBranch(req.branchScope, row.to_branch_id)
+      ) {
+        throw new Error('Transferência não encontrada');
+      }
       if (String(row.status || '').toLowerCase() !== 'pending') {
         throw new Error('Só transferências pendentes podem ser canceladas');
       }

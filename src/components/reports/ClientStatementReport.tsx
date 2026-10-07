@@ -61,7 +61,14 @@ export default function ClientStatementReport() {
   const [selectedClient, setSelectedClient] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [receipts, setReceipts] = useState<any[]>([]);
-  const [activeParties, setActiveParties] = useState<Array<{ id: string; name: string; nif: string }>>([]);
+  const [activeParties, setActiveParties] = useState<Array<{
+    id: string;
+    name: string;
+    nif: string;
+    currentBalance?: number;
+    contactPerson?: string;
+    paymentTerms?: string;
+  }>>([]);
 
   const { creditNotes } = useReportCreditNotes(apiBranchId, { dateFrom, dateTo });
 

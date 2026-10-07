@@ -1,6 +1,7 @@
 // Analytics / report aggregate endpoints (SQL-side summaries)
 const express = require('express');
 const db = require('../db');
+const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 
 function num(value) {
   const n = Number(value);
@@ -9,6 +10,7 @@ function num(value) {
 
 module.exports = function () {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   /**
    * GET /sales-summary?dateFrom&dateTo&branchId
@@ -18,7 +20,20 @@ module.exports = function () {
     try {
       const dateFrom = String(req.query.dateFrom || '').trim().slice(0, 10);
       const dateTo = String(req.query.dateTo || '').trim().slice(0, 10);
-      const branchId = String(req.query.branchId || '').trim() || null;
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.json({
+          revenue: 0,
+          tax: 0,
+          transactions: 0,
+          creditNotes: 0,
+          creditNoteTotal: 0,
+          byPaymentMethod: { cash: 0, card: 0, transfer: 0, mixed: 0, credit: 0 },
+          byDay: [],
+          netOfCreditNotes: true,
+        });
+      }
+      const branchId = scopedBranchId || null;
 
       if (!dateFrom || !dateTo) {
         return res.status(400).json({ error: 'dateFrom and dateTo are required' });

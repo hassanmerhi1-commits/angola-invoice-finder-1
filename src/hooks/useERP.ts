@@ -853,6 +853,8 @@ export function useSales(
   const limit = opts.limit ?? 200;
   const salesCacheKey = `sales:${branchId ?? 'all'}:${light ? 'light' : 'full'}:${dateFrom || ''}:${dateTo || ''}:${limit}`;
   const [sales, setSales] = useState<Sale[]>(() => getCachedList<Sale[]>(salesCacheKey) ?? []);
+  const [isLoading, setIsLoading] = useState(() => !(getCachedList<Sale[]>(salesCacheKey)?.length));
+  const [loadError, setLoadError] = useState<string | null>(null);
   const salesRef = useRef(sales);
   salesRef.current = sales;
 
@@ -861,11 +863,14 @@ export function useSales(
       const cached = getCachedList<Sale[]>(salesCacheKey);
       if (cached?.length) {
         setSales(cached);
+        setLoadError(null);
+        setIsLoading(false);
         return;
       }
     }
     let data: any[] = [];
     let reachedServer = false;
+    setIsLoading(true);
     try {
       const result = await api.sales.list(branchId, {
         limit,
@@ -876,24 +881,30 @@ export function useSales(
       if (result.data !== undefined) {
         data = Array.isArray(result.data) ? result.data : (result.data as any)?.items ?? [];
         reachedServer = true;
+        setLoadError(null);
       } else if (isDemoMode()) {
         data = await storage.getSales(branchId);
         reachedServer = true;
+        setLoadError(null);
       } else {
         throw new Error(result.error || 'Failed to load sales');
       }
     } catch (e) {
       console.error('[useSales] refresh failed:', e);
+      setLoadError(e instanceof Error ? e.message : 'Failed to load sales');
       if (isDemoMode()) {
         try {
           data = await storage.getSales(branchId);
           reachedServer = true;
+          setLoadError(null);
         } catch {
           data = [];
         }
       } else {
         data = [];
       }
+    } finally {
+      setIsLoading(false);
     }
     // Don't wipe a good cached list to empty on a transient fetch failure.
     if (!reachedServer && data.length === 0) return;
@@ -1058,7 +1069,7 @@ export function useSales(
     return sale;
   }, [refreshSales, t]);
 
-  return { sales, completeSale, refreshSales };
+  return { sales, completeSale, refreshSales, isLoading, loadError };
 }
 
 // ============================================
@@ -1243,10 +1254,14 @@ async function initAuthStateOnce() {
   setAuthState({ user: null, isLoading: false });
 }
 
-export type LoginOutcome =
-  | { ok: true; offline?: boolean; mustChangePassword?: boolean }
-  | { ok: false; kind: 'mfa'; mfaToken: string; message?: string }
-  | { ok: false; kind: 'credentials' | 'connection'; message?: string };
+export type LoginOutcome = {
+  ok: boolean;
+  offline?: boolean;
+  mustChangePassword?: boolean;
+  kind?: 'mfa' | 'credentials' | 'connection';
+  mfaToken?: string;
+  message?: string;
+};
 
 export function useAuth() {
   const snapshot = useSyncExternalStore(subscribeAuth, getAuthSnapshot, getAuthSnapshot);
@@ -2087,19 +2102,30 @@ function mapPurchaseOrder(order: any): PurchaseOrder {
 
 export function usePurchaseOrders(branchId?: string) {
   const { t } = useTranslation();
+  const cacheKey = `purchaseOrders:${branchId ?? 'all'}`;
   const [orders, setOrders] = useState<PurchaseOrder[]>(
-    () => getCachedList<PurchaseOrder[]>(`purchaseOrders:${branchId ?? 'all'}`) ?? [],
+    () => getCachedList<PurchaseOrder[]>(cacheKey) ?? [],
   );
+  const [isLoading, setIsLoading] = useState(() => !(getCachedList<PurchaseOrder[]>(cacheKey)?.length));
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refreshOrders = useCallback(async () => {
-    const data = await apiFallback<any[]>(
-      () => api.purchaseOrders.list(branchId),
-      () => storage.getPurchaseOrders(branchId)
-    );
-    const mapped = Array.isArray(data) ? data.map(mapPurchaseOrder) : [];
-    setOrders(mapped);
-    setCachedList(`purchaseOrders:${branchId ?? 'all'}`, mapped);
-  }, [branchId]);
+    setIsLoading(true);
+    try {
+      const data = await apiFallback<any[]>(
+        () => api.purchaseOrders.list(branchId),
+        () => storage.getPurchaseOrders(branchId)
+      );
+      const mapped = Array.isArray(data) ? data.map(mapPurchaseOrder) : [];
+      setOrders(mapped);
+      setCachedList(cacheKey, mapped);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load purchase orders');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [branchId, cacheKey]);
 
   useEffect(() => { refreshOrders(); }, [refreshOrders]);
 
@@ -2153,7 +2179,7 @@ export function usePurchaseOrders(branchId?: string) {
     }
   }, [refreshOrders]);
 
-  return { orders, createOrder, approveOrder, receiveOrder, cancelOrder, refreshOrders };
+  return { orders, createOrder, approveOrder, receiveOrder, cancelOrder, refreshOrders, isLoading, loadError };
 }
 
 // ============================================

@@ -3,11 +3,13 @@ const express = require('express');
 const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
+const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   const idText = (col) => (db.engine === 'postgres' ? `${col}::text` : `CAST(${col} AS TEXT)`);
   const postedClauseSql = () => (db.engine === 'postgres'
@@ -211,6 +213,8 @@ module.exports = function(broadcastTable) {
   router.get('/reports/trial-balance', async (req, res) => {
     try {
       const { start_date, end_date, branchId } = req.query;
+      const scopedBranchId = resolveListBranchId(req, branchId);
+      if (scopedBranchId === undefined) return res.json([]);
 
       let dateFilter = '';
       const params = [];
@@ -222,8 +226,8 @@ module.exports = function(broadcastTable) {
       }
 
       let branchFilter = '';
-      if (branchId) {
-        const branchClause = await buildJournalBranchFilter(db, branchId, paramIndex);
+      if (scopedBranchId) {
+        const branchClause = await buildJournalBranchFilter(db, scopedBranchId, paramIndex);
         if (branchClause.sql) {
           branchFilter = branchClause.sql;
           params.push(...branchClause.params);

@@ -55,7 +55,7 @@ const ALSO_REFRESH_PRODUCTS = new Set<RefreshableTable>([
 ]);
 
 const pendingTables = new Set<RefreshableTable>();
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushTimer: ReturnType<typeof setTimeout> | number | null = null;
 
 function dispatchTableRefresh(table: RefreshableTable, entityId?: string) {
   const mapped = TABLE_EVENT_MAP[table];

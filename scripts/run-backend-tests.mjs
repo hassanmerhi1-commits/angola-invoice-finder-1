@@ -26,6 +26,7 @@ const testFiles = [
   'test/rolePermissions.test.js',
   'test/accountStatement.test.js',
   'test/branchScope.test.js',
+  'test/searchScope.test.js',
   'test/dateRangeFilter.test.js',
   'test/repairParentEntityCoa.test.js',
   'test/saleJournalAmounts.test.js',

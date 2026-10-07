@@ -147,7 +147,7 @@ export async function applyStockAdjustmentLines(
     freightSourceName: freightSourceName?.trim() || undefined,
   });
 
-  if (result.error) {
+  if ('error' in result && result.error) {
     const message = result.error;
     if (isStockAdjustmentRouteMissing(message, result.status)) {
       const legacyIds: string[] = [];
@@ -164,7 +164,7 @@ export async function applyStockAdjustmentLines(
           notes,
           createdBy: createdBy || 'system',
         });
-        if (legacy.error) {
+        if ('error' in legacy && legacy.error) {
           legacyErrors.push(`${line.sku}: ${legacy.error}`);
         } else if (legacy.data?.id) {
           legacyIds.push(legacy.data.id);

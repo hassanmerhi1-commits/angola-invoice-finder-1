@@ -57,6 +57,7 @@ export function useUsers() {
   const initialUsers = readLocalUsers();
   const [users, setUsers] = useState<User[]>(() => initialUsers);
   const [isLoading, setIsLoading] = useState(() => initialUsers.length === 0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const hasRowsRef = useRef(initialUsers.length > 0);
 
   const refreshUsers = useCallback(async () => {
@@ -71,12 +72,18 @@ export function useUsers() {
         setUsers(normalized);
         saveLocalUsers(normalized);
         hasRowsRef.current = normalized.length > 0;
+        setLoadError(null);
         return;
       }
       const local = readLocalUsers();
       setUsers(local);
-    } catch {
-      setUsers(readLocalUsers());
+      setLoadError(null);
+    } catch (e) {
+      const local = readLocalUsers();
+      setUsers(local);
+      if (local.length === 0) {
+        setLoadError(e instanceof Error ? e.message : 'Failed to load users');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -200,6 +207,7 @@ export function useUsers() {
   return {
     users,
     isLoading,
+    loadError,
     refreshUsers,
     createUser,
     updateUser,

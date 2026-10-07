@@ -262,7 +262,9 @@ export function DataConsistencyCard() {
     repairClientBalances: ui.repairClientBalances,
     repairSkusRenamed: ui.repairSkusRenamed,
     repairBranchAssigned: ui.repairBranchAssigned,
+    repairOpeningStock: ui.repairOpeningStock,
     repairStockReconciled: ui.repairStockReconciled,
+    repairNoChanges: ui.repairNoChanges,
   };
 
   const handleCheck = useCallback(async () => {

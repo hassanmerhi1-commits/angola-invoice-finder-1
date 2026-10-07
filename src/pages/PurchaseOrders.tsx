@@ -39,6 +39,7 @@ import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { cn } from '@/lib/utils';
 import { purchaseOrderNeedsApproval } from '@/lib/purchaseOrderApproval';
+import { ListLoadState } from '@/components/ListLoadState';
 import { Search, Plus, Eye, CheckCircle, Package, ShoppingCart, Trash2, Barcode, ScanLine, Truck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -70,6 +71,9 @@ export default function PurchaseOrders() {
     approveOrder,
     receiveOrder,
     cancelOrder,
+    refreshOrders,
+    isLoading,
+    loadError,
   } = usePurchaseOrders(apiBranchId);
   const { suppliers } = useSuppliers();
   const { toast } = useToast();
@@ -577,10 +581,12 @@ export default function PurchaseOrders() {
         </CardHeader>
         <CardContent>
           {filteredOrders.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <ShoppingCart className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>Nenhuma encomenda encontrada</p>
-            </div>
+            <ListLoadState loading={isLoading} error={loadError} onRetry={() => void refreshOrders()}>
+              <div className="text-center py-12 text-muted-foreground">
+                <ShoppingCart className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>Nenhuma encomenda encontrada</p>
+              </div>
+            </ListLoadState>
           ) : (
             <Table>
               <TableHeader>

@@ -22,6 +22,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { ListLoadState } from '@/components/ListLoadState';
 import { Plus, RefreshCw, CheckCircle, Package, ArrowRight, Pencil, Trash2, Search, XCircle } from 'lucide-react';
 import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
@@ -104,7 +105,8 @@ export default function SalesOrdersPage() {
   const { clients } = useClients(!needCatalog);
 
   const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
   const [customerNif, setCustomerNif] = useState('');
@@ -130,10 +132,14 @@ export default function SalesOrdersPage() {
     try {
       const res = await api.salesOrders.list(branchId);
       if (res.error) {
+        setLoadError(res.error);
         toast.error(res.error);
         return;
       }
+      setLoadError(null);
       setOrders(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load sales orders');
     } finally {
       setLoading(false);
     }
@@ -591,8 +597,12 @@ export default function SalesOrdersPage() {
             <TableBody>
               {activeOrders.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                    {language === 'pt' ? 'Sem encomendas' : 'No orders yet'}
+                  <TableCell colSpan={7} className="p-0">
+                    <ListLoadState loading={loading} error={loadError} onRetry={() => void loadOrders()}>
+                      <div className="text-center text-muted-foreground py-8">
+                        {language === 'pt' ? 'Sem encomendas' : 'No orders yet'}
+                      </div>
+                    </ListLoadState>
                   </TableCell>
                 </TableRow>
               ) : (

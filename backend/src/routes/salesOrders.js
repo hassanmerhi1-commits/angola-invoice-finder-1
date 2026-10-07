@@ -5,6 +5,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 
 const MUTATE_PERMS = ['invoice_create', 'proforma_create'];
 const ACTIVE_STATUSES = ['draft', 'confirmed', 'reserved'];
@@ -285,10 +286,13 @@ async function loadOrderById(id) {
 
 module.exports = function salesOrdersRoutes(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   router.get('/', requireAuth, async (req, res) => {
     try {
-      const branchId = req.query.branchId ? String(req.query.branchId).trim() : '';
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) return res.json([]);
+      const branchId = scopedBranchId ? String(scopedBranchId).trim() : '';
       let query = 'SELECT * FROM sales_orders';
       const params = [];
       if (branchId) {
@@ -312,7 +316,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
   router.get('/:id', requireAuth, async (req, res) => {
     try {
       const order = await loadOrderById(req.params.id);
-      if (!order) {
+      if (!order || isForeignBranch(req.branchScope, order.branchId)) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       res.json(order);
@@ -325,6 +329,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
   router.post('/', requireAuth, requirePermission(...MUTATE_PERMS), async (req, res) => {
     const client = await db.pool.connect();
     try {
+      applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id', 'warehouseId', 'warehouse_id'], 'SALES ORDER');
       const header = bodyToHeader(req.body);
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
       await client.query('BEGIN');
@@ -399,13 +404,14 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
     const client = await db.pool.connect();
     try {
       const id = req.params.id;
-      const existing = await db.query('SELECT status FROM sales_orders WHERE id = $1 LIMIT 1', [id]);
-      if (!existing.rows.length) {
+      const existing = await db.query('SELECT status, branch_id FROM sales_orders WHERE id = $1 LIMIT 1', [id]);
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       if (!ACTIVE_STATUSES.includes(existing.rows[0].status)) {
         return res.status(400).json({ error: 'Cannot edit a converted or cancelled sales order' });
       }
+      applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id', 'warehouseId', 'warehouse_id'], 'SALES ORDER');
       const header = bodyToHeader({ ...req.body, id });
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
       await client.query('BEGIN');
@@ -493,10 +499,10 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
   router.delete('/:id', requireAuth, requirePermission(...MUTATE_PERMS), async (req, res) => {
     try {
       const existing = await db.query(
-        'SELECT id, order_number, status FROM sales_orders WHERE id = $1 LIMIT 1',
+        'SELECT id, order_number, status, branch_id FROM sales_orders WHERE id = $1 LIMIT 1',
         [req.params.id],
       );
-      if (!existing.rows.length) {
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       if (existing.rows[0].status === 'converted') {
@@ -536,7 +542,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
     try {
       const id = req.params.id;
       const existing = await db.query('SELECT * FROM sales_orders WHERE id = $1 LIMIT 1', [id]);
-      if (!existing.rows.length) {
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       const row = existing.rows[0];
@@ -574,7 +580,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
     try {
       const id = req.params.id;
       const existing = await client.query('SELECT * FROM sales_orders WHERE id = $1 LIMIT 1', [id]);
-      if (!existing.rows.length) {
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       const row = existing.rows[0];
@@ -645,7 +651,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
       const id = req.params.id;
       await client.query('BEGIN');
       const existing = await client.query('SELECT * FROM sales_orders WHERE id = $1 LIMIT 1 FOR UPDATE', [id]);
-      if (!existing.rows.length) {
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'Sales order not found' });
       }
@@ -761,7 +767,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
     try {
       const id = req.params.id;
       const existing = await db.query('SELECT * FROM sales_orders WHERE id = $1 LIMIT 1', [id]);
-      if (!existing.rows.length) {
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       const row = existing.rows[0];
@@ -797,7 +803,7 @@ module.exports = function salesOrdersRoutes(broadcastTable) {
         return res.status(400).json({ error: 'invoiceId or invoiceNumber is required' });
       }
       const existing = await db.query('SELECT * FROM sales_orders WHERE id = $1 LIMIT 1', [id]);
-      if (!existing.rows.length) {
+      if (!existing.rows.length || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Sales order not found' });
       }
       const updated = await db.query(

@@ -22,12 +22,13 @@ const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v4:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
+  const rec = row as Record<string, unknown>;
   const raw =
-    row.stock ??
-    row.ledger_stock ??
-    row.ledgerStock ??
-    row.stock_qty ??
-    row.stockQty ??
+    rec.stock ??
+    rec.ledger_stock ??
+    rec.ledgerStock ??
+    rec.stock_qty ??
+    rec.stockQty ??
     0;
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;

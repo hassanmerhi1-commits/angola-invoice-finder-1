@@ -4,14 +4,19 @@ const db = require('../db');
 const { createPurchaseOrder, processPurchaseReceive } = require('../transactionEngine');
 const { requirePermission } = require('../middleware/requirePermission');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   // READ: Get all purchase orders (read-only queries are fine in routes)
   router.get('/', async (req, res) => {
     try {
-      const { branchId, sku } = req.query;
+      const { sku } = req.query;
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) return res.json([]);
+      const branchId = scopedBranchId || '';
       const rawSku = String(sku || '').trim();
       const skuKey = rawSku.toLowerCase();
       let query = 'SELECT * FROM purchase_orders';
@@ -69,13 +74,13 @@ module.exports = function(broadcastTable) {
         return res.status(400).json({ error: 'orderNumber and supplierId are required' });
       }
       const find = await db.query(
-        `SELECT id, status FROM purchase_orders
+        `SELECT id, status, branch_id FROM purchase_orders
          WHERE LOWER(TRIM(COALESCE(order_number, ''))) = LOWER($1)
            AND TRIM(supplier_id::text) = TRIM($2)
          LIMIT 1`,
         [num, supplierId]
       );
-      if (find.rows.length === 0) {
+      if (find.rows.length === 0 || isForeignBranch(req.branchScope, find.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Purchase order not found for this supplier and order number' });
       }
       const { id: orderId, status } = find.rows[0];
@@ -138,6 +143,7 @@ module.exports = function(broadcastTable) {
   router.post('/', requirePermission('purchase_create'), async (req, res) => {
     const client = await db.pool.connect();
     try {
+      applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id'], 'PURCHASE ORDER');
       await client.query('BEGIN');
       const order = await createPurchaseOrder(client, req.body);
       await client.query('COMMIT');
@@ -169,10 +175,10 @@ module.exports = function(broadcastTable) {
       const approvedBy = req.body?.approvedBy != null ? String(req.body.approvedBy).trim() : '';
 
       const orderResult = await client.query(
-        'SELECT id, status, order_number FROM purchase_orders WHERE id = $1 FOR UPDATE',
+        'SELECT id, status, order_number, branch_id FROM purchase_orders WHERE id = $1 FOR UPDATE',
         [id],
       );
-      if (!orderResult.rows.length) {
+      if (!orderResult.rows.length || isForeignBranch(req.branchScope, orderResult.rows[0].branch_id)) {
         throw new Error('Ordem de compra não encontrada');
       }
       const order = orderResult.rows[0];
@@ -270,6 +276,11 @@ module.exports = function(broadcastTable) {
       await client.query('BEGIN');
       const { id } = req.params;
       const { receivedBy, receivedQuantities } = req.body;
+
+      const peek = await client.query('SELECT branch_id FROM purchase_orders WHERE id = $1 FOR UPDATE', [id]);
+      if (!peek.rows.length || isForeignBranch(req.branchScope, peek.rows[0].branch_id)) {
+        throw new Error('Ordem de compra não encontrada');
+      }
 
       // Check approval status
       try {

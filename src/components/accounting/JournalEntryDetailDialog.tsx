@@ -89,6 +89,7 @@ export function JournalEntryDetailDialog({
     fieldDocTotal: t.journalsUi.detailDocTotal,
     fieldInvoiceType: t.auditTrailUi.fieldInvoiceType,
     fieldNif: t.journalsUi.detailNif,
+    salesOfMerchandise: t.journalsUi.salesOfMerchandise,
   }), [t]);
 
   useEffect(() => {

@@ -94,7 +94,7 @@ export function AppLayout() {
         printCurrentPage();
         return;
       }
-      toast.info(t.topNav.file.printUnavailablePage);
+      toast({ title: t.topNav.file.printUnavailablePage });
     };
 
     window.addEventListener(NEXOR_TOOLBAR.DOCUMENTS_PRINT, onGlobalPrint);

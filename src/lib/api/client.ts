@@ -600,15 +600,15 @@ export const api = {
               setAuthToken(null);
               setOfflineModeActive(true);
               return {
-                data: { token: '', user: offlineUser, offline: true },
+                data: { token: '', user: offlineUser, offline: true, mfaRequired: false, mfaToken: undefined as string | undefined },
               };
             }
-            return { error: ready.error, errorKind: 'connection' as LoginErrorKind };
+            return { error: ready.ok === false ? ready.error : 'Backend not ready', errorKind: 'connection' as LoginErrorKind };
           }
         } else {
           const ready = await waitForEmbeddedBackendHealth({ timeoutMs: 15000 });
           if (!ready.ok) {
-            return { error: ready.error, errorKind: 'connection' as LoginErrorKind };
+            return { error: ready.ok === false ? ready.error : 'Backend not ready', errorKind: 'connection' as LoginErrorKind };
           }
         }
       }
@@ -658,6 +658,8 @@ export const api = {
               token: '',
               user: offlineUser,
               offline: true,
+              mfaRequired: false,
+              mfaToken: undefined as string | undefined,
             },
           };
         }
@@ -1899,6 +1901,7 @@ export const api = {
         backfill?: { created: number; skipped: number };
         errors?: string[];
         warnings?: string[];
+        journalEntryId?: string | null;
       }>(`/purchase-invoices/${encodeURIComponent(id)}/repost-accounting`, { method: 'POST' }, { timeoutMs: 120000 }),
     backfillAccounting: (limit = 100) =>
       apiFetch<{ posted: number; failed: number; errors?: { id: string; error: string }[] }>(
@@ -2620,7 +2623,7 @@ export const api = {
           const inputTax = lines
             .filter((row) => row.direction === 'input')
             .reduce((sum, row) => sum + Number(row.total_tax || 0), 0);
-          return { data: { lines, outputTax, inputTax, ivaPayable: outputTax - inputTax } };
+          return { data: { lines, outputTax, inputTax, ivaPayable: outputTax - inputTax }, error: undefined as string | undefined };
         });
       }
       const sp = new URLSearchParams();
@@ -2884,7 +2887,7 @@ export const api = {
       endDate?: string;
       branchId?: string;
       includeVoided?: boolean;
-      company?: Record<string, unknown>;
+      company?: Record<string, unknown> | object;
     }) => {
       const sp = new URLSearchParams();
       if (params?.year) sp.append('year', params.year.toString());
@@ -2934,7 +2937,7 @@ export const api = {
       branchId?: string;
       includeVoided?: boolean;
       format?: 'json' | 'xml';
-      company?: Record<string, unknown>;
+      company?: Record<string, unknown> | object;
     }) => {
       const sp = new URLSearchParams();
       sp.append('format', params.format || 'json');
@@ -2960,7 +2963,7 @@ export const api = {
       endDate: string;
       branchId?: string;
       includeVoided?: boolean;
-      company?: Record<string, unknown>;
+      company?: Record<string, unknown> | object;
     }) =>
       apiFetch<{
         ok: boolean;
@@ -3706,6 +3709,7 @@ export const api = {
             ...body,
             pendingSync: true,
           },
+          error: undefined as string | undefined,
         };
       };
 
@@ -3788,6 +3792,15 @@ export const api = {
             ),
             direction: data.direction,
             pendingSync: true,
+            productUpdates: [] as {
+              productId: string;
+              sku?: string;
+              stock: number;
+              cost?: number;
+              avgCost?: number;
+              lastCost?: number;
+              taxRate?: number;
+            }[],
           },
         };
       };

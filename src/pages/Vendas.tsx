@@ -26,6 +26,7 @@ import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { getCompanySettings } from '@/lib/companySettings';
 import { AGTQRCode } from '@/components/invoice/AGTQRCode';
 import { toast } from 'sonner';
+import { ListLoadState } from '@/components/ListLoadState';
 import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
@@ -47,7 +48,7 @@ const statusConfig: Record<string, { labelKey: 'completed' | 'voided' | 'pending
 export default function Vendas() {
   const navigate = useNavigate();
   const { currentBranch, apiBranchId } = useBranchScope();
-  const { sales, refreshSales } = useSales(apiBranchId, { light: true });
+  const { sales, refreshSales, isLoading, loadError } = useSales(apiBranchId, { light: true });
   const company = getCompanySettings();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -268,11 +269,13 @@ export default function Vendas() {
         </table>
 
         {filteredSales.length === 0 && (
-          <div className="text-center py-16 text-muted-foreground">
-            <ShoppingCart className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">{t.vendasUi.noneFound}</p>
-            <p className="text-xs mt-1">{t.vendasUi.noneFoundHint}</p>
-          </div>
+          <ListLoadState loading={isLoading} error={loadError} onRetry={() => void refreshSales({ force: true })}>
+            <div className="text-center py-16 text-muted-foreground">
+              <ShoppingCart className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">{t.vendasUi.noneFound}</p>
+              <p className="text-xs mt-1">{t.vendasUi.noneFoundHint}</p>
+            </div>
+          </ListLoadState>
         )}
       </div>
 

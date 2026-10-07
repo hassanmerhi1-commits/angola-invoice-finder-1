@@ -16,6 +16,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
+import { ListLoadState } from '@/components/ListLoadState';
 import {
   Plus, Search, Printer, RefreshCw, FileText, Receipt,
   Banknote, CreditCard, ArrowRight, Download, XCircle, CheckCircle,
@@ -275,6 +276,7 @@ export default function Invoices() {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [listLoading, setListLoading] = useState(false);
+  const [listLoadError, setListLoadError] = useState<string | null>(null);
 
   // Dialog state
   const [formDocType, setFormDocType] = useState<DocumentType>('fatura_venda');
@@ -380,6 +382,7 @@ export default function Invoices() {
     };
     const load = async () => {
       try {
+        setListLoadError(null);
         if (type === 'nota_credito') {
           const cnRes = await api.fiscalDocuments.listCreditNotes(listBranchId, listOpts);
           const mapped = (cnRes.data || []).map((cn: CreditNote) =>
@@ -403,8 +406,8 @@ export default function Invoices() {
         // Tab-scoped: don't wait on purchases when viewing sales (and vice versa).
         const loadSales = !type || type === 'fatura_venda';
         const loadPurchase = !type || type === 'fatura_compra';
-        const loadFiscalCreditNotes = !type || type === 'nota_credito';
-        const loadFiscalTransport = !type || type === 'guia_remessa';
+        const loadFiscalCreditNotes = !type;
+        const loadFiscalTransport = !type;
         // Proformas have their own page. The All tab is invoices only — old drafts
         // were landing here and never on Proforma.
         const loadProformas = type === 'proforma';
@@ -531,6 +534,7 @@ export default function Invoices() {
         // Keep showing the last cached list instead of blanking the tab on a transient failure.
         const cachedErr = getCachedList<ERPDocument[]>(cacheKey);
         if (!cachedErr || cachedErr.length === 0) {
+          setListLoadError(err instanceof Error ? err.message : t.common.loadFailed);
           toast.error(err instanceof Error ? err.message : t.common.loading);
         }
       } finally {
@@ -1493,18 +1497,14 @@ export default function Invoices() {
               </tr>
             </tfoot>
           </table>
-          {listLoading && filteredDocs.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-              <Loader2 className="h-8 w-8 animate-spin opacity-70" />
-              <p className="text-sm">{t.common.loading}</p>
-            </div>
-          )}
-          {!listLoading && filteredDocs.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">{t.common.noResults}</p>
-              <p className="text-xs mt-1">{t.common.create}</p>
-            </div>
+          {filteredDocs.length === 0 && (
+            <ListLoadState loading={listLoading} error={listLoadError} onRetry={() => setRefreshKey((k) => k + 1)}>
+              <div className="text-center py-12 text-muted-foreground">
+                <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">{t.common.noResults}</p>
+                <p className="text-xs mt-1">{t.common.create}</p>
+              </div>
+            </ListLoadState>
           )}
           </div>
         </div>

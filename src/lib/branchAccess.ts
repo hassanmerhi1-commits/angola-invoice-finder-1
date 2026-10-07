@@ -1,11 +1,13 @@
-import type { Branch, User } from '@/types/erp';
+import type { Branch } from '@/types/erp';
+
+type BranchLike = Pick<Branch, 'id'> & Partial<Pick<Branch, 'name' | 'code' | 'isMain'>>;
 
 /** Admin/manager scope: consolidated stock/data across every branch. */
 export const ALL_BRANCHES_SCOPE_ID = '__all_branches__';
 
 const SCOPE_STORAGE_KEY = 'kwanza_branch_scope_id';
 
-type BranchAccessUser = Pick<User, 'branchId' | 'role'> | null | undefined;
+type BranchAccessUser = { branchId?: string; role?: string } | null | undefined;
 
 function isHeadOfficeRole(role: unknown): boolean {
   const r = String(role || '').toLowerCase();
@@ -242,7 +244,7 @@ export function canApproveStockTransfer(
     scopeId?: string | null;
     canSwitchBranch?: boolean;
     userBranchId?: string | null;
-    branches?: Branch[];
+    branches?: BranchLike[];
   },
 ): boolean {
   if (String(transfer.status || '').toLowerCase() !== 'pending') return false;
@@ -251,7 +253,7 @@ export function canApproveStockTransfer(
   if (branchIdsEqual(fromId, opts.userBranchId)) return true;
   if (
     opts.canSwitchBranch
-    && isConsolidatedBranchScope(true, opts.scopeId, opts.branches || [])
+    && isConsolidatedBranchScope(true, opts.scopeId, (opts.branches || []) as Branch[])
   ) {
     return true;
   }
@@ -265,7 +267,7 @@ export function canReceiveStockTransfer(
     scopeId?: string | null;
     canSwitchBranch?: boolean;
     userBranchId?: string | null;
-    branches?: Branch[];
+    branches?: BranchLike[];
   },
 ): boolean {
   if (String(transfer.status || '').toLowerCase() !== 'in_transit') return false;
@@ -274,7 +276,7 @@ export function canReceiveStockTransfer(
   if (branchIdsEqual(toId, opts.userBranchId)) return true;
   if (
     opts.canSwitchBranch
-    && isConsolidatedBranchScope(true, opts.scopeId, opts.branches || [])
+    && isConsolidatedBranchScope(true, opts.scopeId, (opts.branches || []) as Branch[])
   ) {
     return true;
   }

@@ -5,6 +5,7 @@ const { enrichJournalEntryContext, enrichJournalEntries, enrichJournalEntriesLig
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { parseListPagination, parseTruthyQuery } = require('../lib/listPagination');
 const { requirePermission } = require('../middleware/requirePermission');
+const { attachUserBranchScope, resolveListBranchId, isForeignBranch } = require('../middleware/branchScope');
 const { reverseJournalEntry } = require('../lib/purchaseInvoicePosting');
 const { updateJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
@@ -61,11 +62,16 @@ async function loadJournalLines(entryId) {
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   // Get all journal entries with lines
   router.get('/', requirePermission('accounting_view', 'accounting_create', 'accounting_journal'), async (req, res) => {
     try {
       const { branchId, referenceType, startDate, endDate, q, accountCode } = req.query;
+      const scopedBranchId = resolveListBranchId(req, branchId);
+      if (scopedBranchId === undefined) {
+        return res.json({ items: [], total: 0, totals: { debit: 0, credit: 0 }, limit: 0, offset: 0, hasMore: false });
+      }
       const dated = !!(String(startDate || '').trim() && String(endDate || '').trim());
       const { limit, offset } = parseListPagination(req, {
         defaultLimit: 200,
@@ -78,8 +84,8 @@ module.exports = function(broadcastTable) {
       const conditions = ['1=1'];
       let paramIndex = 1;
 
-      if (branchId) {
-        const branchFilter = await buildJournalBranchFilter(db, branchId, paramIndex);
+      if (scopedBranchId) {
+        const branchFilter = await buildJournalBranchFilter(db, scopedBranchId, paramIndex);
         if (branchFilter.sql) {
           conditions.push(branchFilter.sql.replace(/^\s*AND\s+/i, ''));
           params.push(...branchFilter.params);
@@ -184,6 +190,9 @@ module.exports = function(broadcastTable) {
       }
 
       const entry = result.rows[0];
+      if (isForeignBranch(req.branchScope, entry.branch_id)) {
+        return res.status(404).json({ error: 'Journal entry not found' });
+      }
       entry.lines = await loadJournalLines(id);
       entry.context = await enrichJournalEntryContext(db, entry);
 
@@ -205,12 +214,13 @@ module.exports = function(broadcastTable) {
         [type, id],
       );
 
-      for (const entry of result.rows) {
+      const rows = result.rows.filter((entry) => !isForeignBranch(req.branchScope, entry.branch_id));
+      for (const entry of rows) {
         entry.lines = await loadJournalLines(entry.id);
       }
-      await enrichJournalEntries(db, result.rows);
+      await enrichJournalEntries(db, rows);
 
-      res.json(result.rows);
+      res.json(rows);
     } catch (error) {
       console.error('[JOURNAL ENTRIES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch journal entries' });
@@ -232,10 +242,10 @@ module.exports = function(broadcastTable) {
       }
 
       const existing = await db.query(
-        'SELECT entry_date FROM journal_entries WHERE id = $1 LIMIT 1',
+        'SELECT entry_date, branch_id FROM journal_entries WHERE id = $1 LIMIT 1',
         [req.params.id],
       );
-      if (!existing.rows[0]) {
+      if (!existing.rows[0] || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Journal entry not found' });
       }
       const existingDate = toISODateOnly(existing.rows[0].entry_date);
@@ -301,10 +311,10 @@ module.exports = function(broadcastTable) {
     const client = await db.pool.connect();
     try {
       const existing = await db.query(
-        'SELECT entry_date FROM journal_entries WHERE id = $1 LIMIT 1',
+        'SELECT entry_date, branch_id FROM journal_entries WHERE id = $1 LIMIT 1',
         [req.params.id],
       );
-      if (!existing.rows[0]) {
+      if (!existing.rows[0] || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Journal entry not found' });
       }
       const existingDate = toISODateOnly(existing.rows[0].entry_date);
@@ -355,6 +365,8 @@ module.exports = function(broadcastTable) {
   router.get('/reports/summary', requirePermission('accounting_view', 'accounting_create', 'accounting_journal'), async (req, res) => {
     try {
       const { startDate, endDate, branchId } = req.query;
+      const scopedBranchId = resolveListBranchId(req, branchId);
+      if (scopedBranchId === undefined) return res.json([]);
       let query = `
         SELECT 
           reference_type,
@@ -367,8 +379,8 @@ module.exports = function(broadcastTable) {
       const params = [];
       let paramIndex = 1;
 
-      if (branchId) {
-        const branchFilter = await buildJournalBranchFilter(db, branchId, paramIndex);
+      if (scopedBranchId) {
+        const branchFilter = await buildJournalBranchFilter(db, scopedBranchId, paramIndex);
         if (branchFilter.sql) {
           query += branchFilter.sql;
           params.push(...branchFilter.params);

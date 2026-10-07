@@ -77,6 +77,13 @@ test('a purchase body cannot aim stock at another warehouse', () => {
   assert.equal(body.stockEntries[1].warehouse_id, FILIAL);
 });
 
+test('a locked user ships from their branch and keeps the destination', () => {
+  const body = { fromBranchId: OTHER, toBranchId: OTHER };
+  applyWriteBranchOverride({ branchScope: lockedToFilial, user: { id: 'u1' } }, body, ['fromBranchId', 'from_branch_id'], 'TEST');
+  assert.equal(body.fromBranchId, FILIAL);
+  assert.equal(body.toBranchId, OTHER);
+});
+
 test('a locked user cannot open another branch row', () => {
   assert.equal(isForeignBranch(lockedToFilial, OTHER), true);
   assert.equal(isForeignBranch(lockedToFilial, FILIAL), false);

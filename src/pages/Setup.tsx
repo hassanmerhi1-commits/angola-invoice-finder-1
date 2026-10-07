@@ -73,7 +73,7 @@ export default function Setup() {
   const [selectedMunicipio, setSelectedMunicipio] = useState('');
   const [mainApiUrl, setMainApiUrl] = useState('');
   const [serverRole, setServerRole] = useState<'city' | 'hq'>('city');
-  const [discoveredServers, setDiscoveredServers] = useState<Array<{ address: string; port: number; name: string }>>([]);
+  const [discoveredServers, setDiscoveredServers] = useState<Array<{ address?: string; ip?: string; port: number; name: string }>>([]);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [connectionError, setConnectionError] = useState('');
   const isElectron = !!window.electronAPI?.isElectron;
@@ -329,8 +329,9 @@ export default function Setup() {
       if (result.success && result.servers?.length) {
         setDiscoveredServers(result.servers);
         const first = result.servers[0];
-        setIpFileContent(first.address);
-        toast.success(`Servidor encontrado: ${first.name} (${first.address})`);
+        const firstAddr = first.address || first.ip;
+        setIpFileContent(firstAddr);
+        toast.success(`Servidor encontrado: ${first.name} (${firstAddr})`);
       } else {
         toast.error('Nenhum servidor na rede Wi-Fi', {
           description: 'No servidor: abra NEXOR ERP, anote o IP Wi-Fi e use-o aqui. Se falhar, execute scripts\\allow-nexor-lan.ps1 como Administrador no servidor.',
@@ -707,21 +708,24 @@ export default function Setup() {
 
               {discoveredServers.length > 0 && (
                 <div className="space-y-2">
-                  {discoveredServers.map((server) => (
+                  {discoveredServers.map((server) => {
+                    const addr = server.address || server.ip || '';
+                    return (
                     <button
-                      key={`${server.address}:${server.port}`}
+                      key={`${addr}:${server.port}`}
                       type="button"
                       className="w-full text-left border rounded-lg p-3 hover:border-primary hover:bg-primary/5"
                       onClick={() => {
-                        setIpFileContent(server.address);
+                        setIpFileContent(addr);
                         setConnectionStatus('idle');
                         setConnectionError('');
                       }}
                     >
                       <div className="font-medium">{server.name}</div>
-                      <div className="text-xs font-mono text-muted-foreground">{server.address}:{server.port}</div>
+                      <div className="text-xs font-mono text-muted-foreground">{addr}:{server.port}</div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 

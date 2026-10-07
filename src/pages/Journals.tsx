@@ -38,6 +38,7 @@ import { getCachedList, setCachedList, unwrapListPayload, markCachedListStale } 
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { subscribeSupplierReturnsChanged } from '@/lib/supplierReturnSync';
 import { DatePickerButton, localISODate } from '@/components/ui/DatePickerButton';
+import { ListLoadState } from '@/components/ListLoadState';
 import {
   isBeforeToday,
 } from '@/lib/workingDayAccess';
@@ -281,12 +282,12 @@ function JournalsTrialBalancePanel({ branchId }: { branchId?: string }) {
           <RefreshCw className="w-3 h-3 mr-1" /> {t.common.refresh}
         </Button>
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && rows.length > 0 && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex-1 overflow-auto border rounded-lg">
-        {isLoading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-          </div>
+        {rows.length === 0 ? (
+          <ListLoadState loading={isLoading} error={error} onRetry={() => void refetch()}>
+            <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</p>
+          </ListLoadState>
         ) : (
           <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0">
@@ -325,9 +326,6 @@ function JournalsTrialBalancePanel({ branchId }: { branchId?: string }) {
             </tfoot>
           </table>
         )}
-        {!isLoading && rows.length === 0 && (
-          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.noEntriesFound}</p>
-        )}
       </div>
     </div>
   );
@@ -361,6 +359,7 @@ function JournalsAuditPanel() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [rows, setRows] = useState<AuditLogRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<AuditLogRow | null>(null);
 
   const auditDetailLabels = useMemo(
@@ -403,10 +402,15 @@ function JournalsAuditPanel() {
     setLoading(true);
     try {
       const res = await api.audit.list({ limit: 200 });
+      if (res.error) {
+        setLoadError(res.error);
+        return;
+      }
       const raw = Array.isArray(res.data) ? res.data : [];
       setRows(raw.map((row) => mapAuditLogRow(row as Record<string, unknown>)));
-    } catch {
-      setRows([]);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Failed to load audit log');
     } finally {
       setLoading(false);
     }
@@ -437,10 +441,10 @@ function JournalsAuditPanel() {
         </div>
       </div>
       <div className="flex-1 overflow-auto border rounded-lg">
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-          </div>
+        {rows.length === 0 ? (
+          <ListLoadState loading={loading} error={loadError} onRetry={() => void load()}>
+            <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.auditEmpty}</p>
+          </ListLoadState>
         ) : (
           <table className="w-full text-xs">
             <thead className="bg-muted/60 border-b sticky top-0">
@@ -477,9 +481,6 @@ function JournalsAuditPanel() {
               ))}
             </tbody>
           </table>
-        )}
-        {!loading && rows.length === 0 && (
-          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.auditEmpty}</p>
         )}
       </div>
       <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
@@ -537,7 +538,7 @@ function JournalsCashiersPanel({
 }) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const { sales } = useSales(branchId, { dateFrom, dateTo, limit: 5000 });
+  const { sales, isLoading, loadError, refreshSales } = useSales(branchId, { dateFrom, dateTo, limit: 5000 });
 
   const cashierRows = useMemo(() => {
     const map = new Map<string, { name: string; sales: number; count: number }>();
@@ -575,7 +576,9 @@ function JournalsCashiersPanel({
           </tbody>
         </table>
         {cashierRows.length === 0 && (
-          <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.cashiersHintDesc}</p>
+          <ListLoadState loading={isLoading} error={loadError} onRetry={() => void refreshSales({ force: true })}>
+            <p className="text-center py-12 text-muted-foreground text-sm">{t.journalsUi.cashiersHintDesc}</p>
+          </ListLoadState>
         )}
       </div>
     </div>

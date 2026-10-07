@@ -10,6 +10,7 @@ import { useTranslation } from '@/i18n';
 interface HealthData {
   status?: string;
   ok?: boolean;
+  unified?: boolean;
   serverName?: string;
   version?: string;
   connectedClients?: number;
@@ -31,10 +32,11 @@ interface HealthData {
 }
 
 interface ElectronStatus {
-  mode: 'server' | 'client' | 'unconfigured';
+  mode: 'server' | 'client' | 'unconfigured' | 'standalone';
   connected: boolean;
   path: string | null;
   serverAddress: string | null;
+  expressBackend?: boolean;
 }
 
 const isElectron = !!(window as any).electronAPI?.db;

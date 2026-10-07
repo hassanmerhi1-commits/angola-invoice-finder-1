@@ -104,7 +104,8 @@ export interface ERPDocument {
   // Status & validity
   status: DocumentStatus;
   issueDate: string;
-  issueTime: string;        // HH:MM:SS — AGT mandatory
+  issueTime?: string;        // HH:MM:SS — AGT mandatory
+  invoiceType?: string;
   dueDate?: string;
   validUntil?: string;     // for proformas
   

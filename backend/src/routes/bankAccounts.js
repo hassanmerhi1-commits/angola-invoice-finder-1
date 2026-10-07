@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const { resolveBranchFilterId } = require('../lib/branchIdMatch');
 const { requirePermission } = require('../middleware/requirePermission');
+const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 const { auditErpSafe } = require('../lib/erpAudit');
 
 function mapBankRow(row) {
@@ -96,6 +97,7 @@ async function ensureBankAccountsTable() {
 
 module.exports = function bankAccountsRouter(broadcastTable) {
   const router = express.Router();
+  router.use(attachUserBranchScope);
 
   let lastBankCoaSyncAt = 0;
 
@@ -118,7 +120,9 @@ module.exports = function bankAccountsRouter(broadcastTable) {
       }
 
       async function queryBanks() {
-        const branchId = String(req.query.branchId || '').trim();
+        const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+        if (scopedBranchId === undefined) return { rows: [] };
+        const branchId = scopedBranchId ? String(scopedBranchId).trim() : '';
         const params = [];
         let sql = 'SELECT * FROM bank_accounts';
         if (branchId) {
@@ -161,6 +165,11 @@ module.exports = function bankAccountsRouter(broadcastTable) {
         return res.status(503).json({ error: 'Bank accounts table not available' });
       }
       const body = req.body || {};
+      applyWriteBranchOverride(req, body, ['branchId', 'branch_id'], 'BANK');
+      const prior = await db.query('SELECT branch_id FROM bank_accounts WHERE id = $1 LIMIT 1', [String(body.id || '').trim()]);
+      if (prior.rows[0] && isForeignBranch(req.branchScope, prior.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Bank account not found' });
+      }
       const branchId = String(body.branchId || body.branch_id || '').trim();
       const branchName = String(body.branchName || body.branch_name || '').trim();
       const bankName = String(body.bankName || body.bank_name || '').trim();
@@ -316,6 +325,10 @@ module.exports = function bankAccountsRouter(broadcastTable) {
       await ensureBankAccountsTable();
       const delta = Number(req.body?.delta);
       if (!Number.isFinite(delta)) return res.status(400).json({ error: 'delta required' });
+      const existing = await db.query('SELECT branch_id FROM bank_accounts WHERE id = $1', [req.params.id]);
+      if (!existing.rows[0] || isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
+        return res.status(404).json({ error: 'Bank account not found' });
+      }
       await db.query(
         `UPDATE bank_accounts
          SET balance = COALESCE(balance, 0) + $1, updated_at = CURRENT_TIMESTAMP

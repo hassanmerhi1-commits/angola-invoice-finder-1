@@ -15,7 +15,8 @@ export type PrintSource =
   | 'invoice_view'
   | 'document_form'
   | 'purchase_invoice'
-  | 'proforma';
+  | 'proforma'
+  | 'shift_invoices_batch';
 
 export type RecordPrintOptions = {
   format?: PrintFormat;
@@ -42,6 +43,7 @@ const DOC_LABEL_PT: Record<DocumentType, string> = {
   nota_credito: 'Nota de Crédito',
   nota_debito: 'Nota de Débito',
   guia_remessa: 'Guia de Remessa',
+  sales_order: 'Encomenda',
 };
 
 /** Record a sales/POS invoice print in audit_log (and update printed_at). */

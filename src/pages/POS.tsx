@@ -931,7 +931,7 @@ export default function POS() {
           <div className="flex items-center gap-1.5">
             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">{t.posUi.priceLabel}</Label>
             {canChoosePrice ? (
-              <Select value={String(priceLevel)} onValueChange={(v) => setPriceLevel(Number(v))}>
+              <Select value={String(priceLevel)} onValueChange={(v) => setPriceLevel(Number(v) as 1 | 2 | 3 | 4)}>
                 <SelectTrigger className="h-9 w-[120px] text-xs">
                   <SelectValue />
                 </SelectTrigger>

@@ -278,12 +278,14 @@ export function findProductForStockEntryImport(
   return dedupeProductsBySku(nameMatches, branchId)[0];
 }
 
-export function remapLineProductIdsForBranch(
-  lines: { rowId: string; productId: string | null; search: string }[],
+export function remapLineProductIdsForBranch<
+  T extends { rowId: string; productId: string | null; search: string },
+>(
+  lines: T[],
   productsById: Map<string, Product>,
   allProducts: Product[],
   branchId: string,
-) {
+): T[] {
   if (!branchId) return lines;
   return lines.map((line) => {
     if (!line.productId) return line;

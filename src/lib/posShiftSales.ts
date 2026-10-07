@@ -76,9 +76,9 @@ function expensePaidTimestamp(expense: Expense): string | undefined {
   // Never use updatedAt — a later edit/sync would move a closed-day expense onto today.
   const raw = expense.paidAt || expense.createdAt || expense.requestedAt;
   if (raw == null || raw === '') return undefined;
-  if (raw instanceof Date) {
-    const ms = raw.getTime();
-    return Number.isFinite(ms) ? raw.toISOString() : undefined;
+  if (typeof raw === 'object' && raw !== null && typeof (raw as Date).getTime === 'function') {
+    const ms = (raw as Date).getTime();
+    return Number.isFinite(ms) ? (raw as Date).toISOString() : undefined;
   }
   const text = String(raw).trim();
   return text || undefined;

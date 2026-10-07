@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 export interface NumericInputProps
-  extends Omit<React.ComponentProps<'input'>, 'type' | 'value' | 'onChange' | 'onFocus' | 'onBlur'> {
+  extends Omit<React.ComponentProps<'input'>, 'type' | 'value' | 'onChange'> {
   value: number;
   onValueChange: (value: number) => void;
   /** Whole numbers only (quantity, stock). */

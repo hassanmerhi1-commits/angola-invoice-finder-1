@@ -34,7 +34,7 @@ export interface CreateInvoiceResponse {
 }
 
 export interface AGTValidationResponse {
-  status: 'validated' | 'rejected' | 'error';
+  status: 'validated' | 'rejected' | 'error' | 'pending';
   agt_code: string;
   timestamp: string;
   error?: string;

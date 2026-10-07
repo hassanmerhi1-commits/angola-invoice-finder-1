@@ -80,7 +80,13 @@ export default function SupplierStatementReport() {
   const [dateFrom, setDateFrom] = useState(format(subMonths(new Date(), 6), 'yyyy-MM-dd'));
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeParties, setActiveParties] = useState<Array<{ id: string; name: string; nif: string }>>([]);
+  const [activeParties, setActiveParties] = useState<Array<{
+    id: string;
+    name: string;
+    nif: string;
+    contactPerson?: string;
+    paymentTerms?: string;
+  }>>([]);
   const [loading, setLoading] = useState(false);
   const [statementEntries, setStatementEntries] = useState<StatementEntry[]>([]);
   const [currentBalance, setCurrentBalance] = useState(0);
@@ -482,7 +488,7 @@ export default function SupplierStatementReport() {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">{t.supplierStatementUi.paymentTerms}</p>
-                  <p className="font-semibold">{selectedSupplierData.paymentTerms.replace('_', ' ')}</p>
+                  <p className="font-semibold">{(selectedSupplierData.paymentTerms || t.common.dash).replace('_', ' ')}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">{t.reportsUi.balance}</p>

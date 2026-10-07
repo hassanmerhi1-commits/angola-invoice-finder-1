@@ -143,7 +143,7 @@ export function buildLineItemsTableHtml(
       const cls = item.isTotal ? 'line-tot' : item.isSubtotal ? 'line-sub' : item.isHeader ? 'hdr' : 'line-row';
       const code = item.code ? escapeHtml(item.code) : '';
       const v1 = item.isHeader ? '' : escapeHtml(item.value ?? '');
-      const v2 = item.colValue2 && !item.isHeader ? escapeHtml(item.value2 ?? '') : '';
+      const v2 = opts.colValue2 && !item.isHeader ? escapeHtml(item.value2 ?? '') : '';
       return `<tr class="${cls}">
         <td class="muted" style="width:48px">${code}</td>
         <td${pad}>${escapeHtml(item.description)}</td>
