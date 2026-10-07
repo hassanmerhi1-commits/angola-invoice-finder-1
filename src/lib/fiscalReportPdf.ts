@@ -70,6 +70,7 @@ export type FiscalReportPdfLabels = {
   docTypeFt: string;
   docTypeFr: string;
   docTypeFs: string;
+  docTypeTv: string;
   docTypeNc: string;
   docTypeNd: string;
   docTypeGt: string;
@@ -106,6 +107,7 @@ function docTypeLabel(docType: string, labels: FiscalReportPdfLabels): string {
     FT: labels.docTypeFt,
     FR: labels.docTypeFr,
     FS: labels.docTypeFs,
+    TV: labels.docTypeTv,
     NC: labels.docTypeNc,
     ND: labels.docTypeNd,
     GT: labels.docTypeGt,

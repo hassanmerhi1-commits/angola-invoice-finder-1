@@ -4,6 +4,7 @@
 const db = require('../db');
 const { getAgtConfig } = require('./agtConfig');
 const { readAppVersion } = require('../lib/deploymentStatus');
+const { normalizeFinalConsumerDocType } = require('../lib/fiscalInvoiceType');
 
 const SETTINGS_ID = 'default';
 
@@ -22,6 +23,8 @@ const DEFAULTS = {
   // Admin-chosen default selling price level (1-4) the POS applies automatically.
   // A selected client's own default price level still overrides this.
   posDefaultPriceLevel: 1,
+  // Paid final-consumer sale under the FS limit: 'FS' (fatura simplificada) or 'TV' (talão de venda).
+  finalConsumerDocType: 'FS',
 };
 
 /** Clamp any value to a valid price level (1-4), defaulting to 1. */
@@ -48,6 +51,15 @@ async function getCompanySettingsRow() {
 async function getCompanySettings() {
   const row = await getCompanySettingsRow();
   return { ...DEFAULTS, ...parseJson(row?.settings_json) };
+}
+
+async function getFinalConsumerDocType() {
+  try {
+    const settings = await getCompanySettings();
+    return normalizeFinalConsumerDocType(settings.finalConsumerDocType);
+  } catch {
+    return 'FS';
+  }
 }
 
 const PLACEHOLDER_VALUES = {
@@ -77,6 +89,8 @@ async function saveCompanySettings(payload) {
   const protectedFields = ['nif', 'name', 'tradeName', 'address', 'phone', 'email', 'website', 'agtCertificateNumber'];
   const sanitized = { ...incoming };
   for (const field of protectedFields) {
+    // Partial saves (e.g. POS settings cards) must not blank fields they never sent.
+    if (!Object.prototype.hasOwnProperty.call(incoming, field)) continue;
     if (field === 'tradeName') {
       sanitized[field] = keepRealValueIfPlaceholder('name', incoming[field], existing[field]);
     } else {
@@ -85,6 +99,7 @@ async function saveCompanySettings(payload) {
   }
   const merged = { ...existing, ...sanitized };
   merged.posDefaultPriceLevel = normalizePriceLevel(merged.posDefaultPriceLevel);
+  merged.finalConsumerDocType = normalizeFinalConsumerDocType(merged.finalConsumerDocType);
   merged.updatedAt = new Date().toISOString();
 
   const json = JSON.stringify(merged);
@@ -165,6 +180,7 @@ function companyToSaftHeader(company, period) {
 
 module.exports = {
   getCompanySettings,
+  getFinalConsumerDocType,
   saveCompanySettings,
   resolveCompanyForSaft,
   companyToSaftHeader,

@@ -102,12 +102,12 @@ export interface Sale {
   due_date?: string;
   fiscal_status?: string;
   fiscalStatus?: string;
-  invoice_type?: 'FT' | 'FR' | 'FS';
+  invoice_type?: 'FT' | 'FR' | 'FS' | 'TV';
   agt_status?: Sale['agtStatus'];
   agt_code?: string;
   client_request_id?: string;
-  /** AGT fiscal document type: FT, FR, or FS */
-  invoiceType?: 'FT' | 'FR' | 'FS';
+  /** AGT fiscal document type: FT, FR, FS, or TV */
+  invoiceType?: 'FT' | 'FR' | 'FS' | 'TV';
   saftHash?: string; // For AGT compliance
   /** ATCUD from AGT / SAF-T. Use '0' until a real code is issued. */
   atcud?: string;

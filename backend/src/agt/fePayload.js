@@ -59,7 +59,7 @@ function formatDocumentNo(agtType, invoiceNumber) {
   const type = String(agtType || 'FT').toUpperCase();
   if (!raw) return `${type} 00000001`;
   if (raw.toUpperCase().startsWith(`${type} `)) return raw;
-  if (/^(FT|FR|FS|NC|ND)\s+/i.test(raw)) {
+  if (/^(FT|FR|FS|TV|NC|ND)\s+/i.test(raw)) {
     return raw.replace(/^FS\s+/i, 'FR ');
   }
   return `${type} ${raw}`;

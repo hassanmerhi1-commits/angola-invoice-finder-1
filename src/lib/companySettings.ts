@@ -43,6 +43,9 @@ export interface CompanySettings {
   // POS — admin-chosen default selling price level (1-4) applied automatically.
   // A selected client's own default price level still overrides this.
   posDefaultPriceLevel?: number;
+
+  // Paid final-consumer sale under the FS limit: 'FS' (fatura simplificada) or 'TV' (talão de venda).
+  finalConsumerDocType?: 'FS' | 'TV';
   
   // Exchange Rates (Câmbio)
   exchangeRateUSD?: number; // 1 USD = X AOA

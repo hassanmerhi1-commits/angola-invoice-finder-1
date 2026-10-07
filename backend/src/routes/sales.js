@@ -363,7 +363,7 @@ module.exports = function(broadcastTable) {
         journalEntries: jeRes.rows || [],
         diagnosis: {
           isOnAccount: String(sale.payment_method || '').toLowerCase() === 'credit',
-          isFinalConsumerFs: String(sale.invoice_type || '').toUpperCase() === 'FS',
+          isFinalConsumerFs: ['FS', 'TV'].includes(String(sale.invoice_type || '').toUpperCase()),
           hasReceivableOpenItem: (oiRes.rows || []).some(
             (r) => r.entity_type === 'customer' && r.is_debit && r.status !== 'cleared',
           ),
@@ -499,10 +499,12 @@ module.exports = function(broadcastTable) {
         [branchCode],
       );
       const branchId = branchRow.rows[0]?.id;
+      const { getFinalConsumerDocType } = require('../agt/companySettings');
       const invoiceType = resolveSaleInvoiceType({
         customerNif: normalizeCustomerNif(req.query.customerNif),
         paymentMethod: req.query.paymentMethod || 'cash',
         total: Number(req.query.total) || 0,
+        finalConsumerDocType: await getFinalConsumerDocType(),
       });
       const seqKey = sequenceKeyForInvoiceType(invoiceType);
       const prefix = prefixForInvoiceType(invoiceType);

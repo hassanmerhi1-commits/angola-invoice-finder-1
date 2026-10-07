@@ -91,7 +91,7 @@ async function getCertificationStatus() {
       title: 'Core fiscal documents',
       status: fsColumnOk ? 'ok' : 'warn',
       message: fsColumnOk
-        ? 'FT, FR, FS, NC, ND supported (invoice_type on sales)'
+        ? 'FT, FR, FS, TV, NC, ND supported (invoice_type on sales)'
         : 'FS invoice type column missing — run migration 042',
     },
     {

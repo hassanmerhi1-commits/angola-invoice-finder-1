@@ -10,6 +10,7 @@ const DOCUMENT_SEQUENCE_CONFIG = {
   debit_note: { prefix: 'ND', perBranch: true },
   transport_document: { prefix: 'GT', perBranch: true },
   simplified_invoice: { prefix: 'FS', perBranch: true },
+  sales_ticket: { prefix: 'TV', perBranch: true },
   invoice_receipt: { prefix: 'FR', perBranch: true },
   sales_invoice: { prefix: 'FT', perBranch: true },
   payment_receipt: { prefix: 'REC', perBranch: false },

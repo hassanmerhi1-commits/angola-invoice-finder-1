@@ -2311,11 +2311,13 @@ async function processSale(client, saleData) {
   } = require('./lib/fiscalInvoiceType');
   const normalizedCustomerNif = normalizeCustomerNif(customerNif);
   const { normalizeBranchCode } = require('./accounting');
+  const { getFinalConsumerDocType } = require('./agt/companySettings');
 
   const invoiceType = validateSaleInvoiceType({
     customerNif: normalizedCustomerNif,
     paymentMethod,
     total: totalAmount,
+    finalConsumerDocType: await getFinalConsumerDocType(),
   });
 
   const branchCodeRow = await client.query('SELECT code, name FROM branches WHERE id = $1 LIMIT 1', [branchId]);

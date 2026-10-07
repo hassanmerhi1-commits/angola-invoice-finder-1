@@ -185,6 +185,7 @@ module.exports = function(broadcastTable) {
         querySalesByType('FT', 'FT', 'created_at'),
         querySalesByType('FR', 'FR', 'created_at'),
         querySalesByType('FS', 'FS', 'created_at'),
+        querySalesByType('TV', 'TV', 'created_at'),
         queryDocType('NC', `
           SELECT COUNT(*)::int AS document_count,
                  COALESCE(SUM(subtotal), 0)::float AS subtotal,

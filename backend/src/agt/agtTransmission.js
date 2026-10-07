@@ -87,7 +87,7 @@ async function loadItemsForDebitNote(noteId) {
 function resolveDocType(meta, doc) {
   if (meta.entityType === 'sale') {
     const t = String(doc.invoice_type || 'FT').toUpperCase();
-    if (['FT', 'FR', 'FS'].includes(t)) return t;
+    if (['FT', 'FR', 'FS', 'TV'].includes(t)) return t;
   }
   return meta.docType;
 }

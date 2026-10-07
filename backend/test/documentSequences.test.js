@@ -59,4 +59,17 @@ describe('documentSequences', { concurrency: 1 }, () => {
       assert.match(peekBng, /^FC-BNG-\d{4}-\d{5}$/);
     });
   });
+
+  it('allocates a TV series separate from FS', async () => {
+    await harness.withClient(async (client) => {
+      const sede = await ensureBranch(client, 'SEDE');
+      const tv1 = await accounting.generateSequenceNumber(client, 'sales_ticket', 'TV', sede);
+      const fs1 = await accounting.generateSequenceNumber(client, 'simplified_invoice', 'FS', sede);
+      const tv2 = await accounting.generateSequenceNumber(client, 'sales_ticket', 'TV', sede);
+
+      assert.match(tv1, /^TV-SEDE-\d{4}-\d{5}$/);
+      assert.match(fs1, /^FS-SEDE-\d{4}-\d{5}$/);
+      assert.equal(parseInt(tv2.split('-').pop(), 10), parseInt(tv1.split('-').pop(), 10) + 1);
+    });
+  });
 });

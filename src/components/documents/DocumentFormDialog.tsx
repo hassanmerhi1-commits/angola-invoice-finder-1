@@ -45,6 +45,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   fiscalInvoiceTypeLabel,
   fsMaxAmount,
+  isSimplifiedSaleType,
   normalizeCustomerNif,
   resolveSaleInvoiceType,
 } from '@/lib/fiscalInvoiceType';
@@ -946,7 +947,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           } else if (creditLooksLikeCash) {
             toast.error(t.documentFormUi.creditUseOnAccountPayment);
             return;
-          } else if (previewInvoiceType === 'FS' && selectedEntityClient) {
+          } else if (isSimplifiedSaleType(previewInvoiceType) && selectedEntityClient) {
             toast.error(t.documentFormUi.fsNotOnAccount);
             return;
           }
@@ -1051,7 +1052,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             sale.payment_method || sale.paymentMethod || paymentMethod || '',
           ).toLowerCase();
 
-          if (isCreditInvoice && (!isFiscalInvoiceNumber(saleInvoiceNumber) || saleInvoiceType === 'FS' || saleInvoiceType === 'FR' || salePaymentMethod !== 'credit')) {
+          if (isCreditInvoice && (!isFiscalInvoiceNumber(saleInvoiceNumber) || isSimplifiedSaleType(saleInvoiceType) || saleInvoiceType === 'FR' || salePaymentMethod !== 'credit')) {
             throw new Error(t.documentFormUi.saleCreditMismatch.replace('{number}', saleInvoiceNumber));
           }
 
@@ -2304,7 +2305,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                     </Badge>
                   </div>
                   <p className="text-[10px] leading-snug text-muted-foreground">
-                    {previewInvoiceType === 'FS'
+                    {isSimplifiedSaleType(previewInvoiceType)
                       ? t.documentFormUi.fsPreviewWarning.replace('{max}', fsMaxAmount().toLocaleString(locale))
                       : previewInvoiceType === 'FT' && isCreditInvoice
                         ? t.documentFormUi.ftCreditPreview

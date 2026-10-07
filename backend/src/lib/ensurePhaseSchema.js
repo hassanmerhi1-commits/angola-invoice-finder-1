@@ -1016,6 +1016,7 @@ function ensureFiscalInvoiceSequencesSqlite(db) {
   `);
   const fiscalTypes = [
     ['simplified_invoice', 'FS'],
+    ['sales_ticket', 'TV'],
     ['invoice_receipt', 'FR'],
     ['sales_invoice', 'FT'],
   ];

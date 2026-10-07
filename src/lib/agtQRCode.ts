@@ -21,7 +21,7 @@ export interface AGTQRCodeData {
   nomeCliente?: string;      // Customer's name
   
   // Invoice Information
-  tipoDocumento: 'FT' | 'FR' | 'FS' | 'NC' | 'ND'; // FT, FR, FS, NC, ND
+  tipoDocumento: 'FT' | 'FR' | 'FS' | 'TV' | 'NC' | 'ND';
   numeroDocumento: string;   // Invoice number
   dataEmissao: string;       // Issue date (YYYYMMDD)
   horaEmissao: string;       // Issue time (HHMMSS)

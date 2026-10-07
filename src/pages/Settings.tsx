@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useERP';
 import { ChangePasswordCard } from '@/components/settings/ChangePasswordCard';
 import { InteractionSettingsCard } from '@/components/settings/InteractionSettingsCard';
 import { PosPricingSettingsCard } from '@/components/settings/PosPricingSettingsCard';
+import { FinalConsumerDocSettingsCard } from '@/components/settings/FinalConsumerDocSettingsCard';
 import { SigningSettingsCard } from '@/components/settings/SigningSettingsCard';
 import { AgtSettingsCard } from '@/components/settings/AgtSettingsCard';
 import { AgtTransmissionsCard } from '@/components/settings/AgtTransmissionsCard';
@@ -276,6 +277,7 @@ export default function Settings() {
           <div className="space-y-6">
             <CertificationReadinessCard />
             <CompanySettingsLauncherCard />
+            <FinalConsumerDocSettingsCard />
             <SigningSettingsCard />
             <AgtSettingsCard />
             <AgtTransmissionsCard />

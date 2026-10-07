@@ -190,8 +190,8 @@ function extractDocumentNumber(description: string, context: JournalContext | nu
     // Prefer full words — bare "pag"/"rec" wrongly match inside "Pagamento"/"Recebimento"
     /(?:pagamento|recebimento|payment|receipt)\s+([A-Z]{2,4}-[\w-]+)/i,
     /\b(?:venda|sale|cmv|nc|nd)\s*[-–]?\s*([A-Z]{0,3}-?[A-Z0-9][\w-]+)/i,
-    /\b((?:PAG|REC|FS|FC|CP|VD|NC|ND)-[\w-]+)\b/i,
-    /(FS-[A-Z0-9]+-\d{4}-\d+)/i,
+    /\b((?:PAG|REC|FS|TV|FC|CP|VD|NC|ND)-[\w-]+)\b/i,
+    /((?:FS|TV)-[A-Z0-9]+-\d{4}-\d+)/i,
     /(VD-\d{4}-\d+)/i,
   ];
   for (const re of patterns) {

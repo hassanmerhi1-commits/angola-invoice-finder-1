@@ -33,6 +33,11 @@ test('FS is sent to AGT as FR', () => {
   assert.equal(agtDocumentType('FT', 'credit_note'), 'NC');
 });
 
+test('TV is sent to AGT as TV', () => {
+  assert.equal(agtDocumentType('TV', 'sale'), 'TV');
+  assert.equal(formatDocumentNo('TV', 'TV LUANDA/1'), 'TV LUANDA/1');
+});
+
 test('documentNo is type + space + series', () => {
   assert.equal(formatDocumentNo('FR', 'LUANDA/2026/0001'), 'FR LUANDA/2026/0001');
   assert.equal(formatDocumentNo('FR', 'FR LUANDA/2026/0001'), 'FR LUANDA/2026/0001');
