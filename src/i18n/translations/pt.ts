@@ -3558,7 +3558,7 @@ export const pt: TranslationKeys = {
 
   agtTransmitUi: {
     title: "Transmissões AGT",
-    description: "Submissões recentes à AGT. Com transmissão automática activa, inclui vendas, notas de crédito e notas de débito.",
+    description: "Submissões recentes à AGT. Copie o JSON e cole-o na caixa correspondente do Portal do Parceiro.",
     empty: "Ainda não há transmissões registadas",
     colDocument: "Documento",
     colType: "Tipo",
@@ -3589,6 +3589,11 @@ export const pt: TranslationKeys = {
     reconcileRetried: "{n} reenviadas",
     reconcileTransmitted: "{n} enviadas",
     reconcileUpdated: "{n} estados actualizados",
+    copyJson: "Copiar JSON",
+    copyJsonSuccess: "JSON copiado — cole no Portal do Parceiro",
+    copyJsonSuccessType: "JSON {type} copiado — cole no Portal do Parceiro",
+    copyJsonSimulated: "Este JSON é de simulação. O portal vai rejeitá-lo. Desligue Simular, carregue o certificado .pfx e volte a enviar.",
+    copyJsonFailed: "Não foi possível copiar o JSON",
   },
 
   settingsPage: {

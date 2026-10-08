@@ -3555,7 +3555,7 @@ export const en = {
 
   agtTransmitUi: {
     title: "AGT transmissions",
-    description: "Recent submissions to the tax authority. Auto-transmit covers sales, credit notes and debit notes when enabled.",
+    description: "Recent submissions to the tax authority. Copy the JSON and paste it into the matching Partner Portal box.",
     empty: "No transmissions recorded yet",
     colDocument: "Document",
     colType: "Type",
@@ -3586,6 +3586,11 @@ export const en = {
     reconcileRetried: "{n} retried",
     reconcileTransmitted: "{n} sent",
     reconcileUpdated: "{n} status updated",
+    copyJson: "Copy JSON",
+    copyJsonSuccess: "JSON copied — paste it on the Partner Portal",
+    copyJsonSuccessType: "JSON {type} copied — paste it on the Partner Portal",
+    copyJsonSimulated: "This JSON is a simulation stub. The portal will reject it. Turn Simular off, load the .pfx certificate, and send again.",
+    copyJsonFailed: "Could not copy JSON",
   },
 
   settingsPage: {

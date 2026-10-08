@@ -3309,6 +3309,16 @@ export const api = {
         byTypeStatus: Array<{ transmission_type: string; agt_status: string; count: number }>;
       }>(`/agt/transmissions-report?${sp}`);
     },
+    getTransmissionPayload: (transmissionId: string) =>
+      apiFetch<{
+        id: string;
+        invoiceNumber?: string;
+        json: string;
+        simulated: boolean;
+        schemaVersion?: string | null;
+        documentType?: string | null;
+        documentNo?: string | null;
+      }>(`/agt/transmissions/${encodeURIComponent(transmissionId)}/payload`),
     retryTransmission: (transmissionId: string) =>
       apiFetch<any>(`/agt/retry/${encodeURIComponent(transmissionId)}`, { method: 'POST' }),
     voidInvoice: (data: { invoiceId: string; reason: string }) =>

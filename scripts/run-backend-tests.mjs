@@ -21,6 +21,7 @@ const testFiles = [
   'test/resolveBranchCaixaGlAccount.test.js',
   'test/fiscalInvoiceType.test.js',
   'test/agtFePayload.test.js',
+  'test/agtRequestPayload.test.js',
   'test/expensePaymentScope.test.js',
   'test/expenseApprovers.test.js',
   'test/notificationVisibility.test.js',

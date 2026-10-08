@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Send, RotateCcw, Radio } from 'lucide-react';
+import { RefreshCw, Send, RotateCcw, Radio, Copy, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +24,27 @@ type TransmissionRow = {
 
 type StatusFilter = 'all' | 'failed' | 'pending';
 
+async function copyText(text: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    /* fall through to execCommand */
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(ta);
+  if (!ok) throw new Error('copy failed');
+}
+
 export function AgtTransmissionsCard() {
   const { t, language } = useTranslation();
   const ui = t.agtTransmitUi;
@@ -33,6 +54,7 @@ export function AgtTransmissionsCard() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [bulkWorking, setBulkWorking] = useState(false);
+  const [copyingId, setCopyingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -52,6 +74,39 @@ export function AgtTransmissionsCard() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const handleCopyJson = async (id: string) => {
+    setCopyingId(id);
+    try {
+      const res = await api.agt.getTransmissionPayload(id);
+      if (res.error || !res.data?.json) {
+        throw new Error(res.error || ui.copyJsonFailed);
+      }
+      await copyText(res.data.json);
+      if (res.data.simulated) {
+        toast({
+          variant: 'destructive',
+          title: ui.copyJson,
+          description: ui.copyJsonSimulated,
+        });
+        return;
+      }
+      const type = res.data.documentType;
+      toast({
+        title: type
+          ? ui.copyJsonSuccessType.replace('{type}', type)
+          : ui.copyJsonSuccess,
+      });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: ui.copyJsonFailed,
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setCopyingId(null);
+    }
+  };
 
   const handleRetry = async (id: string) => {
     try {
@@ -221,11 +276,28 @@ export function AgtTransmissionsCard() {
                       : '—'}
                   </TableCell>
                   <TableCell className="text-right">
-                    {(row.agt_status === 'error' || row.agt_status === 'rejected') && (
-                      <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
-                        {ui.retryButton}
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1"
+                        title={ui.copyJson}
+                        disabled={copyingId === row.id}
+                        onClick={() => void handleCopyJson(row.id)}
+                      >
+                        {copyingId === row.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                        {ui.copyJson}
                       </Button>
-                    )}
+                      {(row.agt_status === 'error' || row.agt_status === 'rejected') && (
+                        <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
+                          {ui.retryButton}
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

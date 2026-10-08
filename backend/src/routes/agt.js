@@ -396,6 +396,34 @@ module.exports = function(broadcastTable) {
   });
 
   /**
+   * Signed JSON for one transmission (AGT Partner Portal paste).
+   * GET /api/agt/transmissions/:id/payload
+   */
+  router.get('/transmissions/:id/payload', requireAuth, async (req, res) => {
+    try {
+      const { formatAgtRequestPayloadForPortal } = require('../agt/agtRequestPayload');
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'id is required' });
+      const result = await db.query(
+        'SELECT id, invoice_number, request_payload FROM agt_transmissions WHERE id = $1',
+        [id],
+      );
+      if (!result.rows.length) {
+        return res.status(404).json({ error: 'Transmissão não encontrada' });
+      }
+      const formatted = formatAgtRequestPayloadForPortal(result.rows[0].request_payload);
+      res.json({
+        id: result.rows[0].id,
+        invoiceNumber: result.rows[0].invoice_number,
+        ...formatted,
+      });
+    } catch (error) {
+      const status = /em falta|inválido/i.test(error.message) ? 400 : 500;
+      res.status(status).json({ error: error.message });
+    }
+  });
+
+  /**
    * Get transmission history
    * GET /api/agt/transmissions
    */
@@ -404,7 +432,9 @@ module.exports = function(broadcastTable) {
       const { status, limit = 50 } = req.query;
 
       let query = `
-        SELECT t.*,
+        SELECT t.id, t.invoice_id, t.invoice_number, t.transmission_type,
+               t.entity_type, t.entity_id, t.agt_status, t.agt_code,
+               t.error_message, t.retry_count, t.transmitted_at,
                COALESCE(t.invoice_number, s.invoice_number) AS document_number,
                s.total AS sale_total,
                s.customer_name
