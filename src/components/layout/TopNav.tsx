@@ -745,25 +745,6 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           <SyncPendingBadge />
           <GlobalSearch />
 
-          {canSwitchBranch ? (
-            <Select value={scopeId} onValueChange={setOperatingScope}>
-              <SelectTrigger className="h-7 w-[140px] text-xs bg-sidebar-accent border-sidebar-border text-sidebar-foreground">
-                <Building2 className="w-3.5 h-3.5 mr-1.5 text-sidebar-primary" />
-                <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder}>
-                  {resolveBranchScopeDisplayLabel(canSwitchBranch, scopeId, currentBranch, t.branchUi.allBranches)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <BranchScopeSelectItems branches={branches} compact />
-              </SelectContent>
-            </Select>
-          ) : currentBranch ? (
-            <div className="hidden sm:flex h-7 max-w-[140px] items-center gap-1.5 truncate rounded-md border border-sidebar-border bg-sidebar-accent px-2 text-xs text-sidebar-foreground">
-              <Building2 className="w-3.5 h-3.5 shrink-0 text-sidebar-primary" />
-              <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
-            </div>
-          ) : null}
-
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1.5 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent">
@@ -828,7 +809,25 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           </button>
         )}
         </div>
-        <div className="flex shrink-0 items-center self-center pr-1">
+        <div className="flex shrink-0 items-center self-center gap-2 pr-1">
+          {canSwitchBranch ? (
+            <Select value={scopeId} onValueChange={setOperatingScope}>
+              <SelectTrigger className="h-7 w-[140px] text-xs bg-background border">
+                <Building2 className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                <SelectValue placeholder={t.topNav.toolbar.branchPlaceholder}>
+                  {resolveBranchScopeDisplayLabel(canSwitchBranch, scopeId, currentBranch, t.branchUi.allBranches)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <BranchScopeSelectItems branches={branches} compact />
+              </SelectContent>
+            </Select>
+          ) : currentBranch ? (
+            <div className="flex h-7 max-w-[140px] items-center gap-1.5 truncate rounded-md border bg-background px-2 text-xs">
+              <Building2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{formatBranchDisplayName(currentBranch)}</span>
+            </div>
+          ) : null}
           <ServerConnectionIndicator compact />
         </div>
       </div>

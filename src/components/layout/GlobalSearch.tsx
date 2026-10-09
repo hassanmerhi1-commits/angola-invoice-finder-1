@@ -442,7 +442,7 @@ export function GlobalSearch() {
   const showPanel = open && (loading || loadingMore || q.trim().length >= 2);
 
   return (
-    <div ref={boxRef} className="relative hidden md:block w-72 xl:w-80">
+    <div ref={boxRef} className="relative hidden md:block w-40 2xl:w-52">
       <Search className="pointer-events-none absolute left-2 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-sidebar-foreground/60" />
       <Input
         ref={inputRef}
@@ -458,9 +458,9 @@ export function GlobalSearch() {
         }}
         placeholder={gs.placeholder}
         title={gs.buttonTitle}
-        className="h-7 border-sidebar-border bg-sidebar-accent pl-7 pr-10 text-xs text-sidebar-foreground placeholder:text-sidebar-foreground/55"
+        className="h-7 border-sidebar-border bg-sidebar-accent pl-7 pr-2 2xl:pr-10 text-xs text-sidebar-foreground placeholder:text-sidebar-foreground/55"
       />
-      <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-sidebar-foreground/50">
+      <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-sidebar-foreground/50 2xl:inline">
         Ctrl+K
       </kbd>
 

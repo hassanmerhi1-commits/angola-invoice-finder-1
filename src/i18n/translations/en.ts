@@ -5566,19 +5566,22 @@ export const en = {
     createSupplier: "Create supplier",
     contactPersonPlaceholder: "e.g. John Smith",
     notesPlaceholder: "Additional notes...",
-    deleteConfirm: "Delete this supplier?",
-    deleteDialogTitle: "Delete supplier",
+    deleteConfirm: "Deactivate this supplier? Their purchases stay in history.",
+    deleteDialogTitle: "Deactivate supplier",
     deleteDialogDescription:
-      'Are you sure you want to delete "{name}"? This action cannot be undone.',
-    deleteDialogConfirm: "Delete",
+      '"{name}" will stay on the list as inactive. Purchases and balances are kept. You can reactivate later.',
+    deleteDialogConfirm: "Deactivate",
+    reactivate: "Reactivate",
 
     // Toasts
     supplierUpdatedTitle: "Supplier updated",
     supplierUpdatedDesc: "{name} was updated successfully",
     supplierCreatedTitle: "Supplier created",
     supplierCreatedDesc: "{name} was created successfully",
-    supplierDeletedTitle: "Supplier deleted",
-    supplierDeletedDesc: "{name} was deleted",
+    supplierDeletedTitle: "Supplier deactivated",
+    supplierDeletedDesc: "{name} is now inactive and still on the list",
+    supplierReactivatedTitle: "Supplier reactivated",
+    supplierReactivatedDesc: "{name} is active again",
 
     // Import
     importTitle: "Import suppliers",

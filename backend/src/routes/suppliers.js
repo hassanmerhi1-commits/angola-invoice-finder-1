@@ -34,8 +34,7 @@ module.exports = function(broadcastTable) {
            WHERE oi.entity_type = 'supplier' AND oi.status != 'cleared'
            GROUP BY oi.entity_id
          ) b ON b.entity_id = s.id
-         WHERE s.is_active = true
-         ORDER BY s.name`
+         ORDER BY s.is_active DESC, s.name`
       );
       res.json(result.rows);
     } catch (error) {
@@ -252,7 +251,10 @@ module.exports = function(broadcastTable) {
   router.delete('/:id', requirePermission('admin_settings', 'purchase_create'), async (req, res) => {
     try {
       const { id } = req.params;
-      await db.query('UPDATE suppliers SET is_active = false WHERE id = $1', [id]);
+      const result = await db.query(
+        'UPDATE suppliers SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+        [id],
+      );
       await broadcastTable('suppliers');
       auditErpSafe(req, {
         table: 'suppliers',
@@ -260,7 +262,7 @@ module.exports = function(broadcastTable) {
         action: 'delete',
         description: `Fornecedor desactivado: ${id}`,
       });
-      res.json({ success: true });
+      res.json(result.rows[0] || { success: true, id, is_active: false });
     } catch (error) {
       console.error('[SUPPLIERS ERROR]', error);
       res.status(500).json({ error: 'Failed to delete supplier' });

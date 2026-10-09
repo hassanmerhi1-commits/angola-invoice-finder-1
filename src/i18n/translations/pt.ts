@@ -5568,19 +5568,22 @@ export const pt: TranslationKeys = {
     createSupplier: "Criar Fornecedor",
     contactPersonPlaceholder: "Ex: João Silva",
     notesPlaceholder: "Observações adicionais...",
-    deleteConfirm: "Eliminar fornecedor?",
-    deleteDialogTitle: "Eliminar Fornecedor",
+    deleteConfirm: "Desactivar este fornecedor? As compras dele ficam no histórico.",
+    deleteDialogTitle: "Desactivar fornecedor",
     deleteDialogDescription:
-      'Tem a certeza que deseja eliminar "{name}"? Esta acção não pode ser desfeita.',
-    deleteDialogConfirm: "Eliminar",
+      '"{name}" fica inactivo na lista. As compras e dívidas não são apagadas. Pode reactivar depois.',
+    deleteDialogConfirm: "Desactivar",
+    reactivate: "Reactivar",
 
     // Toasts
     supplierUpdatedTitle: "Fornecedor actualizado",
     supplierUpdatedDesc: "{name} foi actualizado com sucesso",
     supplierCreatedTitle: "Fornecedor criado",
     supplierCreatedDesc: "{name} foi criado com sucesso",
-    supplierDeletedTitle: "Fornecedor eliminado",
-    supplierDeletedDesc: "{name} foi eliminado",
+    supplierDeletedTitle: "Fornecedor desactivado",
+    supplierDeletedDesc: "{name} ficou inactivo e continua na lista",
+    supplierReactivatedTitle: "Fornecedor reactivado",
+    supplierReactivatedDesc: "{name} voltou a estar activo",
 
     // Import
     importTitle: "Importar Fornecedores",

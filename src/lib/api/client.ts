@@ -1421,8 +1421,7 @@ export const api = {
                     WHERE oi.entity_type = 'supplier' AND oi.entity_id = s.id
                   ), 0) AS balance
            FROM suppliers s
-           WHERE s.is_active = 1
-           ORDER BY s.name`
+           ORDER BY s.is_active DESC, s.name`
         );
       }
       return apiFetch<any[]>('/suppliers');
@@ -1512,7 +1511,7 @@ export const api = {
         const apiResult = await apiFetch<any>(`/suppliers/${id}`, { method: 'DELETE' });
         if (apiResult.data) return apiResult;
         if (!shouldTrySupplierIpcAfterApiFailure(apiResult)) return apiResult;
-        return ipcDelete('suppliers', id);
+        return ipcUpdate('suppliers', id, { is_active: false, updated_at: new Date().toISOString() });
       }
       return apiFetch<any>(`/suppliers/${id}`, { method: 'DELETE' });
     },

@@ -19,7 +19,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
-import { Search, Plus, Edit, Trash2, Truck, Phone, Mail, FileSpreadsheet, Upload, ArrowLeft } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Truck, Phone, Mail, FileSpreadsheet, Upload, ArrowLeft, RotateCcw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   AlertDialog,
@@ -49,7 +49,7 @@ export default function Suppliers() {
   const location = useLocation();
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const { suppliers, deleteSupplier, refreshSuppliers } = useSuppliers();
+  const { suppliers, deleteSupplier, saveSupplier, refreshSuppliers } = useSuppliers();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -108,9 +108,8 @@ export default function Suppliers() {
       if (selectedSupplier) handleOpenDialog(selectedSupplier);
     };
     const onDelete = () => {
-      if (selectedSupplier && confirm(t.suppliersUi.deleteConfirm)) {
-        deleteSupplier(selectedSupplier.id);
-        setSelectedSupplier(null);
+      if (selectedSupplier?.isActive && confirm(t.suppliersUi.deleteConfirm)) {
+        void deleteSupplier(selectedSupplier.id);
       }
     };
     const onAll = () => setSelectedSupplier(null);
@@ -127,18 +126,25 @@ export default function Suppliers() {
         window.removeEventListener(event, handler);
       }
     };
-  }, [selectedSupplier, deleteSupplier, t]);
+  }, [selectedSupplier, deleteSupplier, t.suppliersUi.deleteConfirm]);
 
   const handleDelete = () => {
     if (selectedSupplier) {
-      deleteSupplier(selectedSupplier.id);
+      void deleteSupplier(selectedSupplier.id);
       toast({
         title: t.suppliersUi.supplierDeletedTitle,
         description: t.suppliersUi.supplierDeletedDesc.replace('{name}', selectedSupplier.name),
       });
       setDeleteDialogOpen(false);
-      setSelectedSupplier(null);
     }
+  };
+
+  const handleReactivate = async (supplier: Supplier) => {
+    await saveSupplier({ ...supplier, isActive: true });
+    toast({
+      title: t.suppliersUi.supplierReactivatedTitle,
+      description: t.suppliersUi.supplierReactivatedDesc.replace('{name}', supplier.name),
+    });
   };
 
   const openDeleteDialog = (supplier: Supplier) => {
@@ -347,7 +353,10 @@ export default function Suppliers() {
                   <TableRow
                     key={supplier.id}
                     data-nexor-id={supplier.id}
-                    className={cn(selectedSupplier?.id === supplier.id && 'nexor-row-selected')}
+                    className={cn(
+                      selectedSupplier?.id === supplier.id && 'nexor-row-selected',
+                      !supplier.isActive && 'opacity-60',
+                    )}
                   >
                     <TableCell>
                       <div>
@@ -399,13 +408,25 @@ export default function Suppliers() {
                         >
                           <Edit className="w-4 h-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => openDeleteDialog(supplier)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {supplier.isActive ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openDeleteDialog(supplier)}
+                            title={t.suppliersUi.deleteDialogTitle}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void handleReactivate(supplier)}
+                            title={t.suppliersUi.reactivate}
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

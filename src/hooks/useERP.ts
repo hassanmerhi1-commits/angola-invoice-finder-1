@@ -1917,7 +1917,10 @@ export function useSuppliers(deferInitialLoad = false) {
         data = await storage.getSuppliers();
       }
     }
-    const mapped = Array.isArray(data) ? data.map(mapSupplier) : [];
+    const mapped = (Array.isArray(data) ? data.map(mapSupplier) : []).sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
     if (mapped.length && isThinClientMode()) {
       saveLanSuppliers(mapped);
     }
@@ -1964,7 +1967,10 @@ export function useSuppliers(deferInitialLoad = false) {
     const result = await api.suppliers.delete(supplierId);
     if (!result.data) await storage.deleteSupplier(supplierId);
     setSuppliers((prev) => {
-      const next = prev.filter((s) => s.id !== supplierId);
+      const next = prev.map((s) => {
+        if (s.id !== supplierId) return s;
+        return result.data ? mapSupplier(result.data) : { ...s, isActive: false };
+      });
       setCachedList(suppliersCacheKey, next);
       return next;
     });
