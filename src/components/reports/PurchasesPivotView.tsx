@@ -35,7 +35,7 @@ export default function PurchasesPivotView({
   totals,
   fileName,
   totalInvoices,
-  showChart = true,
+  showChart = false,
   subtitle,
 }: PurchasesPivotViewProps) {
   const { t, language } = useTranslation();

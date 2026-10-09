@@ -24,12 +24,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Download, Printer, Package, FileSpreadsheet, FileDown, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
+import { Printer, Package, FileSpreadsheet, FileDown, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
 import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useProducts } from '@/hooks/useERP';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 export default function StockValuationReport() {
   const { t, language } = useTranslation();
@@ -214,34 +215,19 @@ export default function StockValuationReport() {
         </CardContent>
       </Card>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.stockValuationUi.totalCostValue}</p>
-            <p className="text-2xl font-bold">{formatMoney(totals.costValue)} {t.common.currency}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.stockValuationUi.totalSaleValue}</p>
-            <p className="text-2xl font-bold text-blue-600">{formatMoney(totals.saleValue)} {t.common.currency}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.stockValuationUi.potentialProfit}</p>
-            <p className="text-2xl font-bold text-green-600">{formatMoney(totals.potentialProfit)} {t.common.currency}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.stockValuationUi.itemsInStock}</p>
-            <p className="text-2xl font-bold">{totals.quantity.toLocaleString()}</p>
-            <p className="text-xs text-muted-foreground">{t.stockValuationUi.productsCount.replace('{count}', String(productsWithValues.length))}</p>
-          </CardContent>
-        </Card>
-      </div>
+      <ReportStatStrip
+        columns="xl:grid-cols-4"
+        items={[
+          { label: t.stockValuationUi.totalCostValue, value: `${formatMoney(totals.costValue)} ${t.common.currency}` },
+          { label: t.stockValuationUi.totalSaleValue, value: `${formatMoney(totals.saleValue)} ${t.common.currency}`, className: 'text-blue-600' },
+          { label: t.stockValuationUi.potentialProfit, value: `${formatMoney(totals.potentialProfit)} ${t.common.currency}`, className: 'text-green-600' },
+          {
+            label: t.stockValuationUi.itemsInStock,
+            value: totals.quantity.toLocaleString(),
+            hint: t.stockValuationUi.productsCount.replace('{count}', String(productsWithValues.length)),
+          },
+        ]}
+      />
 
       {/* Category Breakdown */}
       <Card>

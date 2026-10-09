@@ -15,6 +15,7 @@ import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { useBalanceSheet } from '@/hooks/useChartOfAccounts';
 import type { AccountType, BalanceSheetAccountRow } from '@/types/accounting';
 import { buildLineItemsTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 function previousYearDate(isoDate: string): string {
   const d = new Date(isoDate + 'T12:00:00');
@@ -345,54 +346,45 @@ export default function BalanceSheetReport() {
       </Card>
 
       {!isLoading && hasData && (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.currentRatio}</p>
-            <p className="text-2xl font-bold text-blue-600">
-              {metrics.totalCurrentLiabilities > 0
-                ? (metrics.totalCurrentAssets / metrics.totalCurrentLiabilities).toFixed(2)
-                : '-'}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.financialAutonomy}</p>
-            <p className="text-2xl font-bold text-green-600">
-              {metrics.totalAssetsCurrent > 0
-                ? ((metrics.totalEquityCurrent / metrics.totalAssetsCurrent) * 100).toFixed(1)
-                : 0}
-              %
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.debtRatio}</p>
-            <p className="text-2xl font-bold text-orange-600">
-              {metrics.totalAssetsCurrent > 0
-                ? ((metrics.totalLiabilitiesCurrent / metrics.totalAssetsCurrent) * 100).toFixed(1)
-                : 0}
-              %
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.balanceSheetUi.workingCapital}</p>
-            <p
-              className={`text-2xl font-bold ${
+        <ReportStatStrip
+          columns="xl:grid-cols-4"
+          items={[
+            {
+              label: t.balanceSheetUi.currentRatio,
+              value:
+                metrics.totalCurrentLiabilities > 0
+                  ? (metrics.totalCurrentAssets / metrics.totalCurrentLiabilities).toFixed(2)
+                  : '-',
+              className: 'text-blue-600',
+            },
+            {
+              label: t.balanceSheetUi.financialAutonomy,
+              value: `${
+                metrics.totalAssetsCurrent > 0
+                  ? ((metrics.totalEquityCurrent / metrics.totalAssetsCurrent) * 100).toFixed(1)
+                  : 0
+              }%`,
+              className: 'text-green-600',
+            },
+            {
+              label: t.balanceSheetUi.debtRatio,
+              value: `${
+                metrics.totalAssetsCurrent > 0
+                  ? ((metrics.totalLiabilitiesCurrent / metrics.totalAssetsCurrent) * 100).toFixed(1)
+                  : 0
+              }%`,
+              className: 'text-orange-600',
+            },
+            {
+              label: t.balanceSheetUi.workingCapital,
+              value: `${formatMoney(metrics.totalCurrentAssets - metrics.totalCurrentLiabilities)} Kz`,
+              className:
                 metrics.totalCurrentAssets - metrics.totalCurrentLiabilities >= 0
                   ? 'text-green-600'
-                  : 'text-red-600'
-              }`}
-            >
-              {formatMoney(metrics.totalCurrentAssets - metrics.totalCurrentLiabilities)} Kz
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+                  : 'text-red-600',
+            },
+          ]}
+        />
       )}
     </div>
   );

@@ -1,21 +1,17 @@
 import { useState, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
-import { PieChart, TrendingUp, TrendingDown, Package, Tags, Users, Truck } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-         PieChart as RechartsPie, Pie, Cell, Legend } from 'recharts';
+import { PieChart, Package, Tags, Users, Truck } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { buildSalesPivot } from '@/lib/reports/salesPivot';
 import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { useSalesPivotContext } from '@/components/reports/useSalesPivotContext';
 import PivotReportView from '@/components/reports/PivotReportView';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 import { ReportToolbar } from '@/components/reports/ReportToolbar';
 import { ReportTruncationBanner } from '@/components/reports/ReportTruncationBanner';
 import { useReportSales } from '@/hooks/useReportSales';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
-
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
 export default function ProfitabilityReport({
   view,
@@ -63,11 +59,6 @@ export default function ProfitabilityReport({
     return { totalRevenue, totalCost, grossProfit, avgMargin, profitable, unprofitable };
   }, [itemPivot]);
 
-  const categoryChart = useMemo(
-    () => categoryPivot.rows.slice(0, 8).map((r) => ({ name: r.label, profit: r.profit, margin: r.marginPct })),
-    [categoryPivot],
-  );
-
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
@@ -83,7 +74,7 @@ export default function ProfitabilityReport({
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <ReportTruncationBanner truncated={truncated} />
       <ReportToolbar
         title={
@@ -100,103 +91,37 @@ export default function ProfitabilityReport({
         branchFilter={branchFilter}
       />
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.profitUi.totalRevenue}</p>
-            <p className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.profitUi.totalCost}</p>
-            <p className="text-2xl font-bold text-orange-500">{formatCurrency(summary.totalCost)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 mb-1">
-              {summary.grossProfit >= 0 ? (
-                <TrendingUp className="w-4 h-4 text-green-500" />
-              ) : (
-                <TrendingDown className="w-4 h-4 text-red-500" />
-              )}
-              <p className="text-sm text-muted-foreground">{t.profitUi.grossProfit}</p>
-            </div>
-            <p className={`text-2xl font-bold ${summary.grossProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {formatCurrency(summary.grossProfit)}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.profitUi.avgMargin}</p>
-            <p className={`text-2xl font-bold ${summary.avgMargin >= 20 ? 'text-green-500' : 'text-orange-500'}`}>
-              {summary.avgMargin.toFixed(1)}%
-            </p>
-            <div className="flex gap-4 mt-2 text-xs">
-              <span className="text-green-500">{t.profitUi.profitable.replace('{count}', String(summary.profitable))}</span>
-              <span className="text-red-500">{t.profitUi.unprofitable.replace('{count}', String(summary.unprofitable))}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <ReportStatStrip
+        columns="xl:grid-cols-4"
+        items={[
+          { label: t.profitUi.totalRevenue, value: formatCurrency(summary.totalRevenue) },
+          { label: t.profitUi.totalCost, value: formatCurrency(summary.totalCost), className: 'text-orange-600' },
+          {
+            label: t.profitUi.grossProfit,
+            value: formatCurrency(summary.grossProfit),
+            className: summary.grossProfit >= 0 ? 'text-green-600' : 'text-red-600',
+          },
+          {
+            label: t.profitUi.avgMargin,
+            value: `${summary.avgMargin.toFixed(1)}%`,
+            className: summary.avgMargin >= 20 ? 'text-green-600' : 'text-orange-600',
+            hint: `${t.profitUi.profitable.replace('{count}', String(summary.profitable))} · ${t.profitUi.unprofitable.replace('{count}', String(summary.unprofitable))}`,
+          },
+        ]}
+      />
 
       {/* Sub-report selector */}
       <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />
 
       <div className="space-y-4">
         {viewTab === 'summary' && (
-          <div className="grid md:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">{t.profitUi.profitByCategory}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={categoryChart}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="name" />
-                      <YAxis />
-                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                      <Bar dataKey="profit" name={t.profitUi.profit} fill="#10b981" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">{t.profitUi.marginDistribution}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RechartsPie>
-                      <Pie
-                        data={categoryChart}
-                        dataKey="profit"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={100}
-                        label={({ name, margin }) => `${name} (${Number(margin).toFixed(0)}%)`}
-                      >
-                        {categoryChart.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                      <Legend />
-                    </RechartsPie>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <PivotReportView
+            dimensionLabel={t.salesByProductUi.category}
+            rows={categoryPivot.rows}
+            totals={categoryPivot.totals}
+            fileName={`Rentabilidade_Resumo_${periodSuffix}`}
+            subtitle={periodLabel}
+          />
         )}
 
         {viewTab === 'item' && (

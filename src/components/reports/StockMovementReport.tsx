@@ -24,6 +24,7 @@ import { api } from '@/lib/api/client';
 import { getStockMovements as getLocalStockMovements } from '@/lib/storage';
 import { StockMovement } from '@/types/erp';
 import { useTranslation } from '@/i18n';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 export default function StockMovementReport() {
   const { t, language } = useTranslation();
@@ -274,43 +275,29 @@ export default function StockMovementReport() {
         </CardContent>
       </Card>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <ArrowDownCircle className="w-5 h-5 text-green-500" />
-              <p className="text-sm text-muted-foreground">{t.stockMovementUi.entries}</p>
-            </div>
-            <p className="text-2xl font-bold text-green-600">{totals.entries}</p>
-            <p className="text-sm text-muted-foreground">{formatMoney(totals.entryValue)} Kz</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2">
-              <ArrowUpCircle className="w-5 h-5 text-red-500" />
-              <p className="text-sm text-muted-foreground">{t.stockMovementUi.exits}</p>
-            </div>
-            <p className="text-2xl font-bold text-red-600">{totals.exits}</p>
-            <p className="text-sm text-muted-foreground">{formatMoney(totals.exitValue)} Kz</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.stockMovementUi.netMovement}</p>
-            <p className={`text-2xl font-bold ${totals.entries - totals.exits >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {totals.entries - totals.exits > 0 ? '+' : ''}{totals.entries - totals.exits}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">{t.stockMovementUi.totalMovements}</p>
-            <p className="text-2xl font-bold">{filteredMovements.length}</p>
-          </CardContent>
-        </Card>
-      </div>
+      <ReportStatStrip
+        columns="xl:grid-cols-4"
+        items={[
+          {
+            label: t.stockMovementUi.entries,
+            value: String(totals.entries),
+            className: 'text-green-600',
+            hint: `${formatMoney(totals.entryValue)} Kz`,
+          },
+          {
+            label: t.stockMovementUi.exits,
+            value: String(totals.exits),
+            className: 'text-red-600',
+            hint: `${formatMoney(totals.exitValue)} Kz`,
+          },
+          {
+            label: t.stockMovementUi.netMovement,
+            value: `${totals.entries - totals.exits > 0 ? '+' : ''}${totals.entries - totals.exits}`,
+            className: totals.entries - totals.exits >= 0 ? 'text-green-600' : 'text-red-600',
+          },
+          { label: t.stockMovementUi.totalMovements, value: String(filteredMovements.length) },
+        ]}
+      />
 
       {/* Movements Table */}
       <Card>

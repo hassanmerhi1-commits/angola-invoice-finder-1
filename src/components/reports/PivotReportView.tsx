@@ -55,7 +55,7 @@ export default function PivotReportView({
   rows,
   totals,
   fileName,
-  showChart = true,
+  showChart = false,
   subtitle,
   enableGrouping = false,
 }: PivotReportViewProps) {

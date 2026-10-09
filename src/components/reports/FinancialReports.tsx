@@ -11,9 +11,11 @@ import CashFlowReport from '@/components/reports/CashFlowReport';
 export default function FinancialReports({
   view,
   onViewChange,
+  hidePicker = false,
 }: {
   view?: string;
   onViewChange?: (value: string) => void;
+  hidePicker?: boolean;
 }) {
   const { t } = useTranslation();
   const [internalTab, setInternalTab] = useState('trial-balance');
@@ -30,7 +32,7 @@ export default function FinancialReports({
 
   return (
     <div className="space-y-4">
-      <ReportPicker options={options} value={tab} onChange={setTab} />
+      {!hidePicker && <ReportPicker options={options} value={tab} onChange={setTab} />}
       <div>
         {tab === 'trial-balance' && <TrialBalanceReport />}
         {tab === 'income-statement' && <IncomeStatementReport />}

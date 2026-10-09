@@ -1,101 +1,58 @@
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
-import { useLocation } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { format } from 'date-fns';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
-import { exportReportExcel, exportReportExcelMulti } from '@/lib/reportExport';
-import { format } from 'date-fns';
-import {
-  BarChart3, Users, Truck, TrendingUp, Calendar,
-  FileText, Download, DollarSign,
-  Package, PieChart, ArrowUpRight, ShoppingCart, Loader2, Archive, Lock,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { exportReportExcelMulti } from '@/lib/reportExport';
 import { ReportsPeriodProvider, useReportsPeriod } from '@/contexts/ReportsPeriodContext';
-import { ReportsPeriodBar } from '@/components/reports/ReportsPeriodBar';
-import { ReportsCatalogSearch, type ReportCatalogItem } from '@/components/reports/ReportsCatalogSearch';
+import { ReportsSnapshot, type SnapshotDoor } from '@/components/reports/ReportsSnapshot';
 import { useReportExportMeta } from '@/hooks/useReportExportMeta';
 import { buildIncomeStatement } from '@/lib/reports/incomeStatement';
 
-const SalesAnalysisReport = lazy(() => import('@/components/reports/SalesAnalysisReport'));
-const ProfitabilityReport = lazy(() => import('@/components/reports/ProfitabilityReport'));
-const PurchasesAnalysisReport = lazy(() => import('@/components/reports/PurchasesAnalysisReport'));
-const InventoryReports = lazy(() => import('@/components/reports/InventoryReports'));
-const StatisticsReports = lazy(() => import('@/components/reports/StatisticsReports'));
-const MonthlyReport = lazy(() => import('@/components/reports/MonthlyReport'));
-const FinancialReports = lazy(() => import('@/components/reports/FinancialReports'));
-const StatementsReports = lazy(() => import('@/components/reports/StatementsReports'));
-const DailyReports = lazy(() => import('@/pages/DailyReports'));
-
-function ReportTabFallback() {
-  return (
-    <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-      <Loader2 className="h-5 w-5 animate-spin" />
-      Loading…
-    </div>
-  );
-}
-
-interface DashboardKPIs {
-  monthSales: { count: number; total: number };
-  openAR: { count: number; total: number };
-  openAP: { count: number; total: number };
-}
-
-type FamilyTarget = { family: string; sub?: string };
-
-const FAMILY_TABS = new Set([
-  'overview',
-  'sales',
-  'purchases',
-  'profit',
-  'inventory',
-  'statistics',
-  'monthly',
-  'financial',
-  'statements',
-  'daily',
-]);
-
-// Maps legacy / deep-link tab ids and overview category ids to the new
-// family + sub-tab structure so existing navigation keeps working.
-const TAB_TARGETS: Record<string, FamilyTarget> = {
-  overview: { family: 'overview' },
-  sales: { family: 'sales' },
-  'daily-detail': { family: 'sales' },
-  purchases: { family: 'purchases' },
-  profitability: { family: 'profit' },
-  'stock-valuation': { family: 'inventory', sub: 'valuation' },
-  'stock-movements': { family: 'inventory', sub: 'movements' },
-  'stock-adjustments': { family: 'inventory', sub: 'adjustments' },
-  'dead-stock': { family: 'inventory', sub: 'dead-stock' },
-  ops: { family: 'inventory', sub: 'dead-stock' },
-  'top-customers': { family: 'statistics', sub: 'top-customers' },
-  'trial-balance': { family: 'financial', sub: 'trial-balance' },
-  'income-statement': { family: 'financial', sub: 'income-statement' },
-  'balance-sheet': { family: 'financial', sub: 'balance-sheet' },
-  vat: { family: 'financial', sub: 'vat' },
-  'cash-flow': { family: 'financial', sub: 'cash-flow' },
-  'client-statement': { family: 'statements', sub: 'client-statement' },
-  'supplier-statement': { family: 'statements', sub: 'supplier-statement' },
-  receivables: { family: 'statements', sub: 'receivables' },
-  payables: { family: 'statements', sub: 'payables' },
-  'transaction-history': { family: 'statements', sub: 'transactions' },
-  daily: { family: 'daily' },
-  'daily-close': { family: 'daily' },
-  // Overview category ids
-  clients: { family: 'statements', sub: 'client-statement' },
-  suppliers: { family: 'statements', sub: 'supplier-statement' },
-  inventory: { family: 'inventory', sub: 'valuation' },
-  financial: { family: 'financial', sub: 'trial-balance' },
+const TAB_TO_DOOR: Record<string, SnapshotDoor> = {
+  overview: null,
+  home: null,
+  sales: 'vendas',
+  'daily-detail': 'vendas',
+  receivables: 'receber',
+  'client-statement': 'receber',
+  payables: 'pagar',
+  'supplier-statement': 'pagar',
+  inventory: 'stock',
+  'stock-valuation': 'stock',
+  'stock-movements': 'stock',
+  'stock-adjustments': 'stock',
+  'dead-stock': 'stock',
+  ops: 'stock',
+  vat: 'iva',
+  financial: 'fecho',
+  'income-statement': 'fecho',
+  'balance-sheet': 'fecho',
+  'trial-balance': 'books',
+  'cash-flow': 'books',
+  purchases: 'books',
+  profit: 'books',
+  profitability: 'books',
+  statistics: 'books',
+  monthly: 'books',
+  daily: 'books',
+  books: 'books',
 };
 
-function resolveReportsTab(value: string | undefined): FamilyTarget | null {
+const DOOR_TO_TAB: Record<Exclude<SnapshotDoor, null>, string> = {
+  vendas: 'sales',
+  receber: 'receivables',
+  pagar: 'payables',
+  stock: 'stock-valuation',
+  fecho: 'income-statement',
+  iva: 'vat',
+  books: 'trial-balance',
+};
+
+function resolveDoor(value: string | undefined): SnapshotDoor {
   if (!value) return null;
-  if (FAMILY_TABS.has(value)) return { family: value };
-  return TAB_TARGETS[value] ?? null;
+  if (value in TAB_TO_DOOR) return TAB_TO_DOOR[value];
+  return null;
 }
 
 export default function Reports() {
@@ -108,81 +65,25 @@ export default function Reports() {
 
 function ReportsInner() {
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState('overview');
-  const [views, setViews] = useState<Record<string, string>>({
-    sales: 'summary',
-    purchases: 'summary',
-    profit: 'summary',
-    inventory: 'valuation',
-    statistics: 'top-customers',
-    financial: 'trial-balance',
-    statements: 'client-statement',
-  });
-  const { t, language } = useTranslation();
-  const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
+  const navigate = useNavigate();
+  const { t } = useTranslation();
   const { apiBranchId, dateFrom, dateTo, periodLabel, branchLabel } = useReportsPeriod();
   const { preview } = useReportExportMeta();
-  const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
+  const [door, setDoor] = useState<SnapshotDoor>(null);
   const [monthEndExporting, setMonthEndExporting] = useState(false);
-
-  const goToTarget = (target: FamilyTarget) => {
-    setActiveTab(target.family);
-    if (target.sub) setViews((prev) => ({ ...prev, [target.family]: target.sub! }));
-  };
-
-  const setView = (family: string, value: string) =>
-    setViews((prev) => ({ ...prev, [family]: value }));
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await api.dashboard.kpis(apiBranchId);
-        if (!cancelled && result.data) setKpis(result.data as DashboardKPIs);
-      } catch {
-        /* API not available — leave null */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [apiBranchId]);
 
   useEffect(() => {
     const stateTab = (location.state as { reportsTab?: string } | null)?.reportsTab;
     const queryTab = new URLSearchParams(location.search).get('tab') ?? undefined;
-    const target = resolveReportsTab(stateTab || queryTab || undefined);
-    if (target) goToTarget(target);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setDoor(resolveDoor(stateTab || queryTab || undefined));
   }, [location.state, location.search]);
 
-  const formatCurrency = (value: number) =>
-    new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
-
-  // Overview uses dashboard KPIs only — avoid pulling full sales/products lists on mount.
-  const avgMargin = Number((kpis as { avgMargin?: number } | null)?.avgMargin) || 0;
-
-  const salesMonth = kpis?.monthSales?.total ?? 0;
-  const receivable = kpis?.openAR?.total ?? 0;
-  const payable = kpis?.openAP?.total ?? 0;
-
-  const handleExportOverview = async () => {
-    try {
-      await exportReportExcel(
-        [
-          {
-            [t.reportsCenterUi.quickStats.salesMonth]: salesMonth,
-            [t.reportsCenterUi.quickStats.receivable]: receivable,
-            [t.reportsCenterUi.quickStats.payable]: payable,
-            [t.reportsCenterUi.quickStats.avgMargin]: `${avgMargin.toFixed(1)}%`,
-          },
-        ],
-        `Resumo_${format(new Date(), 'yyyyMMdd')}`,
-        preview(t.reportsCenterUi.title),
-      );
-    } catch (e) {
-      console.error('[Reports] overview export failed:', e);
-    }
+  const openDoor = (next: SnapshotDoor) => {
+    setDoor(next);
+    navigate('/reports', {
+      replace: true,
+      state: { reportsTab: next ? DOOR_TO_TAB[next] : 'home' },
+    });
   };
 
   const handleMonthEndPack = async () => {
@@ -196,6 +97,26 @@ function ReportsInner() {
       d.setFullYear(d.getFullYear() - 1);
       return format(d, 'yyyy-MM-dd');
     })();
+
+    let salesMonth = 0;
+    let receivable = 0;
+    let payable = 0;
+    let avgMargin = 0;
+    try {
+      const kpis = await api.dashboard.kpis(apiBranchId);
+      const data = kpis.data as {
+        monthSales?: { total?: number };
+        openAR?: { total?: number };
+        openAP?: { total?: number };
+        avgMargin?: number;
+      } | undefined;
+      salesMonth = Number(data?.monthSales?.total) || 0;
+      receivable = Number(data?.openAR?.total) || 0;
+      payable = Number(data?.openAP?.total) || 0;
+      avgMargin = Number(data?.avgMargin) || 0;
+    } catch {
+      /* demo / offline */
+    }
 
     const overviewSheet = [
       { Metric: t.reportsCenterUi.quickStats.salesMonth, Value: salesMonth },
@@ -335,355 +256,12 @@ function ReportsInner() {
     }
   };
 
-  const reportCategories = [
-    {
-      id: 'sales',
-      title: t.reportsCenterUi.categories.sales.title,
-      description: t.reportsCenterUi.categories.sales.description,
-      icon: TrendingUp,
-      color: 'text-green-500',
-      bgColor: 'bg-green-500/10',
-    },
-    {
-      id: 'clients',
-      title: t.reportsCenterUi.categories.clients.title,
-      description: t.reportsCenterUi.categories.clients.description,
-      icon: Users,
-      color: 'text-blue-500',
-      bgColor: 'bg-blue-500/10',
-    },
-    {
-      id: 'suppliers',
-      title: t.reportsCenterUi.categories.suppliers.title,
-      description: t.reportsCenterUi.categories.suppliers.description,
-      icon: Truck,
-      color: 'text-orange-500',
-      bgColor: 'bg-orange-500/10',
-    },
-    {
-      id: 'inventory',
-      title: t.reportsCenterUi.categories.inventory.title,
-      description: t.reportsCenterUi.categories.inventory.description,
-      icon: Package,
-      color: 'text-purple-500',
-      bgColor: 'bg-purple-500/10',
-    },
-    {
-      id: 'financial',
-      title: t.reportsCenterUi.categories.financial.title,
-      description: t.reportsCenterUi.categories.financial.description,
-      icon: DollarSign,
-      color: 'text-emerald-500',
-      bgColor: 'bg-emerald-500/10',
-    },
-    {
-      id: 'daily',
-      title: t.reportsCenterUi.tabDailyClose,
-      description: t.dailyReportsUi.subtitle,
-      icon: Lock,
-      color: 'text-slate-600',
-      bgColor: 'bg-slate-500/10',
-    },
-  ];
-
-  type FamilyDef = {
-    value: string;
-    label: string;
-    icon: LucideIcon;
-    options?: { value: string; label: string }[];
-  };
-
-  const families: FamilyDef[] = [
-    { value: 'overview', label: t.reportsCenterUi.tabOverview, icon: BarChart3 },
-    {
-      value: 'sales',
-      label: t.reportsCenterUi.tabSales,
-      icon: TrendingUp,
-      options: [
-        { value: 'summary', label: t.salesAnalysisUi.tabSummary },
-        { value: 'item', label: t.salesAnalysisUi.tabByItem },
-        { value: 'category', label: t.salesAnalysisUi.tabByCategory },
-        { value: 'customer', label: t.salesAnalysisUi.tabByCustomer },
-        { value: 'supplier', label: t.salesAnalysisUi.tabBySupplier },
-        { value: 'warehouse', label: t.salesAnalysisUi.tabByBranch },
-        { value: 'user', label: t.salesAnalysisUi.tabByUser },
-        { value: 'detailed', label: t.salesAnalysisUi.tabDetailed },
-        { value: 'daily', label: t.reportsCenterUi.tabDailyDetail },
-      ],
-    },
-    {
-      value: 'purchases',
-      label: t.reportsCenterUi.tabPurchases,
-      icon: ShoppingCart,
-      options: [
-        { value: 'summary', label: t.purchasesReportUi.tabSummary },
-        { value: 'suppliers', label: t.purchasesReportUi.bySupplier },
-        { value: 'products', label: t.purchasesReportUi.byProduct },
-        { value: 'categories', label: t.purchasesReportUi.byCategory },
-        { value: 'months', label: t.purchasesReportUi.byMonth },
-      ],
-    },
-    {
-      value: 'profit',
-      label: t.reportsCenterUi.familyProfit,
-      icon: PieChart,
-      options: [
-        { value: 'summary', label: t.salesAnalysisUi.tabSummary },
-        { value: 'item', label: t.salesAnalysisUi.tabByItem },
-        { value: 'category', label: t.salesAnalysisUi.tabByCategory },
-        { value: 'customer', label: t.salesAnalysisUi.tabByCustomer },
-        { value: 'supplier', label: t.salesAnalysisUi.tabBySupplier },
-      ],
-    },
-    {
-      value: 'inventory',
-      label: t.reportsCenterUi.familyInventory,
-      icon: Package,
-      options: [
-        { value: 'valuation', label: t.reportsCenterUi.tabStock },
-        { value: 'category', label: t.stockValuationUi.byCategory },
-        { value: 'movements', label: t.reportsCenterUi.tabMovements },
-        { value: 'adjustments', label: t.adjustmentHistoryUi.title },
-        { value: 'dead-stock', label: t.reportsCenterUi.deadStock },
-      ],
-    },
-    {
-      value: 'statistics',
-      label: t.reportsCenterUi.familyStatistics,
-      icon: Users,
-      options: [
-        { value: 'top-customers', label: t.statisticsUi.topCustomers },
-        { value: 'top-products', label: t.statisticsUi.topProducts },
-        { value: 'top-suppliers', label: t.statisticsUi.topSuppliers },
-        { value: 'top-users', label: t.statisticsUi.topUsers },
-      ],
-    },
-    { value: 'monthly', label: t.reportsCenterUi.familyMonthly, icon: Calendar },
-    {
-      value: 'financial',
-      label: t.reportsCenterUi.familyFinancial,
-      icon: DollarSign,
-      options: [
-        { value: 'trial-balance', label: t.reportsCenterUi.tabTrialBalance },
-        { value: 'income-statement', label: t.reportsCenterUi.tabIncomeStatement },
-        { value: 'balance-sheet', label: t.reportsCenterUi.tabBalanceSheet },
-        { value: 'vat', label: t.reportsCenterUi.tabVat },
-        { value: 'cash-flow', label: t.reportsCenterUi.tabCashFlow },
-      ],
-    },
-    {
-      value: 'statements',
-      label: t.reportsCenterUi.familyStatements,
-      icon: FileText,
-      options: [
-        { value: 'client-statement', label: t.reportsCenterUi.tabClients },
-        { value: 'receivables', label: t.reportsCenterUi.tabReceivables },
-        { value: 'supplier-statement', label: t.reportsCenterUi.tabSuppliers },
-        { value: 'payables', label: t.reportsCenterUi.tabPayables },
-        { value: 'transactions', label: t.reportsCenterUi.tabHistory },
-      ],
-    },
-    { value: 'daily', label: t.reportsCenterUi.tabDailyClose, icon: Lock },
-  ];
-
-  const catalogItems: ReportCatalogItem[] = useMemo(() => {
-    const items: ReportCatalogItem[] = [];
-    for (const fam of families) {
-      if (fam.options) {
-        for (const opt of fam.options) {
-          items.push({ family: fam.value, sub: opt.value, label: opt.label, group: fam.label });
-        }
-      } else {
-        items.push({ family: fam.value, label: fam.label, group: fam.label });
-      }
-    }
-    return items;
-    // families is rebuilt each render from t — catalog stays in sync.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t]);
-
-  const tabBtnClass = (active: boolean) =>
-    `inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-none border-b-2 transition-colors ${
-      active
-        ? 'border-primary text-foreground'
-        : 'border-transparent text-muted-foreground hover:text-foreground'
-    }`;
-
   return (
-    <div className="flex-1 flex flex-col h-full overflow-auto">
-      <div className="flex flex-col gap-4 p-6 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <BarChart3 className="w-6 h-6" />
-            {t.reportsCenterUi.title}
-          </h1>
-          <p className="text-muted-foreground">
-            {t.reportsCenterUi.catalogHint}
-          </p>
-        </div>
-        <ReportsPeriodBar />
-        <ReportsCatalogSearch
-          items={catalogItems}
-          onSelect={(item) => goToTarget({ family: item.family, sub: item.sub })}
-        />
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col px-6">
-        <div className="w-full flex flex-wrap items-stretch border-b bg-muted/30">
-          {families.map((fam) => {
-            const Icon = fam.icon;
-            const active = activeTab === fam.value;
-            return (
-              <button
-                key={fam.value}
-                type="button"
-                onClick={() => setActiveTab(fam.value)}
-                className={tabBtnClass(active)}
-              >
-                <Icon className="w-4 h-4" />
-                {fam.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="flex-1 overflow-auto py-4">
-          <TabsContent value="overview" className="mt-0 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {reportCategories.map((category) => (
-                <Card
-                  key={category.id}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                  onClick={() => goToTarget(resolveReportsTab(category.id) ?? { family: category.id })}
-                >
-                  <CardContent className="pt-6">
-                    <div className="flex items-start gap-4">
-                      <div className={`p-3 rounded-lg ${category.bgColor}`}>
-                        <category.icon className={`w-6 h-6 ${category.color}`} />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="font-semibold">{category.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {category.description}
-                        </p>
-                        <Button variant="link" className="p-0 h-auto mt-2 text-primary">
-                          {t.reportsCenterUi.viewReports} <ArrowUpRight className="w-3 h-3 ml-1" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            {/* Quick Stats */}
-            <Card>
-              <CardHeader>
-                <div className="flex justify-between items-center gap-2 flex-wrap">
-                  <div>
-                    <CardTitle>{t.reportsCenterUi.quickSummaryTitle}</CardTitle>
-                    <CardDescription>{t.reportsCenterUi.quickSummaryDesc}</CardDescription>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleMonthEndPack()}
-                      disabled={monthEndExporting}
-                      title={t.reportsCenterUi.monthEndPackDesc}
-                    >
-                      {monthEndExporting ? (
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
-                        <Archive className="w-4 h-4 mr-2" />
-                      )}
-                      {t.reportsCenterUi.monthEndPack}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={handleExportOverview}>
-                      <Download className="w-4 h-4 mr-2" />
-                      {t.reportsCenterUi.exportOverview}
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.salesMonth}</p>
-                    <p className="text-2xl font-bold">{formatCurrency(salesMonth)}</p>
-                  </div>
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.receivable}</p>
-                    <p className="text-2xl font-bold text-blue-500">{formatCurrency(receivable)}</p>
-                  </div>
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.payable}</p>
-                    <p className="text-2xl font-bold text-orange-500">{formatCurrency(payable)}</p>
-                  </div>
-                  <div className="p-4 bg-muted/50 rounded-lg">
-                    <p className="text-sm text-muted-foreground">{t.reportsCenterUi.quickStats.avgMargin}</p>
-                    <p className="text-2xl font-bold text-green-500">{avgMargin.toFixed(1)}%</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="sales" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <SalesAnalysisReport view={views.sales} onViewChange={(v) => setView('sales', v)} />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="purchases" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <PurchasesAnalysisReport view={views.purchases} onViewChange={(v) => setView('purchases', v)} />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="profit" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <ProfitabilityReport view={views.profit} onViewChange={(v) => setView('profit', v)} />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="inventory" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <InventoryReports view={views.inventory} onViewChange={(v) => setView('inventory', v)} />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="statistics" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <StatisticsReports view={views.statistics} onViewChange={(v) => setView('statistics', v)} />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="monthly" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <MonthlyReport />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="financial" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <FinancialReports view={views.financial} onViewChange={(v) => setView('financial', v)} />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="statements" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <StatementsReports view={views.statements} onViewChange={(v) => setView('statements', v)} />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="daily" className="mt-0">
-            <Suspense fallback={<ReportTabFallback />}>
-              <DailyReports embedded />
-            </Suspense>
-          </TabsContent>
-        </div>
-      </Tabs>
-    </div>
+    <ReportsSnapshot
+      door={door}
+      onDoor={openDoor}
+      onMonthEndPack={() => void handleMonthEndPack()}
+      monthEndExporting={monthEndExporting}
+    />
   );
 }

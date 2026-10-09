@@ -14,6 +14,7 @@ import { Download, Printer, FileDown, Package } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 interface ProductRow {
   code: string;
@@ -413,41 +414,20 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
         </Card>
       )}
 
-      {/* Grand total summary */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.salesByProductUi.qty}</p>
-            <p className="text-2xl font-bold">{fmt(grandTotal.qty)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.salesByProductUi.totalExVat}</p>
-            <p className="text-2xl font-bold">{fmt(grandTotal.base)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.salesByProductUi.totalIncVat}</p>
-            <p className="text-2xl font-bold">{fmt(grandTotal.withVat)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.salesByProductUi.cost}</p>
-            <p className="text-2xl font-bold">{fmt(grandTotal.cost)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">{t.salesByProductUi.profit}</p>
-            <p className={`text-2xl font-bold ${grandTotal.profit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              {fmt(grandTotal.profit)}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <ReportStatStrip
+        columns="xl:grid-cols-5"
+        items={[
+          { label: t.salesByProductUi.qty, value: fmt(grandTotal.qty) },
+          { label: t.salesByProductUi.totalExVat, value: fmt(grandTotal.base) },
+          { label: t.salesByProductUi.totalIncVat, value: fmt(grandTotal.withVat) },
+          { label: t.salesByProductUi.cost, value: fmt(grandTotal.cost) },
+          {
+            label: t.salesByProductUi.profit,
+            value: fmt(grandTotal.profit),
+            className: grandTotal.profit >= 0 ? 'text-green-600' : 'text-red-600',
+          },
+        ]}
+      />
 
       {groups.length === 0 ? (
         <Card>

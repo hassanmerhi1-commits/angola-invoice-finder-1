@@ -8,7 +8,6 @@ import { useBranchScope } from '@/hooks/useBranchScope';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 function escapeHtml(value: string): string {
   return String(value ?? '')
@@ -73,14 +72,6 @@ export default function StockByCategoryReport() {
 
   const fmt = (n: number) =>
     new Intl.NumberFormat(locale, { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n || 0);
-
-  const chartData = useMemo(
-    () =>
-      rows
-        .slice(0, 12)
-        .map((r) => ({ name: r.category.length > 18 ? `${r.category.slice(0, 17)}…` : r.category, value: r.costValue })),
-    [rows],
-  );
 
   const handleExport = async () => {
     const data = rows.map((r) => ({
@@ -185,25 +176,6 @@ export default function StockByCategoryReport() {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">{t.stockValuationUi.totalCostValue}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} layout="vertical" margin={{ left: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis type="category" dataKey="name" width={140} />
-                <Tooltip formatter={(value: number) => fmt(value)} />
-                <Bar dataKey="value" name={t.stockValuationUi.costValue} fill="#8b5cf6" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
       <Card>
         <CardHeader className="pb-2">
           <div className="flex justify-between items-center">

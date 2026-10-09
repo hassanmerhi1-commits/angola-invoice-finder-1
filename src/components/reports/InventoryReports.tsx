@@ -11,9 +11,11 @@ import DeadStockReport from '@/components/reports/DeadStockReport';
 export default function InventoryReports({
   view,
   onViewChange,
+  hidePicker = false,
 }: {
   view?: string;
   onViewChange?: (value: string) => void;
+  hidePicker?: boolean;
 }) {
   const { t } = useTranslation();
   const [internalTab, setInternalTab] = useState('valuation');
@@ -30,7 +32,7 @@ export default function InventoryReports({
 
   return (
     <div className="space-y-4">
-      <ReportPicker options={options} value={tab} onChange={setTab} />
+      {!hidePicker && <ReportPicker options={options} value={tab} onChange={setTab} />}
       <div>
         {tab === 'valuation' && <StockValuationReport />}
         {tab === 'category' && <StockByCategoryReport />}

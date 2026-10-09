@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { useTranslation } from '@/i18n';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -171,53 +172,15 @@ export function TransactionHistoryReport() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.totalTransactions}</p>
-                <p className="text-2xl font-bold">{stats.totalTransactions.toLocaleString(locale)}</p>
-              </div>
-              <History className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.activeUsers}</p>
-                <p className="text-2xl font-bold">{Object.keys(stats.byUser).length}</p>
-              </div>
-              <User className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.sales}</p>
-                <p className="text-2xl font-bold">{(stats.byCategory['sales'] || 0).toLocaleString(locale)}</p>
-              </div>
-              <ShoppingCart className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{t.transactionHistoryUi.totalValue}</p>
-                <p className="text-2xl font-bold">{stats.totalAmount.toLocaleString(locale)} {t.common.currency}</p>
-              </div>
-              <BarChart3 className="w-8 h-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <ReportStatStrip
+        columns="xl:grid-cols-4"
+        items={[
+          { label: t.transactionHistoryUi.totalTransactions, value: stats.totalTransactions.toLocaleString(locale) },
+          { label: t.transactionHistoryUi.activeUsers, value: String(Object.keys(stats.byUser).length) },
+          { label: t.transactionHistoryUi.sales, value: (stats.byCategory['sales'] || 0).toLocaleString(locale) },
+          { label: t.transactionHistoryUi.totalValue, value: `${stats.totalAmount.toLocaleString(locale)} ${t.common.currency}` },
+        ]}
+      />
 
       {/* Filters Panel */}
       {showFilters && (

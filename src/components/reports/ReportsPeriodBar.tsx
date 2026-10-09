@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,7 +17,7 @@ import { formatBranchDisplayName } from '@/lib/branchDisplay';
 
 const PRESETS: ReportsPeriodPreset[] = ['today', 'thisMonth', 'lastMonth', 'thisYear'];
 
-export function ReportsPeriodBar() {
+export function ReportsPeriodBar({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
   const {
     dateFrom,
@@ -28,24 +30,43 @@ export function ReportsPeriodBar() {
     branchFilter,
   } = useReportsPeriod();
   const { branches, currentBranch, canPickBranch, selectedBranch, setSelectedBranch } = branchFilter;
+  const [preset, setPreset] = useState<ReportsPeriodPreset>('thisMonth');
+  const [showOptions, setShowOptions] = useState(false);
+  const showDates = !compact || showOptions;
 
   return (
     <div className="rounded-lg border bg-card px-4 py-3 space-y-3">
-      <div className="flex flex-wrap items-end gap-2">
-        {PRESETS.map((preset) => (
+      <div className="flex flex-wrap items-center gap-2">
+        {PRESETS.map((item) => (
           <Button
-            key={preset}
+            key={item}
             type="button"
-            variant="outline"
+            variant={preset === item ? 'default' : 'outline'}
             size="sm"
             className="h-8"
-            onClick={() => applyPreset(preset)}
+            onClick={() => {
+              setPreset(item);
+              applyPreset(item);
+            }}
           >
-            {t.reportsCenterUi.presets[preset]}
+            {t.reportsCenterUi.presets[item]}
           </Button>
         ))}
+        {compact && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1 text-muted-foreground"
+            onClick={() => setShowOptions((open) => !open)}
+          >
+            {t.reportsCenterUi.options}
+            <ChevronDown className={`h-4 w-4 transition-transform ${showOptions ? 'rotate-180' : ''}`} />
+          </Button>
+        )}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+      {showDates && (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
         <div className="space-y-1">
           <Label className="text-xs">{t.reportsUi.dateFrom}</Label>
           <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-9" />
@@ -70,7 +91,24 @@ export function ReportsPeriodBar() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center gap-2 pb-1 h-9">
+        {!compact && (
+        <div className="flex items-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 gap-1 text-muted-foreground"
+            onClick={() => setShowOptions((open) => !open)}
+          >
+            {t.reportsCenterUi.options}
+            <ChevronDown className={`h-4 w-4 transition-transform ${showOptions ? 'rotate-180' : ''}`} />
+          </Button>
+        </div>
+        )}
+      </div>
+      )}
+      {showOptions && (
+        <div className="flex items-center gap-2 pt-1">
           <Checkbox
             id="reports-compare-previous"
             checked={comparePrevious}
@@ -80,7 +118,7 @@ export function ReportsPeriodBar() {
             {t.reportsCenterUi.comparePrevious}
           </Label>
         </div>
-      </div>
+      )}
     </div>
   );
 }

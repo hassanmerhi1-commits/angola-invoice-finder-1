@@ -3,15 +3,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { useReportExportMeta } from '@/hooks/useReportExportMeta';
 import { treasuryMovement, type TbRow } from '@/lib/reports/incomeStatement';
-import { Download, ArrowUpCircle, ArrowDownCircle, Wallet, Loader2, Printer, FileDown } from 'lucide-react';
+import { Download, Wallet, Loader2, Printer, FileDown } from 'lucide-react';
 import { format, eachDayOfInterval, parseISO } from 'date-fns';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 type PaymentRow = {
   id?: string;
@@ -180,7 +181,7 @@ export default function CashFlowReport({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Card>
         <CardHeader>
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
@@ -233,97 +234,57 @@ export default function CashFlowReport({
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <ArrowUpCircle className="w-4 h-4 text-green-500" />
-                  <p className="text-sm text-muted-foreground">{t.cashFlowUi.inflow}</p>
-                </div>
-                <p className="text-2xl font-bold text-green-500">{formatCurrency(inflowByMethod.total)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <ArrowDownCircle className="w-4 h-4 text-red-500" />
-                  <p className="text-sm text-muted-foreground">{t.cashFlowUi.outflow}</p>
-                </div>
-                <p className="text-2xl font-bold text-red-500">{formatCurrency(outflowTotal)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <Wallet className="w-4 h-4" />
-                  <p className="text-sm text-muted-foreground">{t.cashFlowUi.net}</p>
-                </div>
-                <p className={`text-2xl font-bold ${netFlow >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {formatCurrency(netFlow)}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">{t.reportsCenterUi.glCash}</p>
-                <p className="text-xl font-bold">{formatCurrency(glTreasury.cash)}</p>
-                <p className="text-xs text-muted-foreground mt-1">{t.reportsCenterUi.glTreasuryHint}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">{t.reportsCenterUi.glBanks}</p>
-                <p className="text-xl font-bold">{formatCurrency(glTreasury.banks)}</p>
-              </CardContent>
-            </Card>
-          </div>
+          <ReportStatStrip
+            columns="xl:grid-cols-8"
+            items={[
+              { label: t.cashFlowUi.inflow, value: formatCurrency(inflowByMethod.total), className: 'text-green-600' },
+              { label: t.cashFlowUi.outflow, value: formatCurrency(outflowTotal), className: 'text-red-600' },
+              { label: t.cashFlowUi.net, value: formatCurrency(netFlow), className: netFlow >= 0 ? 'text-green-600' : 'text-red-600' },
+              { label: t.reportsCenterUi.glCash, value: formatCurrency(glTreasury.cash), hint: t.reportsCenterUi.glTreasuryHint },
+              { label: t.reportsCenterUi.glBanks, value: formatCurrency(glTreasury.banks) },
+              { label: t.chartsUi.methodCash, value: formatCurrency(inflowByMethod.cash) },
+              { label: t.chartsUi.methodCard, value: formatCurrency(inflowByMethod.card) },
+              { label: t.chartsUi.methodTransfer, value: formatCurrency(inflowByMethod.transfer) },
+            ]}
+          />
 
           <Card>
-            <CardHeader>
-              <CardTitle>{t.cashFlowUi.inflowByMethod}</CardTitle>
+            <CardHeader className="py-3">
+              <CardTitle className="text-base">{t.cashFlowUi.dailyTitle}</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 bg-green-500/10 rounded-lg">
-                  <p className="text-sm text-muted-foreground">{t.chartsUi.methodCash}</p>
-                  <p className="text-xl font-bold text-green-500">{formatCurrency(inflowByMethod.cash)}</p>
-                </div>
-                <div className="p-4 bg-blue-500/10 rounded-lg">
-                  <p className="text-sm text-muted-foreground">{t.chartsUi.methodCard}</p>
-                  <p className="text-xl font-bold text-blue-500">{formatCurrency(inflowByMethod.card)}</p>
-                </div>
-                <div className="p-4 bg-purple-500/10 rounded-lg">
-                  <p className="text-sm text-muted-foreground">{t.chartsUi.methodTransfer}</p>
-                  <p className="text-xl font-bold text-purple-500">{formatCurrency(inflowByMethod.transfer)}</p>
-                </div>
-                <div className="p-4 bg-muted/50 rounded-lg">
-                  <p className="text-sm text-muted-foreground">{t.cashFlowUi.mixed}</p>
-                  <p className="text-xl font-bold">{formatCurrency(inflowByMethod.mixed)}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>{t.cashFlowUi.dailyTitle}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={daily}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="label" />
-                    <YAxis />
-                    <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                    <Legend />
-                    <Bar dataKey="inflow" name={t.cashFlowUi.inflow} fill="#10b981" />
-                    <Bar dataKey="outflow" name={t.cashFlowUi.outflow} fill="#ef4444" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t.cashFlowUi.day}</TableHead>
+                    <TableHead className="text-right">{t.cashFlowUi.inflow}</TableHead>
+                    <TableHead className="text-right">{t.cashFlowUi.outflow}</TableHead>
+                    <TableHead className="text-right">{t.cashFlowUi.net}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {daily.filter((d) => d.inflow !== 0 || d.outflow !== 0).length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        {t.common.noResults}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    daily
+                      .filter((d) => d.inflow !== 0 || d.outflow !== 0)
+                      .map((d) => (
+                        <TableRow key={d.label}>
+                          <TableCell>{d.label}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(d.inflow)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(d.outflow)}</TableCell>
+                          <TableCell className={`text-right font-medium ${d.net >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {formatCurrency(d.net)}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                  )}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         </>

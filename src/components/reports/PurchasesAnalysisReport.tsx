@@ -9,10 +9,10 @@ import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { api } from '@/lib/api/client';
 import { unwrapListPayload } from '@/lib/listCache';
 import { useTranslation } from '@/i18n';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { buildPurchasesPivot, type PurchasesPivotContext } from '@/lib/reports/purchasesPivot';
 import PurchasesPivotView from '@/components/reports/PurchasesPivotView';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 export default function PurchasesAnalysisReport({
   view,
@@ -89,11 +89,6 @@ export default function PurchasesAnalysisReport({
   const categoryPivot = useMemo(() => buildPurchasesPivot(filtered, 'category', pivotCtx), [filtered, pivotCtx]);
   const monthPivot = useMemo(() => buildPurchasesPivot(filtered, 'month', pivotCtx), [filtered, pivotCtx]);
 
-  const monthChart = useMemo(
-    () => monthPivot.rows.map((r) => ({ label: r.label, total: r.total })),
-    [monthPivot],
-  );
-
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
 
@@ -109,7 +104,7 @@ export default function PurchasesAnalysisReport({
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -141,55 +136,28 @@ export default function PurchasesAnalysisReport({
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">{t.purchasesReportUi.totalSpend}</p>
-                <p className="text-2xl font-bold">{formatCurrency(totals.total)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">{t.purchasesReportUi.netBase}</p>
-                <p className="text-2xl font-bold">{formatCurrency(totals.base)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">{t.vatReportUi.inputVat}</p>
-                <p className="text-2xl font-bold">{formatCurrency(totals.iva)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-sm text-muted-foreground">{t.purchasesReportUi.invoices}</p>
-                <p className="text-2xl font-bold">{totals.count}</p>
-              </CardContent>
-            </Card>
-          </div>
+          <ReportStatStrip
+            columns="xl:grid-cols-4"
+            items={[
+              { label: t.purchasesReportUi.totalSpend, value: formatCurrency(totals.total) },
+              { label: t.purchasesReportUi.netBase, value: formatCurrency(totals.base) },
+              { label: t.vatReportUi.inputVat, value: formatCurrency(totals.iva) },
+              { label: t.purchasesReportUi.invoices, value: String(totals.count) },
+            ]}
+          />
 
           <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />
 
           <div>
             {viewTab === 'summary' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">{t.purchasesReportUi.byMonth}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={monthChart}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="label" />
-                        <YAxis />
-                        <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                        <Bar dataKey="total" name={t.purchasesReportUi.totalSpend} fill="#8b5cf6" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </CardContent>
-              </Card>
+              <PurchasesPivotView
+                dimensionLabel={t.purchasesReportUi.month}
+                rows={monthPivot.rows}
+                totals={monthPivot.totals}
+                totalInvoices={totals.count}
+                fileName={`Compras_Resumo_${periodSuffix}`}
+                subtitle={periodLabel}
+              />
             )}
 
             {viewTab === 'suppliers' && (

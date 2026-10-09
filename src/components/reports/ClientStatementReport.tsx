@@ -11,9 +11,10 @@ import { useClients } from '@/hooks/useERP';
 import { useReportSales } from '@/hooks/useReportSales';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
-import { Download, Printer, FileText, Search, TrendingUp, TrendingDown, FileDown } from 'lucide-react';
+import { Download, Printer, FileText, Search, FileDown } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useTranslation } from '@/i18n';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 import { api } from '@/lib/api/client';
 import { isGenericPartyName, isPlaceholderNif } from '@/lib/accountStatement';
 import { buildReportHtml, escapeHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
@@ -423,40 +424,21 @@ export default function ClientStatementReport() {
       </Card>
 
       {selectedClientData && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="w-4 h-4 text-red-500" />
-                <p className="text-sm text-muted-foreground">{t.reportsUi.debit}</p>
-              </div>
-              <p className="text-2xl font-bold">{formatCurrency(totals.debit)}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingDown className="w-4 h-4 text-green-500" />
-                <p className="text-sm text-muted-foreground">{t.reportsUi.credit}</p>
-              </div>
-              <p className="text-2xl font-bold">{formatCurrency(totals.credit)}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground mb-2">{t.reportsUi.balance}</p>
-              <p className="text-2xl font-bold">
-                {formatCurrency(
-                  statementEntries[statementEntries.length - 1]?.balance ??
-                    selectedClientData.currentBalance,
-                )}
-              </p>
-              <Badge variant="secondary" className="mt-2">
-                {selectedClientData.name}
-              </Badge>
-            </CardContent>
-          </Card>
-        </div>
+        <ReportStatStrip
+          columns="xl:grid-cols-3"
+          items={[
+            { label: t.reportsUi.debit, value: formatCurrency(totals.debit), className: 'text-red-600' },
+            { label: t.reportsUi.credit, value: formatCurrency(totals.credit), className: 'text-green-600' },
+            {
+              label: t.reportsUi.balance,
+              value: formatCurrency(
+                statementEntries[statementEntries.length - 1]?.balance ??
+                  selectedClientData.currentBalance,
+              ),
+              hint: selectedClientData.name,
+            },
+          ]}
+        />
       )}
 
       <Card>

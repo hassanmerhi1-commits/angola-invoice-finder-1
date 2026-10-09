@@ -10,7 +10,6 @@ import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExpor
 import { unwrapListPayload } from '@/lib/listCache';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { ReportToolbar } from '@/components/reports/ReportToolbar';
 import { ReportTruncationBanner } from '@/components/reports/ReportTruncationBanner';
@@ -129,14 +128,6 @@ export default function MonthlyReport() {
 
   const fmt = (n: number) =>
     new Intl.NumberFormat(locale, { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n || 0);
-
-  const formatCurrency = (value: number) =>
-    new Intl.NumberFormat(locale, { style: 'currency', currency: 'AOA', minimumFractionDigits: 0 }).format(value);
-
-  const chartData = useMemo(
-    () => rows.map((r) => ({ name: r.month, sales: r.sales, purchases: r.purchases })),
-    [rows],
-  );
 
   const handleExport = async () => {
     const data = rows.map((r) => ({
@@ -271,28 +262,7 @@ export default function MonthlyReport() {
       </ReportToolbar>
 
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">{t.monthlyUi.title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                <Legend />
-                <Bar dataKey="sales" name={t.monthlyUi.sales} fill="#3b82f6" />
-                <Bar dataKey="purchases" name={t.monthlyUi.purchases} fill="#8b5cf6" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-4">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>

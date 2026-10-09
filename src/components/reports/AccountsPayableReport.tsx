@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Download, FileText, Clock, AlertTriangle, AlertCircle, CheckCircle, Loader2, Wrench } from 'lucide-react';
+import { Download, FileText, Loader2, Wrench } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { isDemoMode } from '@/lib/api/config';
 import { format, differenceInDays, parseISO } from 'date-fns';
@@ -12,6 +12,7 @@ import { exportReportExcel } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 interface PayableEntry {
   supplierId: string;
@@ -226,51 +227,17 @@ export default function AccountsPayableReport() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 mb-2">
-              <CheckCircle className="w-4 h-4 text-green-500" />
-              <p className="text-sm text-muted-foreground">{t.reportsUi.dueSoon}</p>
-            </div>
-            <p className="text-2xl font-bold text-green-500">{formatCurrency(summaryStats.current)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 mb-2">
-              <Clock className="w-4 h-4 text-yellow-500" />
-              <p className="text-sm text-muted-foreground">{t.reportsUi.overdue1to30}</p>
-            </div>
-            <p className="text-2xl font-bold text-yellow-500">{formatCurrency(summaryStats.days30)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle className="w-4 h-4 text-orange-500" />
-              <p className="text-sm text-muted-foreground">{t.reportsUi.overdue31to60}</p>
-            </div>
-            <p className="text-2xl font-bold text-orange-500">{formatCurrency(summaryStats.days60)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertCircle className="w-4 h-4 text-red-500" />
-              <p className="text-sm text-muted-foreground">{t.reportsUi.overdue60plus}</p>
-            </div>
-            <p className="text-2xl font-bold text-red-500">{formatCurrency(summaryStats.days90)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground mb-2">{t.reportsUi.totalToPay}</p>
-            <p className="text-2xl font-bold">{formatCurrency(summaryStats.total)}</p>
-          </CardContent>
-        </Card>
-      </div>
+    <div className="space-y-3">
+      <ReportStatStrip
+        columns="xl:grid-cols-5"
+        items={[
+          { label: t.reportsUi.dueSoon, value: formatCurrency(summaryStats.current), className: 'text-green-600' },
+          { label: t.reportsUi.overdue1to30, value: formatCurrency(summaryStats.days30), className: 'text-yellow-600' },
+          { label: t.reportsUi.overdue31to60, value: formatCurrency(summaryStats.days60), className: 'text-orange-600' },
+          { label: t.reportsUi.overdue60plus, value: formatCurrency(summaryStats.days90), className: 'text-red-600' },
+          { label: t.reportsUi.totalToPay, value: formatCurrency(summaryStats.total) },
+        ]}
+      />
 
       <Card>
         <CardHeader>

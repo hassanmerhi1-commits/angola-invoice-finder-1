@@ -11,9 +11,11 @@ import { TransactionHistoryReport } from '@/components/reports/TransactionHistor
 export default function StatementsReports({
   view,
   onViewChange,
+  hidePicker = false,
 }: {
   view?: string;
   onViewChange?: (value: string) => void;
+  hidePicker?: boolean;
 }) {
   const { t } = useTranslation();
   const [internalTab, setInternalTab] = useState('client-statement');
@@ -30,7 +32,7 @@ export default function StatementsReports({
 
   return (
     <div className="space-y-4">
-      <ReportPicker options={options} value={tab} onChange={setTab} />
+      {!hidePicker && <ReportPicker options={options} value={tab} onChange={setTab} />}
       <div>
         {tab === 'client-statement' && <ClientStatementReport />}
         {tab === 'receivables' && <AccountsReceivableReport />}

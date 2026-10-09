@@ -5,11 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from '@/components/ui/table';
-import { Download, Receipt, ArrowDownCircle, ArrowUpCircle, Scale, Loader2, ExternalLink, FileCode } from 'lucide-react';
+import { Download, Receipt, Loader2, ExternalLink, FileCode } from 'lucide-react';
 import { exportReportExcel, printReport, saveReportPdf, buildDataTableHtml } from '@/lib/reportExport';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
+import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
 type IvaLine = {
   direction: string;
@@ -154,7 +155,7 @@ export default function VatSummaryReport() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Card>
         <CardHeader>
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
@@ -234,40 +235,19 @@ export default function VatSummaryReport() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <ArrowUpCircle className="w-4 h-4 text-blue-500" />
-                  <p className="text-sm text-muted-foreground">{t.vatReportUi.outputVat}</p>
-                </div>
-                <p className="text-2xl font-bold text-blue-500">{formatCurrency(report.outputTax)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <ArrowDownCircle className="w-4 h-4 text-orange-500" />
-                  <p className="text-sm text-muted-foreground">{t.vatReportUi.inputVat}</p>
-                </div>
-                <p className="text-2xl font-bold text-orange-500">{formatCurrency(report.inputTax)}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <Scale className="w-4 h-4" />
-                  <p className="text-sm text-muted-foreground">
-                    {netPayable >= 0 ? t.vatReportUi.netPayable : t.vatReportUi.netCredit}
-                  </p>
-                </div>
-                <p className={`text-2xl font-bold ${netPayable >= 0 ? 'text-red-500' : 'text-green-500'}`}>
-                  {formatCurrency(Math.abs(netPayable))}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{t.vatReportUi.netHint}</p>
-              </CardContent>
-            </Card>
-          </div>
+          <ReportStatStrip
+            columns="xl:grid-cols-3"
+            items={[
+              { label: t.vatReportUi.outputVat, value: formatCurrency(report.outputTax), className: 'text-blue-600' },
+              { label: t.vatReportUi.inputVat, value: formatCurrency(report.inputTax), className: 'text-orange-600' },
+              {
+                label: netPayable >= 0 ? t.vatReportUi.netPayable : t.vatReportUi.netCredit,
+                value: formatCurrency(Math.abs(netPayable)),
+                className: netPayable >= 0 ? 'text-red-600' : 'text-green-600',
+                hint: t.vatReportUi.netHint,
+              },
+            ]}
+          />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
