@@ -226,7 +226,7 @@ export function ReportsSnapshot({
         </button>
         {selected === 'vendas' && (
           <Suspense fallback={<ReportFallback />}>
-            <SalesAnalysisReport hidePicker />
+            <SalesAnalysisReport />
           </Suspense>
         )}
         {selected === 'receber' && (
@@ -241,7 +241,7 @@ export function ReportsSnapshot({
         )}
         {selected === 'stock' && (
           <Suspense fallback={<ReportFallback />}>
-            <InventoryReports hidePicker />
+            <InventoryReports />
           </Suspense>
         )}
         {selected === 'fecho' && (

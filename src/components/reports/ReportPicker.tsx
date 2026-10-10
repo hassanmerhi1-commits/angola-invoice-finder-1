@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export interface ReportOption {
   value: string;
@@ -8,8 +9,8 @@ export interface ReportOption {
 }
 
 /**
- * Compact report selector used inside each report family. Replaces the previous
- * row of sub-tabs with a single dropdown so families with many reports stay tidy.
+ * Compact in-report view switcher. Labels stay visible (e.g. Por Categoria)
+ * so grouping is one click, not buried in a dropdown.
  */
 export function ReportPicker({
   options,
@@ -25,25 +26,24 @@ export function ReportPicker({
   className?: string;
 }) {
   return (
-    <div className={`flex flex-wrap items-center justify-between gap-3 ${className ?? ''}`}>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="w-full sm:w-[300px] h-10 font-medium">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((opt) => {
-            const Icon = opt.icon;
-            return (
-              <SelectItem key={opt.value} value={opt.value}>
-                <span className="flex items-center gap-2">
-                  <Icon className="w-4 h-4 text-muted-foreground" />
-                  {opt.label}
-                </span>
-              </SelectItem>
-            );
-          })}
-        </SelectContent>
-      </Select>
+    <div className={cn('flex flex-wrap items-center justify-between gap-2', className)}>
+      <div className="flex flex-wrap gap-1">
+        {options.map((opt) => {
+          const active = value === opt.value;
+          return (
+            <Button
+              key={opt.value}
+              type="button"
+              variant={active ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={() => onChange(opt.value)}
+            >
+              {opt.label}
+            </Button>
+          );
+        })}
+      </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
   );

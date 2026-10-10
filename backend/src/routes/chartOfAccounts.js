@@ -6,6 +6,7 @@ const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
+const { journalFilteredSumSql } = require('../lib/journalPeriodSums');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -142,6 +143,7 @@ module.exports = function(broadcastTable) {
       dateFilter = 'AND je.entry_date <= $1';
       params.push(asOf);
     }
+    const sums = journalFilteredSumSql();
     const result = await db.query(
       `
         SELECT 
@@ -153,13 +155,9 @@ module.exports = function(broadcastTable) {
           coa.level,
           coa.is_header,
           coa.opening_balance,
-          COALESCE(SUM(jel.debit_amount), 0) as total_debits,
-          COALESCE(SUM(jel.credit_amount), 0) as total_credits,
-          coa.opening_balance + 
-            CASE 
-              WHEN coa.account_nature = 'debit' THEN COALESCE(SUM(jel.debit_amount), 0) - COALESCE(SUM(jel.credit_amount), 0)
-              ELSE COALESCE(SUM(jel.credit_amount), 0) - COALESCE(SUM(jel.debit_amount), 0)
-            END as closing_balance
+          ${sums.totalDebits},
+          ${sums.totalCredits},
+          ${sums.closingBalance}
         FROM chart_of_accounts coa
         LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
         LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter}
@@ -234,6 +232,7 @@ module.exports = function(broadcastTable) {
         }
       }
 
+      const sums = journalFilteredSumSql();
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -244,13 +243,9 @@ module.exports = function(broadcastTable) {
           coa.level,
           coa.is_header,
           coa.opening_balance,
-          COALESCE(SUM(jel.debit_amount), 0) as total_debits,
-          COALESCE(SUM(jel.credit_amount), 0) as total_credits,
-          coa.opening_balance + 
-            CASE 
-              WHEN coa.account_nature = 'debit' THEN COALESCE(SUM(jel.debit_amount), 0) - COALESCE(SUM(jel.credit_amount), 0)
-              ELSE COALESCE(SUM(jel.credit_amount), 0) - COALESCE(SUM(jel.debit_amount), 0)
-            END as closing_balance
+          ${sums.totalDebits},
+          ${sums.totalCredits},
+          ${sums.closingBalance}
         FROM chart_of_accounts coa
         LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
         LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter} ${branchFilter}
@@ -614,6 +609,7 @@ module.exports = function(broadcastTable) {
         params.push(start_date, end_date);
       }
 
+      const sums = journalFilteredSumSql();
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -622,13 +618,9 @@ module.exports = function(broadcastTable) {
           coa.account_type,
           coa.account_nature,
           coa.opening_balance,
-          COALESCE(SUM(jel.debit_amount), 0) as total_debits,
-          COALESCE(SUM(jel.credit_amount), 0) as total_credits,
-          coa.opening_balance + 
-            CASE 
-              WHEN coa.account_nature = 'debit' THEN COALESCE(SUM(jel.debit_amount), 0) - COALESCE(SUM(jel.credit_amount), 0)
-              ELSE COALESCE(SUM(jel.credit_amount), 0) - COALESCE(SUM(jel.debit_amount), 0)
-            END as current_balance
+          ${sums.totalDebits},
+          ${sums.totalCredits},
+          ${sums.currentBalance}
         FROM chart_of_accounts coa
         LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
         LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter}

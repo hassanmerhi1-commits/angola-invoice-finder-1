@@ -32,6 +32,10 @@ const testFiles = [
   'test/dateRangeFilter.test.js',
   'test/repairParentEntityCoa.test.js',
   'test/saleJournalAmounts.test.js',
+  'test/incomeStatement.test.js',
+  'test/purchaseReceiveGl.test.js',
+  'test/trialBalanceDateFilter.test.js',
+  'test/restoreStockCost.test.js',
 ];
 
 function resolveElectronBinary() {

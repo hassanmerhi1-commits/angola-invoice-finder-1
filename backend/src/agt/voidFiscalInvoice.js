@@ -4,7 +4,7 @@
 const crypto = require('crypto');
 const db = require('../db');
 const { createJournalEntry } = require('../accounting');
-const { recordStockMovement, auditLog, validatePeriod } = require('../transactionEngine');
+const { restoreStockAtCurrentCost, auditLog, validatePeriod } = require('../transactionEngine');
 const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { transmitVoid } = require('./connector');
 const { resolveBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('../lib/resolveBranchCaixaGlAccount');
@@ -74,30 +74,16 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
       const qty = Number(item.quantity || 0);
       if (!productId || qty <= 0) continue;
 
-      await recordStockMovement(client, {
+      totalCOGS += await restoreStockAtCurrentCost(client, {
         productId,
         warehouseId: branchId,
-        movementType: 'IN',
         quantity: qty,
-        unitCost: 0,
         referenceType: 'void',
         referenceId: invoiceId,
         referenceNumber: invoiceNumber,
         createdBy: voidBy,
         notes: reason,
       });
-
-      const costRes = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [productId]);
-      if (costRes.rows.length) {
-        const row = costRes.rows[0];
-        let unitCost = 0;
-        if (row.avg_cost != null && row.avg_cost !== '' && Number.isFinite(Number(row.avg_cost))) {
-          unitCost = Number(row.avg_cost);
-        } else {
-          unitCost = Number(row.cost) || 0;
-        }
-        totalCOGS += unitCost * qty;
-      }
     }
 
     const saleAmounts = resolveSaleJournalAmounts({

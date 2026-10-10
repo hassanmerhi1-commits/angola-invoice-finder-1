@@ -41,6 +41,10 @@ function normalizeOptionalId(value) {
   return trimmed || null;
 }
 
+function roundMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
 function normalizeBranchCode(code) {
   const cleaned = String(code || 'SEDE').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   return cleaned || 'SEDE';
@@ -274,8 +278,14 @@ async function assertPeriodOpenForJournal(client, entryDate) {
 async function createJournalEntry(client, params) {
   const {
     description, referenceType, referenceId, branchId,
-    createdBy, createdByName, lines, entryDate
+    createdBy, createdByName, entryDate
   } = params;
+
+  const lines = (params.lines || []).map((line) => ({
+    ...line,
+    debit: roundMoney(line.debit),
+    credit: roundMoney(line.credit),
+  }));
 
   if (!lines || lines.length === 0) {
     throw new Error('Journal entry must have at least one line');
@@ -294,8 +304,8 @@ async function createJournalEntry(client, params) {
   const prefix = prefixMap[referenceType] || 'JE';
   const entryNumber = await generateSequenceNumber(client, 'journal', prefix);
 
-  const totalDebit = lines.reduce((sum, l) => sum + (l.debit || 0), 0);
-  const totalCredit = lines.reduce((sum, l) => sum + (l.credit || 0), 0);
+  const totalDebit = roundMoney(lines.reduce((sum, l) => sum + (l.debit || 0), 0));
+  const totalCredit = roundMoney(lines.reduce((sum, l) => sum + (l.credit || 0), 0));
 
   if (Math.abs(totalDebit - totalCredit) > 0.01) {
     throw new Error(`Journal entry not balanced: Debit=${totalDebit.toFixed(2)}, Credit=${totalCredit.toFixed(2)}. Difference=${Math.abs(totalDebit - totalCredit).toFixed(2)}`);

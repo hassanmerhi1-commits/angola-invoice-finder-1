@@ -57,54 +57,58 @@ export function sumByPrefix(rows: TbRow[], prefixes: string[]): number {
   }, 0);
 }
 
+/**
+ * Angola PGC (class 6 proveitos, class 7 custos). Posted sales credit 613;
+ * CMV debits 711. Do not use SNC 2009 (inverted 6/7) prefixes.
+ */
 export function buildIncomeStatement(rows: TbRow[], labels: IncomeStatementLabels) {
-  const salesOfGoods = sumByPrefix(rows, ['71']);
-  const services = sumByPrefix(rows, ['72']);
-  const otherIncome = sumByPrefix(rows, ['73', '74', '75']);
+  const salesOfGoods = sumByPrefix(rows, ['61']);
+  const services = sumByPrefix(rows, ['62']);
+  const otherIncome = sumByPrefix(rows, ['63', '64', '65', '68', '69']);
   const operatingIncome = salesOfGoods + services + otherIncome;
 
-  const cogs = sumByPrefix(rows, ['61']);
+  const cogs = sumByPrefix(rows, ['71']);
   const grossProfit = operatingIncome - cogs;
 
-  const externalSupplies = sumByPrefix(rows, ['62']);
-  const personnel = sumByPrefix(rows, ['63']);
-  const depreciation = sumByPrefix(rows, ['64']);
-  const otherOpex = sumByPrefix(rows, ['65', '66', '67', '68']);
+  const externalSupplies = sumByPrefix(rows, ['75']);
+  const personnel = sumByPrefix(rows, ['72']);
+  const depreciation = sumByPrefix(rows, ['73']);
+  const otherOpex = sumByPrefix(rows, ['78', '79']);
   const totalOperatingExpenses = externalSupplies + personnel + depreciation + otherOpex;
 
   const operatingProfit = grossProfit - totalOperatingExpenses;
 
-  const financialIncome = sumByPrefix(rows, ['78']);
-  const financialExpenses = sumByPrefix(rows, ['69']);
+  const financialIncome = sumByPrefix(rows, ['66', '67']);
+  const financialExpenses = sumByPrefix(rows, ['76', '77']);
   const financialResult = financialIncome - financialExpenses;
 
   const profitBeforeTax = operatingProfit + financialResult;
-  const incomeTax = sumByPrefix(rows, ['81']);
+  const incomeTax = sumByPrefix(rows, ['87']);
   const netProfit = profitBeforeTax - incomeTax;
 
   const lineItems: IncomeStatementLine[] = [
-    { code: '71', description: labels.salesOfGoods, value: salesOfGoods },
-    { code: '72', description: labels.servicesProvided, value: services },
-    { code: '73', description: labels.otherOperatingIncome, value: otherIncome },
+    { code: '61', description: labels.salesOfGoods, value: salesOfGoods },
+    { code: '62', description: labels.servicesProvided, value: services },
+    { code: '63', description: labels.otherOperatingIncome, value: otherIncome },
     { code: '', description: labels.operatingIncome, value: operatingIncome, isSubtotal: true },
 
-    { code: '61', description: labels.costOfGoodsSold, value: -cogs, indent: 1 },
+    { code: '71', description: labels.costOfGoodsSold, value: -cogs, indent: 1 },
     { code: '', description: labels.grossResult, value: grossProfit, isSubtotal: true },
 
-    { code: '62', description: labels.externalSuppliesServices, value: -externalSupplies, indent: 1 },
-    { code: '63', description: labels.personnelExpenses, value: -personnel, indent: 1 },
-    { code: '64', description: labels.depreciationAmortization, value: -depreciation, indent: 1 },
-    { code: '65', description: labels.otherOperatingExpenses, value: -otherOpex, indent: 1 },
+    { code: '75', description: labels.externalSuppliesServices, value: -externalSupplies, indent: 1 },
+    { code: '72', description: labels.personnelExpenses, value: -personnel, indent: 1 },
+    { code: '73', description: labels.depreciationAmortization, value: -depreciation, indent: 1 },
+    { code: '78', description: labels.otherOperatingExpenses, value: -otherOpex, indent: 1 },
     { code: '', description: labels.totalOperatingExpenses, value: -totalOperatingExpenses, isSubtotal: true },
 
     { code: '', description: labels.operatingResult, value: operatingProfit, isSubtotal: true },
 
-    { code: '78', description: labels.financialIncome, value: financialIncome, indent: 1 },
-    { code: '69', description: labels.financialExpenses, value: -financialExpenses, indent: 1 },
+    { code: '66', description: labels.financialIncome, value: financialIncome, indent: 1 },
+    { code: '76', description: labels.financialExpenses, value: -financialExpenses, indent: 1 },
     { code: '', description: labels.financialResult, value: financialResult, isSubtotal: true },
 
     { code: '', description: labels.resultBeforeTax, value: profitBeforeTax, isSubtotal: true },
-    { code: '81', description: labels.incomeTax, value: -incomeTax, indent: 1 },
+    { code: '87', description: labels.incomeTax, value: -incomeTax, indent: 1 },
     { code: '', description: labels.netResult, value: netProfit, isTotal: true },
   ];
 

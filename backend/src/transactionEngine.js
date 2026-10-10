@@ -162,6 +162,77 @@ function buildPurchaseReceiveCostPlan(items, receivedQuantities, totalLandingCos
   return normalizedItems;
 }
 
+/** Capitalize freight into 212. Do not also expense 752 — CMV would then double-count landing. */
+function buildPurchaseReceiveGlLines({
+  subtotal,
+  taxAmount,
+  totalLandingCosts,
+  supplierAccountCode,
+  orderNumber,
+  supplierName,
+}) {
+  const goods = roundMoney((Number(subtotal) || 0) + (Number(totalLandingCosts) || 0));
+  const tax = roundMoney(Number(taxAmount) || 0);
+  const lines = [];
+  if (goods > 0) {
+    lines.push({
+      accountCode: ACC.PURCHASES_MERCHANDISE,
+      description: `Mercadoria ${orderNumber}`,
+      debit: goods,
+      credit: 0,
+    });
+  }
+  if (tax > 0) {
+    lines.push({
+      accountCode: ACC.IVA_DEDUCTIBLE,
+      description: `IVA compra ${orderNumber}`,
+      debit: tax,
+      credit: 0,
+    });
+  }
+  lines.push({
+    accountCode: supplierAccountCode,
+    description: `Fornecedor ${supplierName}`,
+    debit: 0,
+    credit: roundMoney(goods + tax),
+  });
+  return lines;
+}
+
+function productInventoryUnitCost(row) {
+  if (!row) return 0;
+  if (row.avg_cost != null && row.avg_cost !== '' && Number.isFinite(Number(row.avg_cost))) {
+    return Number(row.avg_cost);
+  }
+  return Number(row.cost) || 0;
+}
+
+/** Restore qty at current avg/cost, then keep WAC consistent (void / NC). */
+async function restoreStockAtCurrentCost(client, params) {
+  const productId = params.productId;
+  const qty = Number(params.quantity || 0);
+  if (!productId || qty <= 0) return 0;
+
+  const costRes = await client.query('SELECT cost, avg_cost FROM products WHERE id = $1', [productId]);
+  const unitCost = productInventoryUnitCost(costRes.rows[0]);
+  await recordStockMovement(client, {
+    productId,
+    warehouseId: params.warehouseId,
+    movementType: 'IN',
+    quantity: qty,
+    unitCost,
+    referenceType: params.referenceType,
+    referenceId: params.referenceId,
+    referenceNumber: params.referenceNumber,
+    createdBy: params.createdBy,
+    notes: params.notes,
+  });
+  if (unitCost > 0) {
+    await applyWeightedAverageCostAfterIn(client, productId, qty, unitCost);
+  }
+  return roundMoney(unitCost * qty);
+}
+
 // ==================== AUDIT LOGGING ====================
 
 async function auditLog(client, params) {
@@ -2633,6 +2704,7 @@ async function processSale(client, saleData) {
         ? `CMV ${invoiceNumber} - ${saleCustomerLabel}`
         : `CMV ${invoiceNumber}`,
       referenceType: 'sale', referenceId: saleId,
+      branchId,
       createdBy: cashierId,
       createdByName: cashierName,
       entryDate: today,
@@ -2654,10 +2726,7 @@ async function processSale(client, saleData) {
       documentId: saleId, documentNumber: invoiceNumber, documentDate: today,
       dueDate: saleDueDate, originalAmount: totalAmount, isDebit: true, branchId,
     });
-    await client.query(
-      `UPDATE clients SET current_balance = COALESCE(current_balance, 0) + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-      [totalAmount, clientId],
-    );
+    await syncClientBalanceFromOpenItems(client, clientId);
   }
 
   // Tax summary — one row per IVA rate on the sale (not a hardcoded 14%).
@@ -2949,18 +3018,14 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
   const subtotal = parseFloat(order.subtotal || 0);
   const taxAmount = parseFloat(order.tax_amount || 0);
   const supplierAccountCode = await getEntityAccountCode(client, 'supplier', order.supplier_id, order.supplier_name);
-  const freightExpenseAccountCode = totalLandingCosts > 0 ? await ensureFreightExpenseAccount(client) : null;
-
-  const journalLines = [
-    { accountCode: ACC.PURCHASES_MERCHANDISE, description: `Mercadoria ${order.order_number}`, debit: subtotal, credit: 0 },
-  ];
-  if (totalLandingCosts > 0 && freightExpenseAccountCode) {
-    journalLines.push({ accountCode: freightExpenseAccountCode, description: `Frete ${order.order_number}`, debit: totalLandingCosts, credit: 0 });
-  }
-  if (taxAmount > 0) {
-    journalLines.push({ accountCode: ACC.IVA_DEDUCTIBLE, description: `IVA compra ${order.order_number}`, debit: taxAmount, credit: 0 });
-  }
-  journalLines.push({ accountCode: supplierAccountCode, description: `Fornecedor ${order.supplier_name}`, debit: 0, credit: subtotal + totalLandingCosts + taxAmount });
+  const journalLines = buildPurchaseReceiveGlLines({
+    subtotal,
+    taxAmount,
+    totalLandingCosts,
+    supplierAccountCode,
+    orderNumber: order.order_number,
+    supplierName: order.supplier_name,
+  });
 
   console.log(`[TX ENGINE] Journal: subtotal=${subtotal}, landedCosts=${totalLandingCosts}, tax=${taxAmount}, total=${subtotal + totalLandingCosts + taxAmount}`);
 
@@ -3284,7 +3349,10 @@ async function processPayment(client, paymentData) {
     resolvedEntityName = entityType === 'supplier' ? 'Fornecedor' : 'Cliente';
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = normalizeSqlDate(
+    paymentData.paymentDate || paymentData.date || paymentData.entryDate,
+    { allowNull: true },
+  ) || new Date().toISOString().split('T')[0];
   await validatePeriod(client, today);
 
   // Sequence-based payment number
@@ -3451,7 +3519,7 @@ async function processPayment(client, paymentData) {
   await createJournalEntry(client, {
     description: `${paymentType === 'receipt' ? 'Recebimento' : 'Pagamento'} ${paymentNumber} - ${resolvedEntityName}`,
     referenceType: journalRefType, referenceId: paymentId,
-    branchId, createdBy, lines,
+    branchId, createdBy, lines, entryDate: today,
   });
 
   // Operational caixa balance (register drawer) when paying/receiving cash from a specific caixa
@@ -3530,4 +3598,7 @@ module.exports = {
   ensureInventoryShrinkageAccount,
   applyPurchaseSupplierToProducts,
   applyWeightedAverageCostAfterIn,
+  buildPurchaseReceiveGlLines,
+  productInventoryUnitCost,
+  restoreStockAtCurrentCost,
 };

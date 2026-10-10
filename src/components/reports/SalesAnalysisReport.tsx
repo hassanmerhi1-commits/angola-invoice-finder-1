@@ -22,11 +22,9 @@ import { useReportExportMeta } from '@/hooks/useReportExportMeta';
 export default function SalesAnalysisReport({
   view,
   onViewChange,
-  hidePicker = false,
 }: {
   view?: string;
   onViewChange?: (value: string) => void;
-  hidePicker?: boolean;
 } = {}) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
@@ -162,9 +160,9 @@ export default function SalesAnalysisReport({
         </Button>
       </div>
 
-      <ReportStatStrip items={statBoxes} />
+      <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />
 
-      {!hidePicker && <ReportPicker options={viewOptions} value={viewTab} onChange={setViewTab} />}
+      <ReportStatStrip items={statBoxes} />
 
       <div className="space-y-3">
         {viewTab === 'summary' && (
