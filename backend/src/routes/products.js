@@ -31,8 +31,8 @@ const {
   canonicalSkuString,
   sqlMovementSkuKey,
   sqlCanonicalSkuText,
-  resolveProductIdsForMovementSku,
 } = require('../lib/productSkuResolve');
+const { listStockBySku } = require('../lib/stockBySku');
 const {
   ensureFilialProductsForWarehouse,
   scheduleFilialStockOwnershipHeal,
@@ -1424,45 +1424,8 @@ module.exports = function(broadcastTable) {
       if (!sku) {
         return res.status(400).json({ error: 'sku is required' });
       }
-      const ids = await resolveProductIdsForMovementSku(db, sku, req.query.productId);
-      const [branchesResult, stockResult] = await Promise.all([
-        db.query(
-          `SELECT id::text AS id, name, code, is_main
-           FROM branches
-           ORDER BY
-             CASE WHEN ${coalesceMainTruthy(db, 'is_main')} THEN 0 ELSE 1 END,
-             name`,
-        ),
-        // Per-warehouse qty from the product row — do not SUM the whole movement
-        // history (that made Qtd detalhada wait on popular SKUs).
-        ids.length === 0
-          ? Promise.resolve({ rows: [] })
-          : db.query(
-              `SELECT
-                 COALESCE(branch_id::text, '') AS warehouse_id,
-                 COALESCE(stock, 0) AS ledger_stock
-               FROM products
-               WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')})`,
-              ids,
-            ),
-      ]);
-      const stockByWarehouse = new Map();
-      for (const row of stockResult.rows || []) {
-        const wh = String(row.warehouse_id || '').trim();
-        if (!wh) continue;
-        stockByWarehouse.set(wh, Math.max(0, Number(row.ledger_stock) || 0));
-      }
-      const rows = (branchesResult.rows || []).map((b) => {
-        const id = String(b.id || '').trim();
-        return {
-          branchId: id,
-          branchName: b.name || b.code || id,
-          branchCode: b.code || '',
-          isMain: Boolean(b.is_main),
-          stock: stockByWarehouse.get(id) || 0,
-        };
-      });
-      res.json({ sku, rows });
+      const payload = await listStockBySku(db, sku, req.query.productId);
+      res.json(payload);
     } catch (error) {
       console.error('[PRODUCTS stock-by-sku]', error);
       res.status(500).json({ error: 'Failed to load stock by SKU' });

@@ -197,27 +197,27 @@ async function resolveProductIdsForMovementSku(queryable, sku, extraId) {
   const exact = await q.query(
     `SELECT id FROM products
      WHERE sku = $1 OR sku = $2
-     LIMIT 80`,
+     LIMIT 400`,
     [rawSku, key],
   );
   for (const row of exact.rows || []) {
     const id = String(row.id || '').trim();
     if (id) ids.add(id);
   }
-  // Extra id must not skip SKU lookup — HQ rows often have -dup- copies.
-  if (exact.rows?.length === 0) {
-    const lowered = key.toLowerCase();
-    const fuzzy = await q.query(
-      `SELECT id FROM products
-       WHERE LOWER(TRIM(COALESCE(sku, ''))) = $1
-          OR LOWER(TRIM(COALESCE(sku, ''))) LIKE $2
-       LIMIT 80`,
-      [lowered, `${lowered}-dup-%`],
-    );
-    for (const row of fuzzy.rows || []) {
-      const id = String(row.id || '').trim();
-      if (id) ids.add(id);
-    }
+  // Always include -dup- repair copies. Skipping them when an exact SKU row
+  // exists under-counted Qtd detalhada vs the HQ inventory grid (which strips
+  // -dup- via sqlCanonicalSkuText and sums those movements too).
+  const lowered = key.toLowerCase();
+  const fuzzy = await q.query(
+    `SELECT id FROM products
+     WHERE LOWER(TRIM(COALESCE(sku, ''))) = $1
+        OR LOWER(TRIM(COALESCE(sku, ''))) LIKE $2
+     LIMIT 400`,
+    [lowered, `${lowered}-dup-%`],
+  );
+  for (const row of fuzzy.rows || []) {
+    const id = String(row.id || '').trim();
+    if (id) ids.add(id);
   }
   return Array.from(ids);
 }

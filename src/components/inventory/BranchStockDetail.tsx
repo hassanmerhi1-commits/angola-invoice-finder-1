@@ -44,6 +44,62 @@ function stockBySkuCacheKey(sku: string, productId?: string) {
   return `${sku.trim()}|${String(productId || '').trim()}`;
 }
 
+function branchIdKey(id: string): string {
+  return String(id || '').trim().toLowerCase().replace(/-/g, '');
+}
+
+export function mergeBranchStockRows(
+  apiRows: ApiStockRow[],
+  branchList: Branch[],
+): BranchStockRow[] {
+  const byId = new Map<string, ApiStockRow>();
+  for (const row of apiRows) {
+    const key = branchIdKey(row.branchId);
+    if (!key) continue;
+    const prev = byId.get(key);
+    byId.set(key, prev
+      ? { ...row, stock: (Number(prev.stock) || 0) + (Number(row.stock) || 0) }
+      : row);
+  }
+
+  const used = new Set<string>();
+  const merged: BranchStockRow[] = (branchList.length > 0 ? branchList : []).map((branch) => {
+    const key = branchIdKey(branch.id);
+    used.add(key);
+    const hit = byId.get(key);
+    return {
+      branchId: branch.id,
+      branchName: formatBranchDisplayName(branch),
+      isMain: Boolean(branch.isMain),
+      stock: Number(hit?.stock ?? 0),
+    };
+  });
+
+  if (merged.length === 0) {
+    for (const row of apiRows) {
+      merged.push({
+        branchId: String(row.branchId),
+        branchName: String(row.branchName || row.branchCode || row.branchId),
+        isMain: Boolean(row.isMain),
+        stock: Number(row.stock) || 0,
+      });
+    }
+    return merged;
+  }
+
+  for (const [key, row] of byId) {
+    if (used.has(key)) continue;
+    if (!(Number(row.stock) > 0.0001)) continue;
+    merged.push({
+      branchId: String(row.branchId),
+      branchName: String(row.branchName || row.branchCode || row.branchId),
+      isMain: Boolean(row.isMain),
+      stock: Number(row.stock) || 0,
+    });
+  }
+  return merged;
+}
+
 async function loadStockBySkuCached(sku: string, productId?: string): Promise<ApiStockRow[]> {
   const key = stockBySkuCacheKey(sku, productId);
   const hit = stockBySkuCache.get(key);
@@ -107,29 +163,7 @@ export function BranchStockDetail({
       try {
         const apiRows = await loadStockBySkuCached(sku, selectedProduct.id);
         if (cancelled) return;
-        const byId = new Map(apiRows.map((r) => [String(r.branchId), r]));
-
-        // Prefer live branch list order/names from the client; fill qty from API.
-        const merged: BranchStockRow[] = (branchList.length > 0 ? branchList : []).map((branch) => {
-          const hit = byId.get(String(branch.id));
-          return {
-            branchId: branch.id,
-            branchName: formatBranchDisplayName(branch),
-            isMain: Boolean(branch.isMain),
-            stock: Number(hit?.stock ?? 0),
-          };
-        });
-
-        if (merged.length === 0) {
-          for (const r of apiRows) {
-            merged.push({
-              branchId: String(r.branchId),
-              branchName: String(r.branchName || r.branchCode || r.branchId),
-              isMain: Boolean(r.isMain),
-              stock: Number(r.stock) || 0,
-            });
-          }
-        }
+        const merged = mergeBranchStockRows(apiRows, branchList);
 
         merged.sort((a, b) => {
           if (a.isMain && !b.isMain) return -1;

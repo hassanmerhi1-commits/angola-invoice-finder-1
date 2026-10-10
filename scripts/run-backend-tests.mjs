@@ -36,6 +36,7 @@ const testFiles = [
   'test/purchaseReceiveGl.test.js',
   'test/trialBalanceDateFilter.test.js',
   'test/restoreStockCost.test.js',
+  'test/stockBySku.test.js',
 ];
 
 function resolveElectronBinary() {
