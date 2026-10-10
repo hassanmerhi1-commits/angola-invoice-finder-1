@@ -218,6 +218,8 @@ function applyCanonicalSellingPrices(products: Product[]): Product[] {
 
 export type ProductsListOptions = { light?: boolean; enabled?: boolean };
 
+const productListInflight = new Map<string, Promise<Product[]>>();
+
 export function useProducts(branchId?: string, listOptions?: ProductsListOptions) {
   const listEnabled = listOptions?.enabled !== false;
   const productsCacheKey = `products:${branchId ?? 'all'}:${listOptions?.light ? 'light' : 'full'}`;
@@ -402,26 +404,40 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     // Never blank the UI when we already have rows to show.
     if (!hasRows) setProductsLoading(true);
     try {
-      const list = await fetchMergedProductList();
+      // Report screens mount several useProducts for the same scope at once — one download
+      // and one local-cache sync per scope, not one per hook.
+      let shared = productListInflight.get(productsCacheKey);
+      if (!shared) {
+        shared = fetchMergedProductList()
+          .then((list) => {
+            void import('@/lib/sync/offlineFirst')
+              .then(({ syncProductsToLocalCache }) => syncProductsToLocalCache(
+                list.map((p) => ({
+                  id: p.id,
+                  sku: p.sku,
+                  name: p.name,
+                  price: p.price,
+                  cost: p.avgCost ?? p.cost,
+                  taxRate: p.taxRate,
+                  stock: p.stock,
+                  branchId: p.branchId,
+                })),
+              ))
+              .catch(() => {
+                /* offline-first cache is optional */
+              });
+            return list;
+          })
+          .finally(() => {
+            if (productListInflight.get(productsCacheKey) === shared) {
+              productListInflight.delete(productsCacheKey);
+            }
+          });
+        productListInflight.set(productsCacheKey, shared);
+      }
+      const list = await shared;
       if (generation === listGenerationRef.current) {
         applyProductList(list, generation);
-        try {
-          const { syncProductsToLocalCache } = await import('@/lib/sync/offlineFirst');
-          await syncProductsToLocalCache(
-            list.map((p) => ({
-              id: p.id,
-              sku: p.sku,
-              name: p.name,
-              price: p.price,
-              cost: p.avgCost ?? p.cost,
-              taxRate: p.taxRate,
-              stock: p.stock,
-              branchId: p.branchId,
-            }))
-          );
-        } catch {
-          /* offline-first cache is optional */
-        }
       }
     } finally {
       if (generation === listGenerationRef.current) {
@@ -828,6 +844,9 @@ function mergeSalesPreferIncoming(
   );
 }
 
+/** Same list (branch/period/limit/light) requested by several mounted hooks → one request. */
+const salesListInflight = new Map<string, ReturnType<typeof api.sales.list>>();
+
 export type UseSalesOptions = {
   deferInitialLoad?: boolean;
   /** Skip sale_items (headers only). Default true for faster lists. */
@@ -872,12 +891,19 @@ export function useSales(
     let reachedServer = false;
     setIsLoading(true);
     try {
-      const result = await api.sales.list(branchId, {
-        limit,
-        light,
-        dateFrom,
-        dateTo,
-      });
+      let request = salesListInflight.get(salesCacheKey);
+      if (!request) {
+        request = api.sales.list(branchId, {
+          limit,
+          light,
+          dateFrom,
+          dateTo,
+        }).finally(() => {
+          if (salesListInflight.get(salesCacheKey) === request) salesListInflight.delete(salesCacheKey);
+        });
+        salesListInflight.set(salesCacheKey, request);
+      }
+      const result = await request;
       if (result.data !== undefined) {
         data = Array.isArray(result.data) ? result.data : (result.data as any)?.items ?? [];
         reachedServer = true;
@@ -916,13 +942,27 @@ export function useSales(
   }, [branchId, salesCacheKey, light, dateFrom, dateTo, limit]);
 
   useEffect(() => {
+    // Every till's sale reaches every open client. Report-sized lists (thousands of sales with
+    // items) reload at most every 15s; small lists stay near-instant.
+    const minGapMs = !light || limit > 1000 ? 15_000 : 2_000;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastRefreshAt = 0;
     const onSalesChanged = () => {
       markCachedListStale(salesCacheKey);
-      void refreshSales({ force: true });
+      if (timer) return;
+      const wait = Math.max(300, minGapMs - (Date.now() - lastRefreshAt));
+      timer = setTimeout(() => {
+        timer = null;
+        lastRefreshAt = Date.now();
+        void refreshSales({ force: true });
+      }, wait);
     };
     window.addEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
-    return () => window.removeEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
-  }, [refreshSales, salesCacheKey]);
+    return () => {
+      window.removeEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
+      if (timer) clearTimeout(timer);
+    };
+  }, [refreshSales, salesCacheKey, light, limit]);
 
   useEffect(() => {
     if (deferInitialLoad) return;

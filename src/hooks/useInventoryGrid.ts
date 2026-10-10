@@ -12,8 +12,9 @@ import {
 import { saveLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
 
+/** Last grid seen for this scope. Never the POS catalog — its qty/cost would paint 0s first. */
 function readWarmStartRows(branchId: string | undefined, consolidated: boolean): Product[] | null {
-  return readOfflineInventoryGridFallback(branchId, consolidated);
+  return readOfflineInventoryGridFallback(branchId, consolidated, { includePosCatalog: false });
 }
 
 export function useInventoryGrid(opts: {
@@ -29,14 +30,18 @@ export function useInventoryGrid(opts: {
   const [loading, setLoading] = useState(() => enabled);
   const [error, setError] = useState<string | null>(null);
   const generationRef = useRef(0);
+  const lastScopeRef = useRef('');
 
   const loadLive = useCallback(
-    async (gen: number) => {
+    async (gen: number, serverFresh = false) => {
       const filialBranchIds = filialKey ? filialKey.split(',').filter(Boolean) : [];
+      // The server drops its grid cache on every stock/product write, so a normal open can
+      // use it; only the explicit refresh button forces a full recompute.
       const fresh = await fetchInventoryGrid({
         branchId: opts.branchId,
         consolidated: opts.consolidated,
         bypassCache: true,
+        serverFresh,
         filialBranchIds,
         // Always allow stale/filial-merge fallback so Sede never sits on a blank spinner.
         noFallback: false,
@@ -51,14 +56,14 @@ export function useInventoryGrid(opts: {
     [opts.branchId, opts.consolidated, filialKey],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (refreshOpts?: { force?: boolean }) => {
     if (!enabled) return;
     invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);
     const gen = ++generationRef.current;
     setLoading(true);
     setError(null);
     try {
-      await loadLive(gen);
+      await loadLive(gen, !!refreshOpts?.force);
     } catch (err) {
       console.error('[useInventoryGrid] refresh failed:', err);
       if (gen === generationRef.current) {
@@ -81,12 +86,15 @@ export function useInventoryGrid(opts: {
     const gen = ++generationRef.current;
     setError(null);
 
+    const scopeChanged = lastScopeRef.current !== scopeKey;
+    lastScopeRef.current = scopeKey;
     const warm = readWarmStartRows(opts.branchId, opts.consolidated);
     if (warm?.length) {
       setRows(warm);
       setLoading(false);
     } else {
-      // Keep previous rows visible on branch/HQ switch while live data loads.
+      // Another branch's qty under this branch's name reads as wrong stock — show loading.
+      if (scopeChanged) setRows([]);
       setLoading(true);
     }
 

@@ -19,7 +19,7 @@ import {
 } from '@/lib/searchFocus';
 import { useProducts } from '@/hooks/useERP';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
-import { fetchInventoryGrid, invalidateInventoryGridCache, isInventoryGridCacheFresh, readProductStock } from '@/lib/inventoryGrid';
+import { invalidateInventoryGridCache, readProductStock } from '@/lib/inventoryGrid';
 import { useInventoryBranchScope } from '@/hooks/useInventoryBranchScope';
 import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { movementUserLabel } from '@/lib/movementUserLabel';
@@ -90,6 +90,9 @@ import { NEXOR_ACTION_BTN, NEXOR_TAB_TRIGGER, NEXOR_TOOLBAR_BTN_SM } from '@/lib
 
 type StockListFilter = 'all' | 'qtyGt0' | 'qtyLt0';
 
+/** Remote stock events (any till's sale) reload the open grid at most this often. */
+const BACKGROUND_GRID_REFRESH_MS = 5_000;
+
 function mapMovementReason(referenceType: string, movementType: string): StockMovement['reason'] {
   const ref = String(referenceType || '').trim().toLowerCase();
   if (ref === 'transfer') {
@@ -148,9 +151,20 @@ export default function Inventory() {
     [allBranches, branches],
   );
 
+  // Until branches load, Sede is not yet recognised as HQ and the scope falls back to a plain
+  // branch id — that first request (a full catalog-branch grid) is wasted work on the server.
+  const [branchWaitExpired, setBranchWaitExpired] = useState(false);
+  const branchesKnown = !canSwitchBranch || branches.length > 0;
+  useEffect(() => {
+    if (branchesKnown) return;
+    const timer = setTimeout(() => setBranchWaitExpired(true), 3000);
+    return () => clearTimeout(timer);
+  }, [branchesKnown]);
+  const inventoryScopeReady = branchesKnown || branchWaitExpired;
+
   const {
     rows: inventoryRows,
-    loading: inventoryGridLoading,
+    loading: inventoryGridLoadingRaw,
     error: inventoryGridError,
     refresh: refreshInventoryGrid,
     patchRow: patchInventoryRow,
@@ -158,7 +172,9 @@ export default function Inventory() {
     branchId: listBranchId,
     consolidated: isHeadOffice,
     filialBranchIds,
+    enabled: inventoryScopeReady,
   });
+  const inventoryGridLoading = inventoryGridLoadingRaw || !inventoryScopeReady;
 
   const {
     refreshProducts,
@@ -241,6 +257,7 @@ export default function Inventory() {
 
   useEffect(() => {
     let lightweightRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastBackgroundRefreshAt = 0;
     const onProductsChanged = (e: Event) => {
       const detail = (e as CustomEvent<{
         branchId?: string;
@@ -278,13 +295,15 @@ export default function Inventory() {
         // write. But HQ consolidated totals and writes from another page/client (new
         // Purchase, another Tailscale client) are NOT covered by that patch, so without this
         // the grid would silently go stale until the page is remounted (REGRESSION seen by
-        // users: "outside" grid disagreeing with a fresh double-click fetch). Debounce so a
-        // burst of events costs one background round-trip, not one per event.
-        if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
+        // users: "outside" grid disagreeing with a fresh double-click fetch). Every till's sale
+        // fires this on every open client, so cap it at one background reload per window.
+        if (lightweightRefreshTimer) return;
+        const wait = Math.max(1000, BACKGROUND_GRID_REFRESH_MS - (Date.now() - lastBackgroundRefreshAt));
         lightweightRefreshTimer = setTimeout(() => {
           lightweightRefreshTimer = null;
+          lastBackgroundRefreshAt = Date.now();
           void refreshInventoryGrid();
-        }, 1000);
+        }, wait);
         return;
       }
       void reloadInventoryList();
@@ -616,32 +635,6 @@ export default function Inventory() {
     },
     [deleteProduct, refreshInventoryGrid, selectedProduct?.id, t],
   );
-
-  useEffect(() => {
-    if (!canSwitchBranch || selectedProduct) return;
-    const branchList = allBranches.length > 0 ? allBranches : branches;
-    const targets = branchList.filter(
-      (b) => b.id && b.id !== listBranchId && !isInventoryGridCacheFresh(b.id, false, 90_000),
-    );
-    if (targets.length === 0) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        for (const b of targets) {
-          if (cancelled) return;
-          try {
-            await fetchInventoryGrid({ branchId: b.id, consolidated: false });
-          } catch {
-            /* next branch */
-          }
-        }
-      })();
-    }, 15000);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [canSwitchBranch, selectedProduct, allBranches, branches, listBranchId]);
 
   useEffect(() => {
     if (!selectedProduct?.sku) {

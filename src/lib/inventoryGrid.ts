@@ -16,9 +16,9 @@ import {
 } from '@/lib/productDedupe';
 import { readSellingPriceHintsSession, writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
 
-// v19: HQ grid never read from session/LAN cache — always live server data.
-const CACHE_PREFIX = 'nexor:inventory-grid:v19:';
-const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v4:';
+// v20 / LAN v5: drop grids that older builds cached from the products_cache fallback (0 qty/cost).
+const CACHE_PREFIX = 'nexor:inventory-grid:v20:';
+const LAN_GRID_PREFIX = 'nexor:lan-inventory-grid:v5:';
 
 /** Normalize stock from API row (movement ledger or products.stock). */
 export function readProductStock(row: Record<string, unknown> | Product): number {
@@ -97,7 +97,6 @@ async function fetchFilialGridDirect(branchId: string): Promise<Product[]> {
     branchId,
     consolidated: false,
     omitSellingPrices: true,
-    fresh: true,
   });
   if (res.error) throw new Error(res.error);
   const rawRows = Array.isArray(res.data?.rows)
@@ -311,21 +310,28 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
   return out;
 }
 
-/** Sync caches only (session + LAN). Used for instant warm-start. */
+/**
+ * Sync caches only (session + LAN). Used for instant warm-start and offline fallback.
+ * `includePosCatalog` adds the LAN POS product list — sellable offline, but its qty/cost
+ * are not the grid's ledger values, so the Inventory warm start leaves it out.
+ */
 export function readOfflineInventoryGridFallback(
   branchId: string | undefined,
   consolidated: boolean,
+  { includePosCatalog = true }: { includePosCatalog?: boolean } = {},
 ): Product[] | null {
   const key = cacheKey(branchId, consolidated);
   const scope = lanCatalogScopeKey(branchId, consolidated);
-  const lanProducts = readLanProducts(scope);
-  return (
+  const grid =
     readInventoryGridCacheStale(branchId, consolidated)
     || readLanInventoryGrid(key)
-    || readLanInventoryGrid(scope)
-    || (lanProducts?.length ? mapInventoryGridRows(lanProducts as any[]) : null)
-    || readCache(key)
-  );
+    || readLanInventoryGrid(scope);
+  if (grid) return grid;
+  if (includePosCatalog) {
+    const lanProducts = readLanProducts(scope);
+    if (lanProducts?.length) return mapInventoryGridRows(lanProducts as any[]);
+  }
+  return readCache(key);
 }
 
 /** Last-resort local SQLite products_cache (shop Electron clients). */
@@ -352,16 +358,37 @@ export function invalidateInventoryGridSessionCache(
   }
 }
 
-export async function fetchInventoryGrid(opts: {
+type FetchInventoryGridOpts = {
   branchId?: string;
   consolidated: boolean;
-  /** When true, always hit the network (branch switch). */
+  /** Skip the session cache and always ask the server (which may answer from its cache). */
   bypassCache?: boolean;
+  /** Manual refresh: also make the server recompute instead of using its result cache. */
+  serverFresh?: boolean;
   /** Used when consolidated=1 fails — fetch and merge every filial grid. */
   filialBranchIds?: string[];
   /** HQ only: never fall back to partial local caches (shows error instead). */
   noFallback?: boolean;
-}): Promise<Product[]> {
+};
+
+const inflightGrids = new Map<string, { serverFresh: boolean; promise: Promise<Product[]> }>();
+
+/**
+ * One request per scope at a time: leaving a branch and coming back (or several widgets
+ * asking at once) joins the request already running instead of starting another full grid.
+ */
+export function fetchInventoryGrid(opts: FetchInventoryGridOpts): Promise<Product[]> {
+  const key = cacheKey(opts.branchId, opts.consolidated);
+  const running = inflightGrids.get(key);
+  if (running && (running.serverFresh || !opts.serverFresh)) return running.promise;
+  const promise = fetchInventoryGridOnce(opts).finally(() => {
+    if (inflightGrids.get(key)?.promise === promise) inflightGrids.delete(key);
+  });
+  inflightGrids.set(key, { serverFresh: !!opts.serverFresh, promise });
+  return promise;
+}
+
+async function fetchInventoryGridOnce(opts: FetchInventoryGridOpts): Promise<Product[]> {
   const key = cacheKey(opts.branchId, opts.consolidated);
   const forceLive = opts.consolidated || opts.bypassCache;
   if (!forceLive) {
@@ -376,10 +403,7 @@ export async function fetchInventoryGrid(opts: {
       const local =
         readOfflineInventoryGridFallback(opts.branchId, opts.consolidated)
         || (!opts.consolidated ? await readSqliteProductsAsGrid(opts.branchId) : null);
-      if (local?.length) {
-        writeCache(key, local);
-        return local;
-      }
+      if (local?.length) return local;
     }
   } catch {
     /* continue to network */
@@ -398,7 +422,7 @@ export async function fetchInventoryGrid(opts: {
         branchId: opts.branchId,
         consolidated: opts.consolidated,
         omitSellingPrices,
-        fresh: forceLive,
+        fresh: !!opts.serverFresh,
       });
       if (res.error) {
         throw new Error(res.error);
@@ -421,12 +445,10 @@ export async function fetchInventoryGrid(opts: {
       const mapped = mapInventoryGridRows(rawRows);
       const priceBySku = buildSellingPriceBySku(mapped, hints);
       const priced = mapped.map((row) => withSellingPriceFromMap(row, priceBySku));
-      if (!opts.consolidated) {
-        writeCache(key, priced);
-        saveLanInventoryGrid(key, priced);
-        if (opts.branchId) {
-          saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
-        }
+      writeCache(key, priced);
+      saveLanInventoryGrid(key, priced);
+      if (!opts.consolidated && opts.branchId) {
+        saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
       }
       return priced;
     } catch (err) {
@@ -465,12 +487,11 @@ export async function fetchInventoryGrid(opts: {
     }
   }
   // Cold start / cleared session: still sell from local SQLite if master data was pulled.
+  // Not cached as the grid: products_cache qty/cost lag the ledger and would warm-start as 0s.
   if (!opts.consolidated) {
     const sqlite = await readSqliteProductsAsGrid(opts.branchId);
     if (sqlite?.length) {
       console.warn('[inventoryGrid] Server unreachable — using SQLite products_cache');
-      writeCache(key, sqlite);
-      saveLanInventoryGrid(key, sqlite);
       return sqlite;
     }
   }

@@ -4,9 +4,24 @@ import { isThinClientMode } from '@/lib/api/config';
 const PRODUCTS_PREFIX = 'nexor:lan-products:v1:';
 const CLIENTS_KEY = 'nexor:lan-clients:v1';
 const SUPPLIERS_KEY = 'nexor:lan-suppliers:v1';
-const GRID_PREFIX = 'nexor:lan-inventory-grid:v4:';
+const GRID_PREFIX = 'nexor:lan-inventory-grid:v5:';
 
 type CacheEntry<T> = { at: number; data: T };
+
+function dropOldGridVersions(): void {
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith('nexor:lan-inventory-grid:') && !k.startsWith(GRID_PREFIX)) stale.push(k);
+    }
+    stale.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    /* ignore */
+  }
+}
+
+if (typeof window !== 'undefined') dropOldGridVersions();
 
 function readEntry<T>(key: string): T | null {
   try {

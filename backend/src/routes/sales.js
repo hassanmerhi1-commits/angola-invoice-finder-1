@@ -174,11 +174,16 @@ module.exports = function(broadcastTable) {
       }
       if (sales.length > 0 && !light) {
         const ids = sales.map((s) => s.id);
-        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-        const itemsResult = await db.query(
-          `SELECT * FROM sale_items WHERE sale_id IN (${placeholders}) ORDER BY sale_id`,
-          ids,
-        );
+        // Report periods ask for up to 10k sales — one array bind instead of 10k placeholders.
+        const itemsResult = db.engine === 'postgres'
+          ? await db.query(
+            'SELECT * FROM sale_items WHERE sale_id = ANY($1::uuid[]) ORDER BY sale_id',
+            [ids.map(String)],
+          )
+          : await db.query(
+            `SELECT * FROM sale_items WHERE sale_id IN (${ids.map((_, i) => `$${i + 1}`).join(', ')}) ORDER BY sale_id`,
+            ids,
+          );
         const bySale = new Map();
         for (const item of itemsResult.rows || []) {
           const key = String(item.sale_id);

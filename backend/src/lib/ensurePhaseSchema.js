@@ -685,6 +685,15 @@ async function ensureStockMovementLookupIndexes(db) {
     } catch (err) {
       console.warn('[SCHEMA] stock_movements product_created index:', err.message);
     }
+    try {
+      // FK columns are not indexed by PostgreSQL — sale detail/report item loads scanned sale_items.
+      await db.query('CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items (sale_id)');
+      await db.query(
+        'CREATE INDEX IF NOT EXISTS idx_sales_branch_created ON sales (branch_id, created_at DESC)',
+      );
+    } catch (err) {
+      console.warn('[SCHEMA] sale_items / sales lookup index:', err.message);
+    }
     return;
   }
   if (!db.sqlite) return;
@@ -695,6 +704,14 @@ async function ensureStockMovementLookupIndexes(db) {
     );
   } catch (err) {
     console.warn('[SCHEMA] stock_movements product_created index (sqlite):', err.message);
+  }
+  try {
+    db.sqlite.exec('CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items (sale_id)');
+    db.sqlite.exec(
+      'CREATE INDEX IF NOT EXISTS idx_sales_branch_created ON sales (branch_id, created_at DESC)',
+    );
+  } catch (err) {
+    console.warn('[SCHEMA] sale_items / sales lookup index (sqlite):', err.message);
   }
 }
 

@@ -188,6 +188,10 @@ async function mirrorStockMovementRow(movement) {
       movement.created_at || movement.createdAt || new Date().toISOString(),
     ]
   );
+  try {
+    const wh = movement.warehouse_id || movement.warehouseId;
+    require('../lib/inventoryGridServerCache').invalidateInventoryGridResultCache(wh ? [wh] : undefined);
+  } catch (_) { /* ignore */ }
   return { mirrored: true, id };
 }
 

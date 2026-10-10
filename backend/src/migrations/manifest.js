@@ -83,6 +83,7 @@ const MIGRATION_FILES = [
   '076_drop_jel_entry_date_trigger.sql',
   '077_expenses_payee_nif.sql',
   '078_stock_movements_product_wh_created.sql',
+  '079_sale_items_sale_id.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

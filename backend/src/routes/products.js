@@ -39,9 +39,8 @@ const {
 } = require('../lib/filialStockRepair');
 const { auditErpSafe } = require('../lib/erpAudit');
 const {
-  readInventoryGridResultCache,
-  writeInventoryGridResultCache,
   invalidateInventoryGridResultCache,
+  loadInventoryGridRowsShared,
 } = require('../lib/inventoryGridServerCache');
 
 /** Avoid running full filial reconcile on every grid poll (locks SQLite, trips health checks). */
@@ -489,41 +488,6 @@ function sqlHideCatalogWhenFilialHasSameSku() {
             )`;
 }
 
-/**
- * Pick one display row per SKU for a filial warehouse view.
- * Prefer the local branch row, then catalog/HQ. If stock exists here only on another
- * filial's product_id (common after transfer/adjust), still pick that row so POS and
- * transfers can find the SKU — qty always comes from this warehouse's ledger, not the
- * foreign row's products.stock.
- */
-function sqlPickProductIdForSkuAtWarehouse(catalogPickClause) {
-  const p2Key = sqlMovementSkuKey('p2');
-  return `
-            p.id = (
-              SELECT p2.id
-              FROM products p2
-              WHERE ${p2Key} = ms.sku_key
-                AND (
-                  ${productActive('p2')}
-                  OR EXISTS (
-                    SELECT 1 FROM stock_movements smx
-                    WHERE smx.product_id = p2.id AND smx.warehouse_id = $1
-                  )
-                )
-              ORDER BY
-                CASE WHEN COALESCE(p2.sku, '') LIKE '%-DUP-%' THEN 1 ELSE 0 END,
-                CASE WHEN p2.branch_id = $1 THEN 0 ELSE 1 END,
-                CASE WHEN ${catalogPickClause} THEN 1 ELSE 2 END,
-                CASE WHEN EXISTS (
-                  SELECT 1 FROM stock_movements smx
-                  WHERE smx.product_id = p2.id AND smx.warehouse_id = $1
-                ) THEN 0 ELSE 1 END,
-                p2.updated_at DESC NULLS LAST,
-                p2.created_at DESC NULLS LAST
-              LIMIT 1
-            )`;
-}
-
 function sqlGridStockExpr(alias = 'p', warehouseBranchParam = '$1') {
   return `CASE
             WHEN ${alias}.branch_id = ${warehouseBranchParam} THEN
@@ -572,22 +536,49 @@ function sqlGridDisplayCostExpr(alias, field) {
   END`;
 }
 
-/** Inventory grid filial: every company SKU (local stock when present, else 0). */
+/**
+ * Inventory grid filial: every company SKU (local stock when present, else 0).
+ *
+ * One display row per SKU key is chosen with ROW_NUMBER over products whose key is computed
+ * once. The key is an expression (lower/trim/-dup- strip) no index covers, so the previous
+ * per-row "pick" subqueries re-scanned products for every row — quadratic in catalog size,
+ * which pushed catalog branches (Sede) past the statement timeout.
+ *
+ * SKUs with stock here prefer the local row, then catalog/HQ. A row whose stock here sits on
+ * another filial's product_id (after transfer/adjust) still qualifies so POS and transfers
+ * find the SKU — qty always comes from this warehouse's ledger, not products.stock.
+ */
 async function listProductsForBranchInventoryGrid(branchKey) {
   const mainBranchIds = await loadMainBranchIds();
-  const rowPrice = sqlGridDisplayPriceExpr('p');
-  // Hot path: use product cost columns only. Correlated last-IN subqueries per cost
-  // field made every branch switch scan stock_movements thousands of times.
-  const rowCost = 'COALESCE(p.cost, 0)';
-  const rowFirstCost = 'COALESCE(p.first_cost, p.cost, 0)';
-  const rowLastCost = 'COALESCE(p.last_cost, p.cost, 0)';
-  const rowAvgCost = 'COALESCE(p.avg_cost, p.cost, 0)';
   const mainIn =
     mainBranchIds.length > 0
       ? mainBranchIds.map((_, i) => `$${i + 2}`).join(', ')
       : "''";
   const params = [branchKey, ...mainBranchIds];
-  const catalogPickClause = catalogBranchScopeClause(db, 'p2', mainIn);
+  const catalogK = catalogBranchScopeClause(db, 'k', mainIn);
+  const emptyK = emptyBranchIdClause(db, 'k.branch_id');
+  const dupLast = `CASE WHEN COALESCE(k.sku, '') LIKE '%-DUP-%' THEN 1 ELSE 0 END`;
+  const gridColumns = (stockExpr, branchExpr) => `
+            p.id,
+            p.name,
+            p.sku,
+            p.barcode,
+            p.category,
+            ${sqlGridDisplayPriceExpr('p')} AS price,
+            p.price2,
+            p.price3,
+            p.price4,
+            COALESCE(p.cost, 0) AS cost,
+            COALESCE(p.first_cost, p.cost, 0) AS first_cost,
+            COALESCE(p.last_cost, p.cost, 0) AS last_cost,
+            COALESCE(p.avg_cost, p.cost, 0) AS avg_cost,
+            ${stockExpr} AS stock,
+            p.unit,
+            p.tax_rate,
+            p.vat_override,
+            ${branchExpr} AS branch_id,
+            p.supplier_id,
+            p.supplier_name`;
 
   const query = `
           WITH ${sqlStockBySkuCte()},
@@ -595,115 +586,94 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             SELECT sku_key, ledger_stock
             FROM stock_by_sku
             WHERE ledger_stock > 0.0001
+          ),
+          wh_products AS (
+            SELECT DISTINCT sm.product_id
+            FROM stock_movements sm
+            WHERE sm.warehouse_id = $1
+          ),
+          keyed AS (
+            SELECT
+              p.*,
+              ${sqlMovementSkuKey('p')} AS grid_sku_key,
+              CASE WHEN whp.product_id IS NULL THEN 0 ELSE 1 END AS grid_has_wh_mv
+            FROM products p
+            LEFT JOIN wh_products whp ON whp.product_id = p.id
+          ),
+          movement_pick AS (
+            SELECT
+              k.*,
+              ms.ledger_stock AS grid_ledger_stock,
+              ROW_NUMBER() OVER (
+                PARTITION BY k.grid_sku_key
+                ORDER BY
+                  ${dupLast},
+                  CASE WHEN k.branch_id = $1 THEN 0 ELSE 1 END,
+                  CASE WHEN ${catalogK} THEN 1 ELSE 2 END,
+                  CASE WHEN k.grid_has_wh_mv = 1 THEN 0 ELSE 1 END,
+                  k.updated_at DESC NULLS LAST,
+                  k.created_at DESC NULLS LAST
+              ) AS grid_rn
+            FROM keyed k
+            INNER JOIN movement_skus ms ON ms.sku_key = k.grid_sku_key
+            WHERE (${productActive('k')} OR k.grid_has_wh_mv = 1)
+          ),
+          branch_skus AS (
+            SELECT DISTINCT LOWER(TRIM(bx.sku)) AS sku_lower
+            FROM products bx
+            WHERE ${productActive('bx')}
+              AND bx.branch_id = $1
+              AND TRIM(COALESCE(bx.sku, '')) != ''
+          ),
+          catalog_pick AS (
+            SELECT
+              k.*,
+              ROW_NUMBER() OVER (
+                PARTITION BY k.grid_sku_key
+                ORDER BY
+                  ${dupLast},
+                  CASE
+                    WHEN k.branch_id = $1 THEN 0
+                    WHEN ${emptyK} THEN 1
+                    WHEN ${catalogK} THEN 1
+                    ELSE 2
+                  END,
+                  k.updated_at DESC NULLS LAST,
+                  k.created_at DESC NULLS LAST
+              ) AS grid_rn
+            FROM keyed k
+            WHERE ${productActive('k')}
+              AND TRIM(COALESCE(k.sku, '')) != ''
           )
-          SELECT
-            p.id,
-            p.name,
-            p.sku,
-            p.barcode,
-            p.category,
-            ${rowPrice} AS price,
-            p.price2,
-            p.price3,
-            p.price4,
-            ${rowCost} AS cost,
-            ${rowFirstCost} AS first_cost,
-            ${rowLastCost} AS last_cost,
-            ${rowAvgCost} AS avg_cost,
-            COALESCE(ms.ledger_stock, 0) AS stock,
-            p.unit,
-            p.tax_rate,
-            p.vat_override,
-            $1 AS branch_id,
-            p.supplier_id,
-            p.supplier_name
-          FROM products p
-          INNER JOIN movement_skus ms
-            ON ${sqlMovementSkuKey('p')} = ms.sku_key
-          WHERE ${sqlPickProductIdForSkuAtWarehouse(catalogPickClause)}
+          SELECT ${gridColumns('COALESCE(p.grid_ledger_stock, 0)', '$1')}
+          FROM movement_pick p
+          WHERE p.grid_rn = 1
 
           UNION ALL
 
-          SELECT
-            p.id,
-            p.name,
-            p.sku,
-            p.barcode,
-            p.category,
-            ${rowPrice} AS price,
-            p.price2,
-            p.price3,
-            p.price4,
-            ${rowCost} AS cost,
-            ${rowFirstCost} AS first_cost,
-            ${rowLastCost} AS last_cost,
-            ${rowAvgCost} AS avg_cost,
-            COALESCE(sbs.ledger_stock, 0) AS stock,
-            p.unit,
-            p.tax_rate,
-            p.vat_override,
-            p.branch_id,
-            p.supplier_id,
-            p.supplier_name
-          FROM products p
-          LEFT JOIN stock_by_sku sbs
-            ON ${sqlMovementSkuKey('p')} = sbs.sku_key
+          SELECT ${gridColumns('COALESCE(sbs.ledger_stock, 0)', 'p.branch_id')}
+          FROM keyed p
+          LEFT JOIN stock_by_sku sbs ON sbs.sku_key = p.grid_sku_key
           WHERE ${productActive('p')}
             AND p.branch_id = $1
             AND TRIM(COALESCE(p.sku, '')) != ''
             AND NOT EXISTS (
               SELECT 1 FROM movement_skus ms
-              WHERE ms.sku_key = ${sqlMovementSkuKey('p')}
+              WHERE ms.sku_key = p.grid_sku_key
             )
 
           UNION ALL
 
-          SELECT
-            p.id,
-            p.name,
-            p.sku,
-            p.barcode,
-            p.category,
-            ${rowPrice} AS price,
-            p.price2,
-            p.price3,
-            p.price4,
-            ${rowCost} AS cost,
-            ${rowFirstCost} AS first_cost,
-            ${rowLastCost} AS last_cost,
-            ${rowAvgCost} AS avg_cost,
-            0 AS stock,
-            p.unit,
-            p.tax_rate,
-            p.vat_override,
-            $1 AS branch_id,
-            p.supplier_id,
-            p.supplier_name
-          FROM products p
-          WHERE ${productActive('p')}
-            AND TRIM(COALESCE(p.sku, '')) != ''
-            ${sqlHideCatalogWhenFilialHasSameSku()}
+          SELECT ${gridColumns('0', '$1')}
+          FROM catalog_pick p
+          WHERE p.grid_rn = 1
             AND NOT EXISTS (
               SELECT 1 FROM movement_skus ms
-              WHERE ms.sku_key = ${sqlMovementSkuKey('p')}
+              WHERE ms.sku_key = p.grid_sku_key
             )
-            AND p.id = (
-              SELECT p2.id
-              FROM products p2
-              WHERE ${productActive('p2')}
-                AND TRIM(COALESCE(p2.sku, '')) != ''
-                AND ${sqlMovementSkuKey('p2')} = ${sqlMovementSkuKey('p')}
-              ORDER BY
-                CASE WHEN COALESCE(p2.sku, '') LIKE '%-DUP-%' THEN 1 ELSE 0 END,
-                CASE
-                  WHEN p2.branch_id = $1 THEN 0
-                  WHEN ${emptyBranchIdClause(db, 'p2.branch_id')} THEN 1
-                  WHEN ${catalogBranchScopeClause(db, 'p2', mainIn)} THEN 1
-                  ELSE 2
-                END,
-                p2.updated_at DESC NULLS LAST,
-                p2.created_at DESC NULLS LAST
-              LIMIT 1
+            AND NOT EXISTS (
+              SELECT 1 FROM branch_skus bs
+              WHERE bs.sku_lower = LOWER(TRIM(p.sku))
             )
           ORDER BY name`;
   const result = await db.query(query, params);
@@ -1205,14 +1175,27 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
     return applyBranchReserves(db, rows, branchId);
   };
 
-  if (!repair && !skipCache && !consolidated) {
-    const cached = readInventoryGridResultCache(branchId, consolidated);
-    if (cached) {
-      const priced = enrichRowsWithSellingPrices(cached, priceBySkuPreloaded);
-      return applyHolds(priced);
-    }
+  if (!repair) {
+    const branchKey = String(branchId || '').trim();
+    if (!consolidated && !branchKey) return [];
+    if (!consolidated) scheduleFilialStockOwnershipHeal(branchKey);
+    const rows = await loadInventoryGridRowsShared(
+      consolidated ? null : branchKey,
+      consolidated,
+      () => loadInventoryGridBaseRows(branchKey, consolidated, { repair: false, enrichSuppliers }),
+      { skipCache },
+    );
+    const priced = await enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);
+    return applyHolds(priced);
   }
 
+  const { rows } = await loadInventoryGridBaseRows(branchId, consolidated, { repair: true, enrichSuppliers });
+  invalidateInventoryGridResultCache();
+  const priced = await enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);
+  return applyHolds(priced);
+}
+
+async function loadInventoryGridBaseRows(branchId, consolidated, { repair = false, enrichSuppliers = false } = {}) {
   const mainBranchIds = await loadMainBranchIds();
   // Skip PI lines_json supplier scan on normal lista opens — products.supplier_* is enough.
   // Opt in with ?suppliers=1 or repair=1 when a caller needs inferred suppliers.
@@ -1220,6 +1203,7 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
     ? loadLatestPurchaseSupplierBySku()
     : Promise.resolve(null);
   let rows;
+  let cacheable = true;
   if (consolidated) {
     if (repair) {
       const branchesResult = await db.query('SELECT id FROM branches ORDER BY name');
@@ -1230,11 +1214,9 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
     rows = await listInventoryConsolidatedByBranches();
   } else {
     const branchKey = String(branchId || '').trim();
-    if (!branchKey) return [];
+    if (!branchKey) return { rows: [], cacheable: false };
     if (repair) {
       await ensureFilialForInventoryGrid(branchKey);
-    } else {
-      scheduleFilialStockOwnershipHeal(branchKey);
     }
     try {
       // Grid UNIONs already cover filial + catalog SKUs; skip a second full fast list.
@@ -1242,6 +1224,8 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
       rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
     } catch (err) {
       console.error('[PRODUCTS inventory-grid] filial query failed, fallback:', err.message);
+      // Fast list has products.stock only (0 for catalog rows) — never cache it as the grid.
+      cacheable = false;
       rows = await listProductsForBranchFast(branchKey);
       rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
     }
@@ -1250,13 +1234,7 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
   if (supplierBySku) {
     rows = enrichRowsWithPurchaseSuppliers(rows, supplierBySku);
   }
-  if (!repair && !consolidated) {
-    writeInventoryGridResultCache(branchId, consolidated, rows);
-  } else if (repair) {
-    invalidateInventoryGridResultCache();
-  }
-  const priced = enrichRowsWithSellingPrices(rows, priceBySkuPreloaded);
-  return applyHolds(priced);
+  return { rows, cacheable };
 }
 
 async function listProductsForBranch(branchKey, lightList) {
@@ -1409,7 +1387,12 @@ async function productTransactionCounts(productId) {
   return { movements, sales, total, deletable: total === 0 };
 }
 
-module.exports = function(broadcastTable) {
+module.exports = function(broadcastTableRaw) {
+  // Every product write here (bulk price/IVA, edit, import, delete) can change any grid.
+  const broadcastTable = (table, ...rest) => {
+    if (table === 'products') invalidateInventoryGridResultCache();
+    return broadcastTableRaw(table, ...rest);
+  };
   onProductsTableChange = broadcastTable;
   const router = express.Router();
   router.use(attachUserBranchScope);
@@ -2863,3 +2846,5 @@ module.exports = function(broadcastTable) {
 
   return router;
 };
+
+module.exports.listProductsForBranchInventoryGrid = listProductsForBranchInventoryGrid;

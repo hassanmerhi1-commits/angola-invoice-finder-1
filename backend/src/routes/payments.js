@@ -13,6 +13,9 @@ const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride } =
 const { ensureYearPeriods, fetchPeriods, getPeriodById } = require('../lib/accountingPeriods');
 const { auditErpSafe } = require('../lib/erpAudit');
 
+const RECEIVABLES_BACKFILL_COOLDOWN_MS = 10 * 60 * 1000;
+let receivablesBackfillAt = 0;
+
 module.exports = function(broadcastTable) {
   const router = express.Router();
 
@@ -119,11 +122,17 @@ module.exports = function(broadcastTable) {
   // READ: Customer receivables from open items
   router.get('/receivables-aging', async (req, res) => {
     try {
-      try {
-        const { backfillMissingCustomerOpenItems } = require('../customerBalanceRepair');
-        await backfillMissingCustomerOpenItems();
-      } catch (repairErr) {
-        console.warn('[PAYMENTS] customer receivables backfill skipped:', repairErr.message);
+      // Safety-net repair scans every credit sale; credit sales already post their open item,
+      // so run it on a cooldown instead of on every Reports / Payments open.
+      if (Date.now() - receivablesBackfillAt > RECEIVABLES_BACKFILL_COOLDOWN_MS) {
+        receivablesBackfillAt = Date.now();
+        try {
+          const { backfillMissingCustomerOpenItems } = require('../customerBalanceRepair');
+          await backfillMissingCustomerOpenItems();
+        } catch (repairErr) {
+          receivablesBackfillAt = 0;
+          console.warn('[PAYMENTS] customer receivables backfill skipped:', repairErr.message);
+        }
       }
       const scopedBranchId = resolveListBranchId(req, req.query.branchId);
       if (scopedBranchId === undefined) {

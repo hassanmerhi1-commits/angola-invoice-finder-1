@@ -1889,9 +1889,13 @@ async function recordStockMovement(client, params) {
     );
   }
 
-  // POS / inventory-grid reuse a short in-memory result cache — bust it on every ledger write.
+  // POS / inventory-grid reuse an in-memory result cache — bust it on every ledger write.
+  // IN can rewrite cost/price on a catalog row that every branch grid shows; OUT only
+  // changes this warehouse's qty (and the HQ total).
   try {
-    require('./lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+    require('./lib/inventoryGridServerCache').invalidateInventoryGridResultCache(
+      normalizedMovementType === 'IN' ? undefined : [resolvedWarehouseId, warehouseId],
+    );
   } catch (_) { /* ignore */ }
 
   return { id: movementId, product_id: resolvedProductId, movement_type: normalizedMovementType, quantity: qty };

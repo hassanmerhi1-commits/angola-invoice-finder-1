@@ -79,7 +79,27 @@ const io = new Server(server, {
   },
 });
 
+/**
+ * Catalog-level changes that can alter any branch's inventory grid. Not 'products': sales
+ * broadcast it too, and per-sale qty is already invalidated per warehouse by the ledger.
+ */
+const INVENTORY_GRID_CATALOG_TABLES = new Set([
+  'branches',
+  'warehouses',
+  'categories',
+  'purchase_invoices',
+  'purchase_orders',
+  'stock_transfers',
+  'supplier_returns',
+  'import_orders',
+]);
+
 function broadcastTable(table, entityId = null) {
+  if (INVENTORY_GRID_CATALOG_TABLES.has(String(table || ''))) {
+    try {
+      require('./lib/inventoryGridServerCache').invalidateInventoryGridResultCache();
+    } catch (_) { /* ignore */ }
+  }
   try {
     io.emit('table-update', { table, ts: Date.now(), entityId });
   } catch (_) {}
