@@ -1908,42 +1908,42 @@ export default function Inventory() {
 
         <TabsContent value="info-produto" forceMount={keepMounted('info-produto')} className={tabPanelClass}>
           {selectedProduct ? (
-            <Card>
-              <CardContent className="pt-6">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div><strong>SKU:</strong> {selectedProduct.sku}</div>
-                  <div><strong>{t.inventoryPageUi.productInfo.name}</strong> {selectedProduct.name}</div>
-                  <div><strong>{t.inventoryPageUi.productInfo.category}</strong> {inventoryFoodCategoryLabel(selectedProduct.category, language)}</div>
-                  <div><strong>{t.inventoryPageUi.productInfo.price}</strong> {selectedProduct.price.toLocaleString(uiLocale)} Kz</div>
-                  <div><strong>{t.inventoryPageUi.productInfo.cost}</strong> {(selectedProduct.avgCost || selectedProduct.lastCost || selectedProduct.cost || 0).toLocaleString(uiLocale)} Kz</div>
-                  <div><strong>{t.inventoryPageUi.productInfo.stock}</strong> {selectedProduct.stock} {selectedProduct.unit}</div>
-                  {(Number(selectedProduct.reservedStock) || 0) > 0 && (
-                    <div>
-                      <strong>{t.inventoryGridUi.reservedQty}:</strong>{' '}
-                      {selectedProduct.reservedStock}
-                      {(Number(selectedProduct.quotedStock) || 0) > 0 && (
-                        <span className="text-muted-foreground">
-                          {' '}
-                          ({t.inventoryGridUi.quotedQtyHint.replace('{qty}', String(selectedProduct.quotedStock))})
-                        </span>
-                      )}
-                      {(Number(selectedProduct.onHandStock) || 0) > 0 && (
-                        <span className="text-muted-foreground">
-                          {' '}({language === 'pt' ? 'físico' : 'on hand'}: {selectedProduct.onHandStock})
-                        </span>
-                      )}
-                    </div>
+            <div className="max-w-4xl space-y-3 p-1">
+              <div>
+                <p className="font-mono text-xs text-muted-foreground">{selectedProduct.sku}</p>
+                <h3 className="text-lg font-semibold leading-tight">{selectedProduct.name}</h3>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  { label: t.inventoryPageUi.productInfo.category, value: inventoryFoodCategoryLabel(selectedProduct.category, language) },
+                  { label: t.inventoryPageUi.productInfo.price, value: `${selectedProduct.price.toLocaleString(uiLocale)} Kz` },
+                  { label: t.inventoryPageUi.productInfo.cost, value: `${(selectedProduct.avgCost || selectedProduct.lastCost || selectedProduct.cost || 0).toLocaleString(uiLocale)} Kz` },
+                  { label: t.inventoryPageUi.productInfo.stock, value: `${selectedProduct.stock} ${selectedProduct.unit}` },
+                  { label: t.inventoryPageUi.productInfo.vat, value: `${selectedProduct.taxRate}%` },
+                  { label: t.productFormUi.barcodeLabel, value: selectedProduct.barcode || '—' },
+                  { label: t.productFormUi.supplierLabel, value: selectedProduct.supplierName || '—' },
+                  { label: t.productDetailUi.activeProduct, value: selectedProduct.isActive ? t.common.active : t.common.inactive },
+                ].map((box) => (
+                  <div key={box.label} className="rounded-lg border bg-card px-3 py-2">
+                    <p className="text-[11px] text-muted-foreground leading-tight">{box.label.replace(/:$/, '')}</p>
+                    <p className="mt-1 text-sm font-semibold tabular-nums">{box.value}</p>
+                  </div>
+                ))}
+              </div>
+              {(Number(selectedProduct.reservedStock) || 0) > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {t.inventoryGridUi.reservedQty}: {selectedProduct.reservedStock}
+                  {(Number(selectedProduct.quotedStock) || 0) > 0 && (
+                    <span> ({t.inventoryGridUi.quotedQtyHint.replace('{qty}', String(selectedProduct.quotedStock))})</span>
                   )}
-                  <div><strong>{t.inventoryPageUi.productInfo.vat}</strong> {selectedProduct.taxRate}%</div>
-                </div>
-              </CardContent>
-            </Card>
+                  {(Number(selectedProduct.onHandStock) || 0) > 0 && (
+                    <span> ({language === 'pt' ? 'físico' : 'on hand'}: {selectedProduct.onHandStock})</span>
+                  )}
+                </p>
+              )}
+            </div>
           ) : (
-            <Card>
-              <CardContent className="pt-6">
-                <p className="text-muted-foreground text-center">{t.inventoryPageUi.selectProductToViewInfo}</p>
-              </CardContent>
-            </Card>
+            <p className="py-12 text-center text-muted-foreground">{t.inventoryPageUi.selectProductToViewInfo}</p>
           )}
         </TabsContent>
 

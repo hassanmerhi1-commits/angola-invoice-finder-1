@@ -30,10 +30,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Check, X, Plus } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { ALLOWED_VAT_RATES, parseTaxRateOrNull } from '@/lib/taxUtils';
 import {
@@ -102,25 +102,61 @@ const UNITS = [
   { value: 'pct', labelKey: 'pct' },
 ] as const;
 
-// Simple row component for the form grid
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="grid grid-cols-[110px_1fr] items-center gap-1 min-h-[28px]">
-      <Label className="text-[11px] truncate">{label}</Label>
+    <div className={cn('min-w-0 space-y-1', className)}>
+      <Label className="text-[11px] font-medium text-muted-foreground">{label}</Label>
       {children}
     </div>
   );
 }
 
-function ReadOnlyRow({ label, value }: { label: string; value: string | number }) {
+function Section({
+  title,
+  children,
+  className,
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <Row label={label}>
-      <div className="h-7 px-2 bg-muted rounded flex items-center text-xs font-mono text-right justify-end">
-        {value}
-      </div>
-    </Row>
+    <section className={cn('rounded-lg border bg-card p-3', className)}>
+      <h3 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </h3>
+      {children}
+    </section>
   );
 }
+
+function StatBox({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 min-w-0">
+      <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold tabular-nums truncate">{value}</p>
+      {hint ? <p className="text-[10px] text-muted-foreground tabular-nums">{hint}</p> : null}
+    </div>
+  );
+}
+
+const fieldControl = 'h-8 text-sm';
 
 function resolveProductSupplierId(
   product: Product | null | undefined,
@@ -752,36 +788,64 @@ export function ProductDetailDialog({
     }
   };
 
+  const isCreate = !product?.id || saveAsNew;
+  const netMarginPct = formData.price > 0
+    ? (((formData.price - formData.cost) / formData.price) * 100).toFixed(2)
+    : '0.00';
+  const incVat = (ex: number) => (ex * (1 + (formData.iva ?? 0) / 100)).toFixed(2);
+  const usdHint = usdRate > 0
+    ? t.productDetailUi.usdAtRate.replace('{rate}', usdRate.toFixed(2))
+    : undefined;
+
   return (
     <>
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
-        className="z-[60] max-w-4xl gap-0 p-0 [&>button[data-dialog-close]]:hidden"
+        className="z-[60] flex max-h-[92dvh] w-[min(96vw,72rem)] max-w-6xl flex-col gap-0 overflow-hidden p-0 [&>button[data-dialog-close]]:hidden"
         overlayClassName="z-[60]"
         onOpenAutoFocus={e => e.preventDefault()}
       >
-        <DialogHeader className="flex flex-row items-center justify-between gap-2 space-y-0 border-b bg-muted/50 px-4 py-2 pr-4">
-          <DialogTitle className="text-sm">
-            {!product?.id || saveAsNew
-              ? (copiedFrom
-                ? t.productFormUi.newFromCopyTitle.replace('{name}', copiedFrom.name)
-                : t.productFormUi.newTitle)
-              : t.productDetailUi.title}
-          </DialogTitle>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            onClick={requestClose}
-            aria-label={t.common.close}
-          >
-            <X className="h-4 w-4" />
-          </Button>
+        <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 border-b px-5 py-3 pr-5">
+          <div className="min-w-0">
+            <DialogTitle className="text-base font-semibold">
+              {!product?.id || saveAsNew
+                ? (copiedFrom
+                  ? t.productFormUi.newFromCopyTitle.replace('{name}', copiedFrom.name)
+                  : t.productFormUi.newTitle)
+                : t.productDetailUi.title}
+            </DialogTitle>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {formData.sku || formData.name
+                ? `${formData.sku || '—'} — ${formData.name || '—'}`
+                : t.productFormUi.description}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="product-active"
+                checked={formData.isActive}
+                onCheckedChange={(v) => set('isActive', v)}
+              />
+              <Label htmlFor="product-active" className="text-xs whitespace-nowrap">
+                {t.productDetailUi.activeProduct}
+              </Label>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={requestClose}
+              aria-label={t.common.close}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </DialogHeader>
 
-        {(!product?.id || saveAsNew) && (
-          <div className="relative border-b bg-background px-4 py-2 space-y-1">
+        {isCreate && (
+          <div className="relative space-y-1 border-b px-5 py-2.5">
             {!product?.id && (
               <>
                 <p className="text-[11px] font-medium text-muted-foreground">{t.productFormUi.copyFromLabel}</p>
@@ -843,33 +907,30 @@ export function ProductDetailDialog({
           </div>
         )}
 
-        <Tabs defaultValue="info" className="flex flex-col">
-          <TabsList className="w-full justify-start rounded-none border-b bg-muted/30 px-4 h-8">
-            <TabsTrigger value="info" className="text-xs h-7">{t.productDetailUi.tabInfo}</TabsTrigger>
-            <TabsTrigger value="barcodes" className="text-xs h-7">{t.productDetailUi.tabBarcodes}</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="info" className="m-0 p-0 overflow-y-auto max-h-[65vh]" onWheel={e => e.stopPropagation()}>
-            <div className="grid grid-cols-3 gap-0 text-xs">
-              {/* ── Column 1: Informações Gerais ── */}
-              <div className="border-r p-3 space-y-1">
-                <Row label={t.productDetailUi.code}>
-                  <Input value={formData.sku} onChange={e => set('sku', e.target.value)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.common.description}>
-                  <Input value={formData.name} onChange={e => set('name', e.target.value)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.inventory.category}>
-                  <Select value={resolveProductCategoryName(formData.category, activeCategories, language)} onValueChange={v => set('category', v)}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-[80] max-h-[min(60vh,320px)]">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" onWheel={(e) => e.stopPropagation()}>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(17rem,21rem)_minmax(0,1fr)_minmax(15rem,19rem)]">
+            <Section title={t.productDetailUi.sectionIdentity}>
+              <div className="grid grid-cols-2 gap-2.5">
+                <Field label={`${t.productDetailUi.code} *`}>
+                  <Input value={formData.sku} onChange={(e) => set('sku', e.target.value)} className={fieldControl} />
+                </Field>
+                <Field label={t.productFormUi.barcodeLabel}>
+                  <Input value={formData.barcode} onChange={(e) => set('barcode', e.target.value)} className={fieldControl} />
+                </Field>
+                <Field label={`${t.common.description} *`} className="col-span-2">
+                  <Input value={formData.name} onChange={(e) => set('name', e.target.value)} className={fieldControl} />
+                </Field>
+                <Field label={t.inventory.category}>
+                  <Select value={resolveProductCategoryName(formData.category, activeCategories, language)} onValueChange={(v) => set('category', v)}>
+                    <SelectTrigger className={fieldControl}><SelectValue /></SelectTrigger>
+                    <SelectContent className="z-[80] max-h-[min(60vh,320px)] bg-popover border shadow-lg">
                       {categorySelectOptions.map((c) => (
                         <SelectItem key={c.key} value={c.name}>{c.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </Row>
-                <Row label={t.productFormUi.supplierLabel}>
+                </Field>
+                <Field label={t.productFormUi.supplierLabel}>
                   <Select
                     value={formData.supplierId || '__none__'}
                     onValueChange={(v) => {
@@ -882,28 +943,19 @@ export function ProductDetailDialog({
                       }));
                     }}
                   >
-                    <SelectTrigger className="h-7 text-xs"><SelectValue placeholder={t.productDetailUi.select} /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-[80]">
+                    <SelectTrigger className={fieldControl}><SelectValue placeholder={t.productDetailUi.select} /></SelectTrigger>
+                    <SelectContent className="z-[80] bg-popover border shadow-lg">
                       <SelectItem value="__none__">—</SelectItem>
                       {supplierSelectOptions.map((s) => (
                         <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </Row>
-                <Row label={t.productDetailUi.packaging}>
-                  <Input type="number" value={formData.embalagem} onChange={e => set('embalagem', parseInt(e.target.value) || 1)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.productDetailUi.minQty}>
-                  <Input type="number" value={formData.qtdMinima} onChange={e => set('qtdMinima', parseInt(e.target.value) || 0)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.productDetailUi.maxQty}>
-                  <Input type="number" value={formData.qtdMaxima} onChange={e => set('qtdMaxima', parseInt(e.target.value) || 0)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.inventory.unit}>
-                  <Select value={formData.unit} onValueChange={v => set('unit', v)}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-[80]">
+                </Field>
+                <Field label={t.inventory.unit}>
+                  <Select value={formData.unit} onValueChange={(v) => set('unit', v)}>
+                    <SelectTrigger className={fieldControl}><SelectValue /></SelectTrigger>
+                    <SelectContent className="z-[80] bg-popover border shadow-lg">
                       {UNITS.map((u) => (
                         <SelectItem key={u.value} value={u.value}>
                           {t.productDetailUi.units[u.labelKey as keyof typeof t.productDetailUi.units] as string}
@@ -911,191 +963,218 @@ export function ProductDetailDialog({
                       ))}
                     </SelectContent>
                   </Select>
-                </Row>
-                <Row label={`${t.productDetailUi.vat} *`}>
+                </Field>
+                <Field label={`${t.productDetailUi.vat} *`}>
                   <Select
                     value={formData.iva === null || formData.iva === undefined ? undefined : String(formData.iva)}
                     onValueChange={(v) => updateIVA(parseInt(v, 10))}
                   >
-                    <SelectTrigger className="h-7 text-xs">
+                    <SelectTrigger className={fieldControl}>
                       <SelectValue placeholder={t.productFormUi.ivaPlaceholder} />
                     </SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-[80]">
+                    <SelectContent className="z-[80] bg-popover border shadow-lg">
                       {ALLOWED_VAT_RATES.map((r) => (
-                        <SelectItem key={r} value={String(r)}>
-                          {r}%
-                        </SelectItem>
+                        <SelectItem key={r} value={String(r)}>{r}%</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </Row>
-                <Row label={t.productDetailUi.vatLock}>
-                  <div className="flex items-center gap-2 h-7">
-                    <Switch
-                      checked={!!formData.vatOverride}
-                      onCheckedChange={(v) => set('vatOverride', v)}
-                    />
-                    <span className="text-[11px] text-muted-foreground leading-tight">
-                      {t.productDetailUi.vatLockHint}
-                    </span>
-                  </div>
-                </Row>
-                <Row label={t.productDetailUi.type}>
-                  <Select value={formData.tipo} onValueChange={v => set('tipo', v)}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-[80]">
+                </Field>
+                <Field label={t.productDetailUi.type}>
+                  <Select value={formData.tipo} onValueChange={(v) => set('tipo', v)}>
+                    <SelectTrigger className={fieldControl}><SelectValue /></SelectTrigger>
+                    <SelectContent className="z-[80] bg-popover border shadow-lg">
                       <SelectItem value="INVENTARIO">{t.productDetailUi.inventoryType}</SelectItem>
                       <SelectItem value="SERVICO">{t.productDetailUi.serviceType}</SelectItem>
                       <SelectItem value="CONSUMIVEL">{t.productDetailUi.consumableType}</SelectItem>
                     </SelectContent>
                   </Select>
-                </Row>
-                <Row label={t.productFormUi.barcodeLabel}>
-                  <Input value={formData.barcode} onChange={e => set('barcode', e.target.value)} className="h-7 text-xs" />
-                </Row>
-              </div>
-
-              {/* ── Column 2: Preços & Custos ── */}
-              <div className="border-r p-3 space-y-1">
-              <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">{t.productDetailUi.pricesTitle}</h4>
-                <Row label={t.productDetailUi.price1ExVat}>
-                  <NumericInput value={formData.price} onValueChange={updatePrice} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.productDetailUi.price1IncVat}>
-                  <NumericInput value={formData.priceIVA} onValueChange={updatePriceFromIVA} className="h-7 text-xs font-medium" />
-                </Row>
-                <Row label="Markup 1 % (cost)">
-                  <NumericInput value={markupForLevel(1)} onValueChange={(v) => updateMarkupForLevel(1, v)} className="h-7 text-xs" />
-                </Row>
-                <div className="border-t border-dashed my-1" />
-                <Row label={t.productDetailUi.price2ExVat}>
-                  <NumericInput value={formData.price2} onValueChange={(v) => setTierPrice(2, v)} className="h-7 text-xs" />
-                </Row>
-                <ReadOnlyRow label={t.productDetailUi.price2IncVat} value={(formData.price2 * (1 + (formData.iva ?? 0) / 100)).toFixed(2)} />
-                <Row label="% over Price 1">
-                  <NumericInput value={markupForLevel(2)} onValueChange={(v) => updateMarkupForLevel(2, v)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.productDetailUi.price3ExVat}>
-                  <NumericInput value={formData.price3} onValueChange={(v) => setTierPrice(3, v)} className="h-7 text-xs" />
-                </Row>
-                <ReadOnlyRow label={t.productDetailUi.price3IncVat} value={(formData.price3 * (1 + (formData.iva ?? 0) / 100)).toFixed(2)} />
-                <Row label="% over Price 1">
-                  <NumericInput value={markupForLevel(3)} onValueChange={(v) => updateMarkupForLevel(3, v)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.productDetailUi.price4ExVat}>
-                  <NumericInput value={formData.price4} onValueChange={(v) => setTierPrice(4, v)} className="h-7 text-xs" />
-                </Row>
-                <ReadOnlyRow label={t.productDetailUi.price4IncVat} value={(formData.price4 * (1 + (formData.iva ?? 0) / 100)).toFixed(2)} />
-                <Row label="% over Price 1">
-                  <NumericInput value={markupForLevel(4)} onValueChange={(v) => updateMarkupForLevel(4, v)} className="h-7 text-xs" />
-                </Row>
-
-                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.costAkzTitle}</h4>
-                <Row label={t.productDetailUi.currentCost}>
-                  <NumericInput value={formData.cost} onValueChange={(v) => set('cost', v)} className="h-7 text-xs" />
-                </Row>
-                <ReadOnlyRow label={t.productDetailUi.initialCost} value={(product?.firstCost || formData.cost).toFixed(2)} />
-                <ReadOnlyRow label={t.productDetailUi.avgCost} value={formData.avgCost.toFixed(2)} />
-                <ReadOnlyRow label={t.productDetailUi.lastCost} value={formData.lastCost.toFixed(2)} />
-
-                {usdRate > 0 && (
-                  <>
-                    <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.costUsdTitle}</h4>
-                    <ReadOnlyRow label={t.productDetailUi.currentCost} value={(formData.cost / usdRate).toFixed(4)} />
-                    <ReadOnlyRow label={t.productDetailUi.initialCost} value={((product?.firstCost || formData.cost) / usdRate).toFixed(4)} />
-                    <ReadOnlyRow label={t.productDetailUi.avgCost} value={(formData.avgCost / usdRate).toFixed(4)} />
-                    <ReadOnlyRow label={t.productDetailUi.lastCost} value={(formData.lastCost / usdRate).toFixed(4)} />
-                  </>
-                )}
-
-                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1 pt-2">{t.productDetailUi.marginPackagingTitle}</h4>
-                <ReadOnlyRow label="Markup %" value={`${margin}%`} />
-                <ReadOnlyRow label={t.productDetailUi.netMargin} value={formData.price > 0 ? (((formData.price - formData.cost) / formData.price) * 100).toFixed(2) + '%' : '0.00%'} />
-                <ReadOnlyRow label={t.productDetailUi.packagingCost} value={(formData.cost * (formData.embalagem || 1)).toFixed(2)} />
-                {usdRate > 0 && (
-                  <ReadOnlyRow label={t.productDetailUi.packagingCostUsd} value={((formData.cost * (formData.embalagem || 1)) / usdRate).toFixed(4)} />
-                )}
-              </div>
-
-              {/* ── Column 3: Stock & Filial ── */}
-              <div className="p-3 space-y-1">
-                <h4 className="text-[11px] font-semibold border-b pb-1 mb-1">{t.productDetailUi.stockBranchTitle}</h4>
-                <Row label={t.inventory.stock}>
-                  <NumericInput integer value={formData.stock} onValueChange={(v) => set('stock', v)} className="h-7 text-xs" />
-                </Row>
-                <Row label={t.productDetailUi.branch}>
-                  <Select value={formData.branchId} onValueChange={v => set('branchId', v)}>
-                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-popover border shadow-lg z-[80]">
-                      <SelectItem value="all">{t.productDetailUi.all}</SelectItem>
-                      {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Row>
-                <div className="flex items-center gap-2 pt-2">
-                  <Switch checked={formData.isActive} onCheckedChange={v => set('isActive', v)} />
-                  <Label className="text-[11px]">{t.productDetailUi.activeProduct}</Label>
+                </Field>
+                <Field label={t.productDetailUi.packaging}>
+                  <Input type="number" value={formData.embalagem} onChange={(e) => set('embalagem', parseInt(e.target.value, 10) || 1)} className={fieldControl} />
+                </Field>
+                <div className="col-span-2 flex items-start gap-2 rounded-md border bg-muted/30 px-2.5 py-2">
+                  <Switch
+                    id="product-vat-lock"
+                    checked={!!formData.vatOverride}
+                    onCheckedChange={(v) => set('vatOverride', v)}
+                  />
+                  <div>
+                    <Label htmlFor="product-vat-lock" className="text-xs font-medium">{t.productDetailUi.vatLock}</Label>
+                    <p className="text-[11px] text-muted-foreground leading-tight">{t.productDetailUi.vatLockHint}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </TabsContent>
+            </Section>
 
-          <TabsContent value="barcodes" className="m-0 p-4 overflow-y-auto max-h-[65vh]" onWheel={e => e.stopPropagation()}>
-            <table className="w-full text-xs border">
+            <Section title={t.productDetailUi.sectionPrices}>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] text-muted-foreground">
+                    <th className="pb-2 pr-2 text-left font-medium">{t.productDetailUi.priceLevel}</th>
+                    <th className="pb-2 px-1 text-right font-medium">{t.productDetailUi.exVatShort}</th>
+                    <th className="pb-2 px-1 text-right font-medium">{t.productDetailUi.incVatShort}</th>
+                    <th className="pb-2 pl-1 text-right font-medium">
+                      {t.productDetailUi.pctOverPrice1}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="py-1 pr-2 text-xs font-medium whitespace-nowrap">P1</td>
+                    <td className="py-1 px-1"><NumericInput value={formData.price} onValueChange={updatePrice} className={fieldControl} /></td>
+                    <td className="py-1 px-1"><NumericInput value={formData.priceIVA} onValueChange={updatePriceFromIVA} className={cn(fieldControl, 'font-medium')} /></td>
+                    <td className="py-1 pl-1">
+                      <NumericInput value={markupForLevel(1)} onValueChange={(v) => updateMarkupForLevel(1, v)} className={fieldControl} />
+                      <p className="mt-0.5 text-[10px] text-muted-foreground text-right">{t.productDetailUi.markupOnCost}</p>
+                    </td>
+                  </tr>
+                  {([2, 3, 4] as const).map((lvl) => {
+                    const key = `price${lvl}` as 'price2' | 'price3' | 'price4';
+                    return (
+                      <tr key={lvl}>
+                        <td className="py-1 pr-2 text-xs font-medium">P{lvl}</td>
+                        <td className="py-1 px-1">
+                          <NumericInput value={formData[key]} onValueChange={(v) => setTierPrice(lvl, v)} className={fieldControl} />
+                        </td>
+                        <td className="py-1 px-1">
+                          <div className={cn(fieldControl, 'flex items-center justify-end rounded-md border bg-muted/50 px-2 font-mono text-xs tabular-nums')}>
+                            {incVat(formData[key])}
+                          </div>
+                        </td>
+                        <td className="py-1 pl-1">
+                          <NumericInput value={markupForLevel(lvl)} onValueChange={(v) => updateMarkupForLevel(lvl, v)} className={fieldControl} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Section>
+
+            <div className="space-y-3">
+              <Section title={t.productDetailUi.sectionCost}>
+                <Field label={t.productDetailUi.currentCost}>
+                  <NumericInput value={formData.cost} onValueChange={(v) => set('cost', v)} className={fieldControl} />
+                </Field>
+                <div className="mt-2.5 grid grid-cols-3 gap-2">
+                  <StatBox
+                    label={t.productDetailUi.initialCost}
+                    value={(product?.firstCost || formData.cost).toFixed(2)}
+                    hint={usdRate > 0 ? ((product?.firstCost || formData.cost) / usdRate).toFixed(4) : usdHint}
+                  />
+                  <StatBox
+                    label={t.productDetailUi.avgCost}
+                    value={formData.avgCost.toFixed(2)}
+                    hint={usdRate > 0 ? (formData.avgCost / usdRate).toFixed(4) : undefined}
+                  />
+                  <StatBox
+                    label={t.productDetailUi.lastCost}
+                    value={formData.lastCost.toFixed(2)}
+                    hint={usdRate > 0 ? (formData.lastCost / usdRate).toFixed(4) : undefined}
+                  />
+                </div>
+              </Section>
+
+              <Section title={t.productDetailUi.sectionStock}>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <Field label={t.inventory.stock}>
+                    {isCreate ? (
+                      <NumericInput integer value={formData.stock} onValueChange={(v) => set('stock', v)} className={fieldControl} />
+                    ) : (
+                      <div className={cn(fieldControl, 'flex items-center rounded-md border bg-muted/50 px-2 font-mono text-sm tabular-nums')}>
+                        {formData.stock}
+                      </div>
+                    )}
+                  </Field>
+                  <Field label={t.productDetailUi.branch}>
+                    <Select value={formData.branchId} onValueChange={(v) => set('branchId', v)}>
+                      <SelectTrigger className={fieldControl}><SelectValue /></SelectTrigger>
+                      <SelectContent className="z-[80] bg-popover border shadow-lg">
+                        <SelectItem value="all">{t.productDetailUi.all}</SelectItem>
+                        {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label={t.productDetailUi.minQty}>
+                    <Input type="number" value={formData.qtdMinima} onChange={(e) => set('qtdMinima', parseInt(e.target.value, 10) || 0)} className={fieldControl} />
+                  </Field>
+                  <Field label={t.productDetailUi.maxQty}>
+                    <Input type="number" value={formData.qtdMaxima} onChange={(e) => set('qtdMaxima', parseInt(e.target.value, 10) || 0)} className={fieldControl} />
+                  </Field>
+                </div>
+                <div className="mt-2.5 grid grid-cols-3 gap-2">
+                  <StatBox label={t.productDetailUi.markupOnCost} value={`${margin}%`} />
+                  <StatBox label={t.productDetailUi.netMargin} value={`${netMarginPct}%`} />
+                  <StatBox
+                    label={t.productDetailUi.packagingCost}
+                    value={(formData.cost * (formData.embalagem || 1)).toFixed(2)}
+                    hint={usdRate > 0 ? ((formData.cost * (formData.embalagem || 1)) / usdRate).toFixed(4) : undefined}
+                  />
+                </div>
+              </Section>
+            </div>
+          </div>
+
+          <Section title={t.productDetailUi.sectionBarcodes} className="mt-3">
+            <table className="w-full text-sm">
               <thead>
-                <tr className="bg-muted">
-                  <th className="border p-2 text-left">{t.productDetailUi.invBarcode}</th>
-                  <th className="border p-2 text-left">{t.productDetailUi.packaging}</th>
-                  <th className="border p-2 text-left">{t.productDetailUi.priceLc}</th>
-                  <th className="border p-2 text-left">PLU</th>
-                  <th className="border p-2 text-left">{t.productDetailUi.lastCostCol}</th>
+                <tr className="text-[11px] text-muted-foreground">
+                  <th className="pb-2 pr-2 text-left font-medium">{t.productDetailUi.invBarcode}</th>
+                  <th className="w-24 pb-2 px-1 text-left font-medium">{t.productDetailUi.packaging}</th>
+                  <th className="w-28 pb-2 px-1 text-left font-medium">{t.productDetailUi.priceLc}</th>
+                  <th className="w-24 pb-2 px-1 text-left font-medium">PLU</th>
+                  <th className="w-28 pb-2 pl-1 text-left font-medium">{t.productDetailUi.lastCostCol}</th>
                 </tr>
               </thead>
               <tbody>
                 {formData.barcodes.map((bc, idx) => (
                   <tr key={idx}>
-                    <td className="border p-1">
-                      <Input value={bc.barPrice} onChange={e => {
+                    <td className="py-1 pr-2">
+                      <Input value={bc.barPrice} onChange={(e) => {
                         const b = [...formData.barcodes]; b[idx] = { ...bc, barPrice: e.target.value };
                         set('barcodes', b);
-                      }} className="h-6 text-xs" />
+                      }} className={fieldControl} />
                     </td>
-                    <td className="border p-1">
-                      <Input type="number" value={bc.embalagem} onChange={e => {
-                        const b = [...formData.barcodes]; b[idx] = { ...bc, embalagem: parseInt(e.target.value) || 1 };
+                    <td className="py-1 px-1">
+                      <Input type="number" value={bc.embalagem} onChange={(e) => {
+                        const b = [...formData.barcodes]; b[idx] = { ...bc, embalagem: parseInt(e.target.value, 10) || 1 };
                         set('barcodes', b);
-                      }} className="h-6 text-xs" />
+                      }} className={fieldControl} />
                     </td>
-                    <td className="border p-1">
-                      <Input type="number" value={bc.priceLC} onChange={e => {
+                    <td className="py-1 px-1">
+                      <Input type="number" value={bc.priceLC} onChange={(e) => {
                         const b = [...formData.barcodes]; b[idx] = { ...bc, priceLC: parseFloat(e.target.value) || 0 };
                         set('barcodes', b);
-                      }} className="h-6 text-xs" />
+                      }} className={fieldControl} />
                     </td>
-                    <td className="border p-1">
-                      <Input value={bc.plu} onChange={e => {
+                    <td className="py-1 px-1">
+                      <Input value={bc.plu} onChange={(e) => {
                         const b = [...formData.barcodes]; b[idx] = { ...bc, plu: e.target.value };
                         set('barcodes', b);
-                      }} className="h-6 text-xs" />
+                      }} className={fieldControl} />
                     </td>
-                    <td className="border p-1">
-                      <Input type="number" value={bc.ultimoCusto} onChange={e => {
+                    <td className="py-1 pl-1">
+                      <Input type="number" value={bc.ultimoCusto} onChange={(e) => {
                         const b = [...formData.barcodes]; b[idx] = { ...bc, ultimoCusto: parseFloat(e.target.value) || 0 };
                         set('barcodes', b);
-                      }} className="h-6 text-xs" />
+                      }} className={fieldControl} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <Button variant="outline" size="sm" className="mt-2" onClick={() => set('barcodes', [...formData.barcodes, { barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }])}>
-              <Plus className="w-3 h-3 mr-1" /> {t.productDetailUi.addBarcode}
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2 h-8"
+              onClick={() => set('barcodes', [...formData.barcodes, { barPrice: '', embalagem: 1, priceLC: 0, plu: '', ultimoCusto: 0 }])}
+            >
+              <Plus className="mr-1 h-3 w-3" /> {t.productDetailUi.addBarcode}
             </Button>
-          </TabsContent>
-        </Tabs>
+          </Section>
+        </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-muted/50">
+        <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
           {product?.id && !saveAsNew && (
             <Button
               variant="outline"
