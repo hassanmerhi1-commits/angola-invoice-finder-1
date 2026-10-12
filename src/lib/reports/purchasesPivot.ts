@@ -1,3 +1,5 @@
+import { normalizeProductSkuKey } from '@/lib/productDedupe';
+
 export type PurchasesGroupBy = 'supplier' | 'product' | 'category' | 'month';
 
 export interface PurchaseRow {
@@ -15,8 +17,8 @@ export interface PurchaseTotals {
 }
 
 export interface PurchasesPivotContext {
-  /** Resolve a purchased line's product category for grouping. */
-  productCategory: (productId: string | undefined, fallback: string) => string;
+  /** Resolve a purchased line's product category for grouping (row id, then SKU). */
+  productCategory: (productId: string | undefined, fallback: string, sku?: string) => string;
   labels: {
     unknown: string;
     noCategory: string;
@@ -72,12 +74,17 @@ export function buildPurchasesPivot(
       const name = String(l.productName || l.description || l.name || '').trim();
       const qty = lineQty(l);
       const total = lineAmount(l);
+      const sku = String(l.productCode || l.product_code || l.sku || '').trim();
       if (groupBy === 'product') {
         if (!name) return;
-        const key = String(l.productId || name.toLowerCase());
+        const key = normalizeProductSkuKey(sku) || String(l.productId || name.toLowerCase());
         bump(key, name, qty, total, invoiceId);
       } else {
-        const cat = ctx.productCategory(l.productId ? String(l.productId) : undefined, ctx.labels.noCategory);
+        const cat = ctx.productCategory(
+          l.productId ? String(l.productId) : undefined,
+          ctx.labels.noCategory,
+          sku || undefined,
+        );
         bump(cat, cat, qty, total, invoiceId);
       }
     });

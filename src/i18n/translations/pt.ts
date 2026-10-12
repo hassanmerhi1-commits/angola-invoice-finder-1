@@ -2112,6 +2112,7 @@ export const pt: TranslationKeys = {
     exits: "Saídas",
     netMovement: "Saldo Movimento",
     totalMovements: "Total Movimentos",
+    showingNewest: "A mostrar os {shown} movimentos mais recentes de {total} — imprima ou exporte para a lista completa.",
     typeIn: "Entrada",
     typeOut: "Saída",
     // Motivos
@@ -2187,6 +2188,10 @@ export const pt: TranslationKeys = {
     noStock: "Sem stock",
     totals: "TOTAIS",
     products: "Produtos",
+    loadingStock: "A carregar stock do servidor…",
+    showingTop: "A mostrar os primeiros {shown} de {total} produtos (os totais incluem todos) — imprima ou exporte para a lista completa.",
+    loadFailed: "Não foi possível carregar o stock do servidor: {error}",
+    noRowsInStock: "Nenhum produto com stock nesta filial. Marque \"Mostrar stock zero\" para ver o catálogo completo.",
   },
 
   inventoryOpsUi: {
@@ -5816,6 +5821,8 @@ export const pt: TranslationKeys = {
     snapshotProductsCount: "{count} produtos",
     snapshotEmpty: "Nada neste período.",
     snapshotVatPay: "A entregar",
+    snapshotLoadFailed: "Não carregou — abra para tentar de novo",
+    serverLoadFailed: "Não foi possível carregar este relatório do servidor: {error}",
     snapshotVatRecover: "A recuperar",
     accountantLink: "Contas oficiais (balancete, lucros, IVA)",
     colWho: "Quem",

@@ -573,6 +573,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
             COALESCE(p.last_cost, p.cost, 0) AS last_cost,
             COALESCE(p.avg_cost, p.cost, 0) AS avg_cost,
             ${stockExpr} AS stock,
+            COALESCE(p.min_stock, 0) AS min_stock,
             p.unit,
             p.tax_rate,
             p.vat_override,
@@ -771,6 +772,7 @@ async function listInventoryConsolidatedByBranches() {
         COALESCE(p.first_cost, p.cost, 0) AS first_cost,
         COALESCE(p.last_cost, p.cost, 0) AS last_cost,
         COALESCE(p.avg_cost, p.cost, 0) AS avg_cost,
+        COALESCE(p.min_stock, 0) AS min_stock,
         p.unit,
         p.tax_rate,
         p.vat_override,
@@ -1337,6 +1339,53 @@ async function listProductsForBranch(branchKey, lightList) {
   const { applyBranchReserves } = require('../lib/softReserve');
   const withHolds = await applyBranchReserves(db, rows, branchKeyStr);
   return enrichRowsWithSellingPrices(withHolds);
+}
+
+const LAST_SALE_DATES_CACHE_MS = 120_000;
+const LAST_SALE_LOOKBACK_DAYS = 365;
+const lastSaleDatesCache = new Map();
+
+/**
+ * One row per canonical SKU: { sku_key, last_sale }. Line items may point at any branch row of
+ * the SKU, so the key comes from the line SKU (or its product's SKU) with -DUP- stripped.
+ */
+async function loadLastSaleDatesBySku(branchKey) {
+  const cacheKey = branchKey || '*';
+  const hit = lastSaleDatesCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < LAST_SALE_DATES_CACHE_MS) return hit.rows;
+
+  const since = new Date(Date.now() - LAST_SALE_LOOKBACK_DAYS * 86_400_000).toISOString();
+  const params = [since];
+  let branchClause = '';
+  if (branchKey) {
+    params.push(branchKey);
+    branchClause = `AND s.branch_id = $${params.length}`;
+  }
+  const result = await db.query(
+    `SELECT LOWER(TRIM(COALESCE(NULLIF(TRIM(si.sku), ''), p.sku, ''))) AS sku_raw,
+            MAX(s.created_at) AS last_sale
+     FROM sales s
+     INNER JOIN sale_items si ON si.sale_id = s.id
+     LEFT JOIN products p ON p.id = si.product_id
+     WHERE s.created_at >= $1
+       AND COALESCE(s.status, '') <> 'voided'
+       ${branchClause}
+     GROUP BY 1`,
+    params,
+  );
+
+  const bySku = new Map();
+  for (const row of result.rows || []) {
+    const key = canonicalSkuString(row.sku_raw).toLowerCase();
+    const at = row.last_sale ? new Date(row.last_sale) : null;
+    if (!key || !at || Number.isNaN(at.getTime())) continue;
+    const iso = at.toISOString();
+    const prev = bySku.get(key);
+    if (!prev || iso > prev) bySku.set(key, iso);
+  }
+  const rows = Array.from(bySku, ([sku_key, last_sale]) => ({ sku_key, last_sale }));
+  lastSaleDatesCache.set(cacheKey, { at: Date.now(), rows });
+  return rows;
 }
 
 /** Stock movements or sale lines for this product (any row sharing the same canonical SKU). */
@@ -1930,6 +1979,20 @@ module.exports = function(broadcastTableRaw) {
     } catch (error) {
       console.error('[PRODUCTS low-stock]', error);
       res.status(500).json({ error: 'Failed to fetch low-stock products' });
+    }
+  });
+
+  /** Last non-voided sale date per canonical SKU over the past year (dead-stock report). */
+  router.get('/last-sale-dates', async (req, res) => {
+    try {
+      const branchId = resolveListBranchId(req, req.query.branchId);
+      if (branchId === undefined) return res.json({ rows: [] });
+      const rows = await loadLastSaleDatesBySku(branchId ? String(branchId).trim() : null);
+      res.setHeader('Cache-Control', 'private, max-age=30');
+      res.json({ rows });
+    } catch (error) {
+      console.error('[PRODUCTS last-sale-dates]', error);
+      res.status(500).json({ error: 'Failed to load last sale dates' });
     }
   });
 
@@ -2848,3 +2911,4 @@ module.exports = function(broadcastTableRaw) {
 };
 
 module.exports.listProductsForBranchInventoryGrid = listProductsForBranchInventoryGrid;
+module.exports.loadLastSaleDatesBySku = loadLastSaleDatesBySku;

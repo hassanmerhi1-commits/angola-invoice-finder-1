@@ -3,9 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Download, Tags, Printer, FileDown } from 'lucide-react';
-import { useProducts } from '@/hooks/useERP';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { reportUnitCost, useReportBranchId, useReportProducts } from '@/hooks/useReportProducts';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
 import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { useTranslation } from '@/i18n';
 
@@ -30,16 +30,17 @@ interface CategoryRow {
 export default function StockByCategoryReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId, { light: true });
+  const branchId = useReportBranchId();
+  const { products, loading, error, refresh } = useReportProducts(branchId);
   const { companyName } = useCompanyLogo();
 
   const { rows, totals } = useMemo(() => {
     const map = new Map<string, CategoryRow>();
     products.forEach((p) => {
-      const category = p.category || t.salesAnalysisUi.noCategory;
       const stock = Number(p.stock || 0);
-      const cost = Number(p.cost || 0);
+      if (stock <= 0) return;
+      const category = p.category || t.salesAnalysisUi.noCategory;
+      const cost = reportUnitCost(p);
       const price = Number(p.price || 0);
       const entry =
         map.get(category) ||
@@ -199,7 +200,13 @@ export default function StockByCategoryReport() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
+          <ReportStockStatus
+            loading={loading}
+            error={error}
+            empty={false}
+            onRetry={() => void refresh({ force: true })}
+          />
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -217,7 +224,7 @@ export default function StockByCategoryReport() {
                 {rows.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      {t.common.noResults}
+                      {loading ? t.stockValuationUi.loadingStock : t.common.noResults}
                     </TableCell>
                   </TableRow>
                 ) : (

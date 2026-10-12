@@ -13,6 +13,7 @@ import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
 
 type PaymentRow = {
   id?: string;
@@ -58,35 +59,41 @@ export default function CashFlowReport({
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [glRows, setGlRows] = useState<TbRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    const errorOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
     (async () => {
       setLoading(true);
-      try {
-        const res = await api.payments.list({
-          branchId: apiBranchId || undefined,
-          limit: 10000,
-          dateFrom,
-          dateTo,
-        });
-        if (!cancelled) setPayments(Array.isArray(res.data) ? res.data : []);
-      } catch {
-        if (!cancelled) setPayments([]);
+      const errors: string[] = [];
+      const [payRes, tbRes] = await Promise.all([
+        api.payments
+          .list({ branchId: apiBranchId || undefined, limit: 10000, dateFrom, dateTo })
+          .catch((e: unknown) => ({ data: undefined, error: errorOf(e) })),
+        api.chartOfAccounts
+          .getTrialBalance(dateFrom, dateTo, apiBranchId || undefined)
+          .catch((e: unknown) => ({ data: undefined, error: errorOf(e) })),
+      ]);
+      if (cancelled) return;
+      if (Array.isArray(payRes.data)) setPayments(payRes.data);
+      else {
+        setPayments([]);
+        errors.push(payRes.error || t.common.loadFailed);
       }
-      try {
-        const tb = await api.chartOfAccounts.getTrialBalance(dateFrom, dateTo, apiBranchId || undefined);
-        if (!cancelled) setGlRows(Array.isArray(tb.data) ? tb.data : []);
-      } catch {
-        if (!cancelled) setGlRows([]);
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (Array.isArray(tbRes.data)) setGlRows(tbRes.data);
+      else {
+        setGlRows([]);
+        errors.push(tbRes.error || t.common.loadFailed);
       }
+      setLoadError(errors.length ? errors.join(' · ') : null);
+      setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [apiBranchId, dateFrom, dateTo]);
+  }, [apiBranchId, dateFrom, dateTo, reloadKey]);
 
   const localDate = (raw?: string) => (raw ? String(raw).slice(0, 10) : '');
   const inRange = (raw?: string) => {
@@ -234,6 +241,13 @@ export default function CashFlowReport({
         </div>
       ) : (
         <>
+          <ReportStockStatus
+            loading={false}
+            error={loadError}
+            empty={false}
+            errorMessage={t.reportsCenterUi.serverLoadFailed}
+            onRetry={() => setReloadKey((k) => k + 1)}
+          />
           <ReportStatStrip
             columns="xl:grid-cols-8"
             items={[

@@ -8,7 +8,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useSyncedBranchFilter } from '@/hooks/useSyncedBranchFilter';
 import { REPORT_SALES_LIMIT } from '@/contexts/ReportsPeriodContext';
-import { useSales, useProducts } from '@/hooks/useERP';
+import { useSales } from '@/hooks/useERP';
+import { useReportSales } from '@/hooks/useReportSales';
+import { reportUnitCost, useReportProducts } from '@/hooks/useReportProducts';
+import { normalizeProductSkuKey } from '@/lib/productDedupe';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
 import { Download, Printer, FileDown, Package } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
@@ -66,7 +69,6 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
     selectedBranch: branchState,
     setSelectedBranch,
   } = useSyncedBranchFilter();
-  const { products } = useProducts(apiBranchId, { light: true });
   const { companyName } = useCompanyLogo();
 
   const [dateFromState, setDateFrom] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
@@ -76,26 +78,17 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
   const dateFrom = embedded ? props.dateFrom ?? dateFromState : dateFromState;
   const dateTo = embedded ? props.dateTo ?? dateToState : dateToState;
   const selectedBranch = embedded ? props.selectedBranch ?? branchState : branchState;
-  const { sales } = useSales(apiBranchId, {
+  // Stock column follows the branch picked here (all = company totals).
+  const { lookup } = useReportProducts(selectedBranch === 'all' ? undefined : selectedBranch || apiBranchId);
+  const reportSales = useReportSales();
+  const { sales: standaloneSales } = useSales(selectedBranch === 'all' ? undefined : selectedBranch || apiBranchId, {
+    deferInitialLoad: embedded,
     light: false,
     dateFrom,
     dateTo,
     limit: REPORT_SALES_LIMIT,
   });
-
-  const productInfo = useMemo(() => {
-    const m = new Map<string, { category: string; stock: number; cost: number; sku: string; name: string }>();
-    products.forEach((p) => {
-      m.set(p.id, {
-        category: p.category || t.salesAnalysisUi.noCategory,
-        stock: Number(p.stock || 0),
-        cost: Number(p.avgCost || p.cost || 0),
-        sku: p.sku || '',
-        name: p.name || '',
-      });
-    });
-    return m;
-  }, [products, t.salesAnalysisUi.noCategory]);
+  const sales = embedded ? reportSales.sales : standaloneSales;
 
   const { groups, grandTotal } = useMemo(() => {
     const inRange = (raw?: string) => {
@@ -125,15 +118,15 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
       )
       .forEach((s) => {
         s.items.forEach((item) => {
-          const info = productInfo.get(item.productId);
-          const key = item.productId || item.sku || item.productName;
+          const info = lookup(item.productId, item.sku);
+          const key = normalizeProductSkuKey(item.sku) || item.productId || item.productName;
           if (!byProduct[key]) {
             byProduct[key] = {
               code: info?.sku || item.sku || '',
               name: info?.name || item.productName || '',
               category: info?.category || t.salesAnalysisUi.noCategory,
-              stock: info?.stock ?? 0,
-              cost: info?.cost ?? 0,
+              stock: Number(info?.stock) || 0,
+              cost: reportUnitCost(info),
               qty: 0,
               base: 0,
               vat: 0,
@@ -192,7 +185,7 @@ export default function SalesByProductReport(props: SalesByProductReportProps = 
       .sort((a, b) => a.name.localeCompare(b.name));
 
     return { groups: result, grandTotal: grand };
-  }, [sales, productInfo, dateFrom, dateTo, selectedBranch, t.salesAnalysisUi.noCategory]);
+  }, [sales, lookup, dateFrom, dateTo, selectedBranch, t.salesAnalysisUi.noCategory]);
 
   const fmt = (n: number) =>
     new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);

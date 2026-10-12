@@ -31,7 +31,7 @@ export default function SalesAnalysisReport({
   const filters = useSharedReportFilters();
   const { dateFrom, dateTo, comparePrevious, branchFilter, previousPeriod } = filters;
   const { selectedBranch, currentBranch } = branchFilter;
-  const { sales, truncated } = useReportSales();
+  const { sales, previousSales, truncated } = useReportSales();
   const pivotCtx = useSalesPivotContext(filters.apiBranchId);
   const { preview } = useReportExportMeta();
 
@@ -57,12 +57,12 @@ export default function SalesAnalysisReport({
 
   const prevFilteredSales = useMemo(() => {
     if (!comparePrevious || !previousPeriod) return [];
-    return mergeNetReportSales(sales, creditNotes, {
+    return mergeNetReportSales(previousSales, creditNotes, {
       dateFrom: previousPeriod.dateFrom,
       dateTo: previousPeriod.dateTo,
       branchId: reportBranchId,
     });
-  }, [comparePrevious, previousPeriod, sales, creditNotes, reportBranchId]);
+  }, [comparePrevious, previousPeriod, previousSales, creditNotes, reportBranchId]);
 
   const clientSummary = useMemo(() => {
     const totalRevenue = filteredSales.reduce((sum, s) => sum + s.total, 0);

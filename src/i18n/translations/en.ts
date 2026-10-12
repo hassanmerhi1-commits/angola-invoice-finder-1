@@ -2110,6 +2110,7 @@ export const en = {
     exits: "Exits",
     netMovement: "Net movement",
     totalMovements: "Total movements",
+    showingNewest: "Showing the newest {shown} of {total} movements — print or export for the full list.",
     typeIn: "Entry",
     typeOut: "Exit",
     // Reasons
@@ -2185,6 +2186,10 @@ export const en = {
     noStock: "Out of stock",
     totals: "TOTALS",
     products: "Products",
+    loadingStock: "Loading stock from the server…",
+    showingTop: "Showing the first {shown} of {total} products (totals include all) — print or export for the full list.",
+    loadFailed: "Could not load stock from the server: {error}",
+    noRowsInStock: "No products with stock in this branch. Tick \"Show zero stock\" to see the full catalog.",
   },
 
   inventoryOpsUi: {
@@ -5814,6 +5819,8 @@ export const en = {
     snapshotProductsCount: "{count} products",
     snapshotEmpty: "Nothing in this period.",
     snapshotVatPay: "To pay",
+    snapshotLoadFailed: "Could not load — open to retry",
+    serverLoadFailed: "Could not load this report from the server: {error}",
     snapshotVatRecover: "To recover",
     accountantLink: "Official books (trial balance, P&L, VAT)",
     colWho: "Who",

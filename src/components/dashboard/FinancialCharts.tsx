@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useTranslation } from '@/i18n';
 import { isDemoMode } from '@/lib/api/config';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useSales, useProducts } from '@/hooks/useERP';
+import { useSales } from '@/hooks/useERP';
+import { reportUnitCost, useReportProducts, type ReportProductLookup } from '@/hooks/useReportProducts';
 import type { Sale, Product } from '@/types/erp';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
@@ -13,7 +14,7 @@ import {
 // ==================== SHARED DASHBOARD DATA ====================
 // One sales + one products fetch for all charts (avoids 7–8 duplicate /sales calls).
 
-type ChartsData = { sales: Sale[]; products: Product[] };
+type ChartsData = { sales: Sale[]; products: Product[]; lookup: ReportProductLookup };
 
 const ChartsDataContext = createContext<ChartsData | null>(null);
 
@@ -27,8 +28,8 @@ export function DashboardChartsProvider({ children }: { children: ReactNode }) {
   const dateTo = useMemo(() => toLocalDateStr(new Date()), []);
   // Charts need line items for top products — bound to last 30 days to stay fast.
   const { sales } = useSales(apiBranchId, { light: false, dateFrom, dateTo, limit: 500 });
-  const { products } = useProducts(apiBranchId, { light: true });
-  const value = useMemo(() => ({ sales, products }), [sales, products]);
+  const { products, lookup } = useReportProducts(apiBranchId);
+  const value = useMemo(() => ({ sales, products, lookup }), [sales, products, lookup]);
   return <ChartsDataContext.Provider value={value}>{children}</ChartsDataContext.Provider>;
 }
 
@@ -72,11 +73,11 @@ function useChartSales(): Sale[] {
   return ctx?.sales ?? sales;
 }
 
-function useChartProducts(): Product[] {
+function useChartProducts(): { products: Product[]; lookup: ReportProductLookup } {
   const ctx = useContext(ChartsDataContext);
   const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId, { light: true, enabled: !ctx });
-  return ctx?.products ?? products;
+  const own = useReportProducts(apiBranchId, { enabled: !ctx });
+  return ctx ?? own;
 }
 
 function getExpensesFromStorage() {
@@ -440,15 +441,10 @@ export function DailySalesChart() {
 export function ProfitMarginWidget() {
   const { c, fmtMoney } = useChartsI18n();
   const sales = useChartSales();
-  const products = useChartProducts();
+  const { lookup } = useChartProducts();
 
   const data = useMemo(() => {
     const completed = sales.filter(isCompletedSale);
-    const productCostMap = new Map<string, number>();
-    for (const p of products) {
-      productCostMap.set(p.id, p.avgCost || p.cost || 0);
-    }
-
     let totalRevenue = 0;
     let totalCost = 0;
 
@@ -456,7 +452,7 @@ export function ProfitMarginWidget() {
       for (const item of (sale.items || [])) {
         const revenue = saleLineRevenue(item);
         const qty = Number(item.quantity) || 0;
-        const cost = (productCostMap.get(item.productId) || 0) * qty;
+        const cost = reportUnitCost(lookup(item.productId, item.sku)) * qty;
         totalRevenue += revenue;
         totalCost += cost;
       }
@@ -466,7 +462,7 @@ export function ProfitMarginWidget() {
     const margin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 
     return { totalRevenue, totalCost, grossProfit, margin };
-  }, [sales, products]);
+  }, [sales, lookup]);
 
   const marginColor = data.margin >= 30 ? CHART_MARGIN_GOOD : data.margin >= 15 ? CHART_MARGIN_OK : CHART_MARGIN_LOW;
 
@@ -582,7 +578,7 @@ export function PaymentMethodChart() {
 
 export function StockValuationWidget() {
   const { c, fmtMoney, locale } = useChartsI18n();
-  const products = useChartProducts();
+  const { products } = useChartProducts();
 
   const data = useMemo(() => {
     let totalCostValue = 0;
@@ -593,9 +589,9 @@ export function StockValuationWidget() {
     for (const p of products) {
       if (!p.isActive) continue;
       activeProducts++;
-      const qty = p.stock || 0;
+      const qty = Math.max(0, Number(p.stock) || 0);
       totalItems += qty;
-      totalCostValue += qty * (p.avgCost || p.cost || 0);
+      totalCostValue += qty * reportUnitCost(p);
       totalSaleValue += qty * (p.price || 0);
     }
 

@@ -93,4 +93,18 @@ describe('branch inventory grid', { concurrency: 1 }, () => {
     assert.equal(Number(hq.get(sku('A'))?.stock), 40);
     assert.equal(Number(hq.get(sku('B'))?.stock), 0);
   });
+
+  it('returns min_stock so the dead-stock report can flag rows below their minimum', async () => {
+    const tag = randomUUID().slice(0, 6);
+    const id = randomUUID();
+    await harness.withClient(async (client) => {
+      await client.query(
+        `INSERT INTO products (id, name, sku, stock, cost, price, min_stock, is_active, branch_id, created_at, updated_at)
+         VALUES ($1, 'Min stock', $2, 0, 10, 25, 12, 1, 'branch-main', datetime('now'), datetime('now'))`,
+        [id, `MIN-${tag}`],
+      );
+    });
+    const row = (await listGrid('branch-main')).find((r) => r.id === id);
+    assert.equal(Number(row?.min_stock), 12);
+  });
 });

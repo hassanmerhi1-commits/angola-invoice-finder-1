@@ -1,4 +1,5 @@
 import type { Sale } from '@/types/erp';
+import { normalizeProductSkuKey } from '@/lib/productDedupe';
 
 export type SalesGroupBy = 'item' | 'category' | 'customer' | 'supplier' | 'warehouse' | 'user' | 'month';
 
@@ -32,8 +33,8 @@ export interface ProductMeta {
 }
 
 export interface SalesPivotContext {
-  /** productId -> metadata (category, supplier, unit cost). */
-  productMeta: Map<string, ProductMeta>;
+  /** Line item -> metadata (category, supplier, unit cost); matches row id, then canonical SKU. */
+  productMeta: (productId: string, sku?: string) => ProductMeta | undefined;
   /** Resolve a branch/warehouse id to a display name. */
   branchName: (id: string) => string;
   labels: {
@@ -60,7 +61,7 @@ export function buildSalesPivot(
 
   for (const sale of sales) {
     for (const item of sale.items) {
-      const meta = ctx.productMeta.get(item.productId);
+      const meta = ctx.productMeta(item.productId, item.sku);
       const qty = Number(item.quantity || 0);
       const base = Number(item.subtotal || 0);
       const vat = Number(item.taxAmount || 0);
@@ -70,7 +71,8 @@ export function buildSalesPivot(
       let label: string;
       switch (groupBy) {
         case 'item':
-          key = item.productId || item.sku || item.productName;
+          // Same SKU sold from several branch rows is one product in the report.
+          key = normalizeProductSkuKey(item.sku) || item.productId || item.productName;
           label = item.productName || meta?.category || key;
           break;
         case 'category':

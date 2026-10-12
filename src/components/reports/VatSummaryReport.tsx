@@ -11,6 +11,7 @@ import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
 
 type IvaLine = {
   direction: string;
@@ -40,6 +41,8 @@ export default function VatSummaryReport() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [report, setReport] = useState<IvaReport>(EMPTY);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!filters.shared) return;
@@ -66,15 +69,24 @@ export default function VatSummaryReport() {
       try {
         const res = await api.tax.ivaReport(year, month);
         if (cancelled) return;
-        const data = res.data || EMPTY;
+        if (!res.data) {
+          setReport(EMPTY);
+          setLoadError(res.error || t.common.loadFailed);
+          return;
+        }
+        setLoadError(null);
+        const data = res.data;
         setReport({
           lines: Array.isArray(data.lines) ? data.lines : [],
           outputTax: Number(data.outputTax || 0),
           inputTax: Number(data.inputTax || 0),
           ivaPayable: Number(data.ivaPayable ?? Number(data.outputTax || 0) - Number(data.inputTax || 0)),
         });
-      } catch {
-        if (!cancelled) setReport(EMPTY);
+      } catch (e) {
+        if (!cancelled) {
+          setReport(EMPTY);
+          setLoadError(e instanceof Error ? e.message : String(e));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -82,7 +94,7 @@ export default function VatSummaryReport() {
     return () => {
       cancelled = true;
     };
-  }, [year, month]);
+  }, [year, month, reloadKey]);
 
   const outputLines = useMemo(
     () => report.lines.filter((l) => String(l.direction).toLowerCase() === 'output'),
@@ -156,6 +168,13 @@ export default function VatSummaryReport() {
 
   return (
     <div className="space-y-3">
+      <ReportStockStatus
+        loading={false}
+        error={loadError}
+        empty={false}
+        errorMessage={t.reportsCenterUi.serverLoadFailed}
+        onRetry={() => setReloadKey((k) => k + 1)}
+      />
       <Card>
         <CardHeader>
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">

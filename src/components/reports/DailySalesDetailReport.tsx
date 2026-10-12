@@ -1,7 +1,8 @@
 import { useState, useRef, useMemo } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { REPORT_SALES_LIMIT } from '@/contexts/ReportsPeriodContext';
-import { useSales, useProducts, useCategories } from '@/hooks/useERP';
+import { useSales, useCategories } from '@/hooks/useERP';
+import { reportUnitCost, useReportProducts } from '@/hooks/useReportProducts';
 import { Sale, SaleItem, Product } from '@/types/erp';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -69,12 +70,13 @@ export function DailySalesDetailReport({
   const { apiBranchId, currentBranch } = useBranchScope();
   const effectiveBranchId = branchId ?? apiBranchId;
   const { sales } = useSales(effectiveBranchId, {
+    deferInitialLoad: !open,
     light: false,
     dateFrom: startDate,
     dateTo: endDate,
     limit: REPORT_SALES_LIMIT,
   });
-  const { products } = useProducts(effectiveBranchId, { light: true });
+  const { lookup } = useReportProducts(effectiveBranchId, { enabled: open });
   const { categories } = useCategories();
   const printRef = useRef<HTMLDivElement>(null);
   
@@ -99,20 +101,6 @@ export function DailySalesDetailReport({
     return saleDate >= startDate && saleDate <= endDate;
   });
 
-  // Create product lookups (id first, SKU fallback for remapped filial rows)
-  const { productCostMap, productCostBySku, productCategoryMap } = useMemo(() => {
-    const costById = new Map<string, number>();
-    const costBySku = new Map<string, number>();
-    const categoryById = new Map<string, string>();
-    products.forEach((p) => {
-      const unitCost = Number(p.avgCost || p.cost || 0);
-      costById.set(p.id, unitCost);
-      if (p.sku) costBySku.set(p.sku, unitCost);
-      categoryById.set(p.id, p.category || 'GERAL');
-    });
-    return { productCostMap: costById, productCostBySku: costBySku, productCategoryMap: categoryById };
-  }, [products]);
-
   // Get unique IVA rates from sales
   const uniqueIvaRates = useMemo(() => {
     const rates = new Set<number>();
@@ -127,12 +115,12 @@ export function DailySalesDetailReport({
     const cats = new Set<string>();
     daySales.forEach(sale => {
       sale.items.forEach(item => {
-        const cat = productCategoryMap.get(item.productId);
+        const cat = lookup(item.productId, item.sku)?.category;
         if (cat) cats.add(cat);
       });
     });
     return Array.from(cats).sort();
-  }, [daySales, productCategoryMap]);
+  }, [daySales, lookup]);
 
   // Process all sale items with cost and profit calculations.
   // Line `subtotal` is already ex-VAT (same as POS / salesPivot). Do not divide by (1+IVA).
@@ -140,11 +128,8 @@ export function DailySalesDetailReport({
     const items: SaleItemDetail[] = [];
     daySales.forEach(sale => {
       sale.items.forEach(item => {
-        const unitCost =
-          productCostMap.get(item.productId) ??
-          (item.sku ? productCostBySku.get(item.sku) : undefined) ??
-          0;
-        const totalCost = unitCost * item.quantity;
+        const product = lookup(item.productId, item.sku);
+        const totalCost = reportUnitCost(product) * item.quantity;
         const subtotalWithoutIVA = Number(item.subtotal) || 0;
         const storedTax = Number(item.taxAmount);
         const ivaAmount =
@@ -153,7 +138,7 @@ export function DailySalesDetailReport({
             : subtotalWithoutIVA * ((Number(item.taxRate) || 0) / 100);
         const profit = subtotalWithoutIVA - totalCost;
         const profitMargin = subtotalWithoutIVA > 0 ? (profit / subtotalWithoutIVA) * 100 : 0;
-        const category = productCategoryMap.get(item.productId) || 'GERAL';
+        const category = product?.category || 'GERAL';
 
         items.push({
           ...item,
@@ -167,7 +152,7 @@ export function DailySalesDetailReport({
       });
     });
     return items;
-  }, [daySales, productCostMap, productCostBySku, productCategoryMap]);
+  }, [daySales, lookup]);
 
   // Apply filters to processed items
   const filteredItems = useMemo(() => {

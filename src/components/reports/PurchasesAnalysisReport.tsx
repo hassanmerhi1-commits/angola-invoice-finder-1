@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useProducts } from '@/hooks/useERP';
+import { useReportProducts } from '@/hooks/useReportProducts';
 import { ShoppingCart, Loader2, Truck, Package, Tags, Calendar } from 'lucide-react';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { api } from '@/lib/api/client';
@@ -24,7 +24,7 @@ export default function PurchasesAnalysisReport({
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId, { light: true });
+  const { lookup } = useReportProducts(apiBranchId);
   const { dateFrom, dateTo, setDateFrom, setDateTo, shared } = useSharedReportFilters();
   const [purchases, setPurchases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,11 +69,9 @@ export default function PurchasesAnalysisReport({
   }, [filtered]);
 
   const categoryOf = useCallback(
-    (productId: string | undefined, fallback: string) => {
-      if (!productId) return fallback;
-      return products.find((p) => p.id === productId)?.category || fallback;
-    },
-    [products],
+    (productId: string | undefined, fallback: string, sku?: string) =>
+      lookup(productId, sku)?.category || fallback,
+    [lookup],
   );
 
   const pivotCtx = useMemo<PurchasesPivotContext>(

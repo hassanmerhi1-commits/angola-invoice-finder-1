@@ -55,6 +55,9 @@ import { voidStockAdjustmentDocument } from '@/lib/stockAdjustmentActions';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
+import { isDemoMode } from '@/lib/api/config';
+import { useReportsPeriodOptional } from '@/contexts/ReportsPeriodContext';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
 import { getStockMovements as getLocalStockMovements } from '@/lib/storage';
 import type { StockMovement } from '@/types/erp';
 import {
@@ -109,6 +112,17 @@ export default function StockAdjustmentHistoryReport() {
   const [deleteDoc, setDeleteDoc] = useState<StockAdjustmentDocument | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Inside Reports, follow the shared period / branch; the local inputs still allow narrowing.
+  const period = useReportsPeriodOptional();
+  useEffect(() => {
+    if (!period) return;
+    setStartDate(period.dateFrom);
+    setEndDate(period.dateTo);
+    if (canPickBranch) setBranchFilter(period.apiBranchId || '');
+  }, [period?.dateFrom, period?.dateTo, period?.apiBranchId, canPickBranch]);
+
   const loadMovements = useCallback(async () => {
     setLoading(true);
     try {
@@ -121,11 +135,14 @@ export default function StockAdjustmentHistoryReport() {
       });
       if (result.data && Array.isArray(result.data)) {
         setMovements(result.data.map((row) => mapMovementRow(row as Record<string, unknown>)));
+        setLoadError(null);
         return;
       }
+      if (!isDemoMode()) setLoadError(result.error || t.common.loadFailed);
       const local = await getLocalStockMovements(branchFilter || apiBranchId);
       setMovements(local);
-    } catch {
+    } catch (e) {
+      if (!isDemoMode()) setLoadError(e instanceof Error ? e.message : String(e));
       try {
         const local = await getLocalStockMovements(branchFilter || apiBranchId);
         setMovements(local);
@@ -378,6 +395,13 @@ export default function StockAdjustmentHistoryReport() {
           </div>
         </CardContent>
       </Card>
+
+      <ReportStockStatus
+        loading={false}
+        error={loadError}
+        empty={false}
+        onRetry={() => void loadMovements()}
+      />
 
       <Card>
         <CardContent className="p-0">

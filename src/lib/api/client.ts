@@ -849,6 +849,13 @@ export const api = {
       return apiFetch<any[]>(`/products${qs ? `?${qs}` : ''}`);
     },
     inventoryConsolidated: () => apiFetch<any[]>('/products/inventory-consolidated'),
+    /** Last non-voided sale per canonical SKU (past year). */
+    lastSaleDates: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<{ rows: Array<{ sku_key: string; last_sale: string }> }>(
+        `/products/last-sale-dates${qs}`,
+      );
+    },
     lowStock: (branchId?: string) => {
       const sp = new URLSearchParams();
       if (branchId) sp.set('branchId', branchId);

@@ -11,15 +11,29 @@ export function useReportSales() {
   const dateFrom = period?.dateFrom || `${y}-${m}-01`;
   const dateTo = period?.dateTo || `${y}-${m}-${lastDay}`;
   const branchId = period?.apiBranchId;
-  const { sales, refreshSales } = useSales(branchId, {
+  const { sales, refreshSales, isLoading, loadError } = useSales(branchId, {
     light: false,
     dateFrom,
     dateTo,
     limit: REPORT_SALES_LIMIT,
   });
+
+  // "Compare with previous period" needs its own range — the current list never contains it.
+  const previous = period?.comparePrevious ? period.previousPeriod : null;
+  const { sales: previousSales } = useSales(branchId, {
+    deferInitialLoad: !previous,
+    light: false,
+    dateFrom: previous?.dateFrom ?? dateFrom,
+    dateTo: previous?.dateTo ?? dateTo,
+    limit: REPORT_SALES_LIMIT,
+  });
+
   return {
     sales,
+    previousSales: previous ? previousSales : [],
     refreshSales,
+    isLoading,
+    loadError,
     truncated: sales.length >= REPORT_SALES_LIMIT,
     dateFrom,
     dateTo,

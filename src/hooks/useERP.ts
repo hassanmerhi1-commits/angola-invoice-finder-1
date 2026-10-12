@@ -877,8 +877,11 @@ export function useSales(
   const [loadError, setLoadError] = useState<string | null>(null);
   const salesRef = useRef(sales);
   salesRef.current = sales;
+  /** Deferred lists (closed dialogs, POS before first open) ignore sale events until used. */
+  const loadedOnceRef = useRef(false);
 
   const refreshSales = useCallback(async (optsRefresh?: { force?: boolean }) => {
+    loadedOnceRef.current = true;
     if (!optsRefresh?.force && isCachedListFresh(salesCacheKey)) {
       const cached = getCachedList<Sale[]>(salesCacheKey);
       if (cached?.length) {
@@ -950,7 +953,7 @@ export function useSales(
     }, !light || limit > 1000 ? 15_000 : 2_000);
     const onSalesChanged = () => {
       markCachedListStale(salesCacheKey);
-      throttled.trigger();
+      if (loadedOnceRef.current) throttled.trigger();
     };
     window.addEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
     return () => {

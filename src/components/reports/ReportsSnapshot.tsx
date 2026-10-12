@@ -3,8 +3,10 @@ import { TrendingUp, Clock, Truck, Package, DollarSign, Receipt, Loader2, Archiv
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
-import { useProducts } from '@/hooks/useERP';
+import { reportUnitCost, useReportProducts } from '@/hooks/useReportProducts';
 import { useReportSales } from '@/hooks/useReportSales';
+import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
+import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { useReportsPeriod } from '@/contexts/ReportsPeriodContext';
 import { ReportsPeriodBar } from '@/components/reports/ReportsPeriodBar';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
@@ -67,53 +69,58 @@ export function ReportsSnapshot({
 }) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId, dateTo } = useReportsPeriod();
-  const { sales } = useReportSales();
-  const { products } = useProducts(apiBranchId, { light: true });
+  const { apiBranchId, dateFrom, dateTo } = useReportsPeriod();
+  const { sales, isLoading: salesLoading, loadError: salesError } = useReportSales();
+  const { creditNotes } = useReportCreditNotes(apiBranchId, { dateFrom, dateTo });
+  const { products, loading: stockLoading, error: stockError } = useReportProducts(apiBranchId);
   const [arRows, setArRows] = useState<Record<string, unknown>[]>([]);
   const [apRows, setApRows] = useState<Record<string, unknown>[]>([]);
   const [iva, setIva] = useState({ output: 0, input: 0, net: 0 });
+  const [cardsLoading, setCardsLoading] = useState(true);
+  const [failed, setFailed] = useState({ ar: false, ap: false, iva: false });
 
   const year = Number(dateTo.slice(0, 4)) || new Date().getFullYear();
   const month = Number(dateTo.slice(5, 7)) || new Date().getMonth() + 1;
 
   useEffect(() => {
     let cancelled = false;
+    setCardsLoading(true);
+    const settle = <T,>(p: Promise<{ data?: T; error?: string }>) =>
+      p.catch((e: unknown) => ({ data: undefined, error: e instanceof Error ? e.message : String(e) }));
     (async () => {
-      try {
-        const [ar, ap, vat] = await Promise.all([
-          api.payments.receivablesAging(apiBranchId),
-          api.payments.payablesAging(apiBranchId),
-          api.tax.ivaReport(year, month),
-        ]);
-        if (cancelled) return;
-        setArRows(Array.isArray(ar.data) ? ar.data : []);
-        setApRows(Array.isArray(ap.data) ? ap.data : []);
-        const output = Number(vat.data?.outputTax || 0);
-        const input = Number(vat.data?.inputTax || 0);
-        setIva({
-          output,
-          input,
-          net: Number(vat.data?.ivaPayable ?? output - input),
-        });
-      } catch {
-        if (!cancelled) {
-          setArRows([]);
-          setApRows([]);
-          setIva({ output: 0, input: 0, net: 0 });
-        }
-      }
+      const [ar, ap, vat] = await Promise.all([
+        settle(api.payments.receivablesAging(apiBranchId)),
+        settle(api.payments.payablesAging(apiBranchId)),
+        settle(api.tax.ivaReport(year, month)),
+      ]);
+      if (cancelled) return;
+      setArRows(Array.isArray(ar.data) ? ar.data : []);
+      setApRows(Array.isArray(ap.data) ? ap.data : []);
+      const vatData = vat.data as { outputTax?: number; inputTax?: number; ivaPayable?: number } | undefined;
+      const output = Number(vatData?.outputTax || 0);
+      const input = Number(vatData?.inputTax || 0);
+      setIva({ output, input, net: Number(vatData?.ivaPayable ?? output - input) });
+      setFailed({
+        ar: !Array.isArray(ar.data),
+        ap: !Array.isArray(ap.data),
+        iva: !vatData,
+      });
+      setCardsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
   }, [apiBranchId, year, month]);
 
-  const liveSales = useMemo(
-    () => sales.filter((s) => s.status !== 'voided'),
-    [sales],
+  // Same netting as the Sales report (credit notes subtract), so the card and the report agree.
+  const netSales = useMemo(
+    () => mergeNetReportSales(sales, creditNotes, { dateFrom, dateTo, branchId: apiBranchId }),
+    [sales, creditNotes, dateFrom, dateTo, apiBranchId],
   );
-  const salesTotal = liveSales.reduce((sum, s) => sum + (Number(s.total) || 0), 0);
+  const liveSales = useMemo(() => netSales.filter((s) => !s.id.startsWith('cn:')), [netSales]);
+  const salesTotal = netSales.reduce((sum, s) => sum + (Number(s.total) || 0), 0);
+  const cardHint = (loading: boolean, error: boolean, ready: string) =>
+    error ? t.reportsCenterUi.snapshotLoadFailed : loading ? t.common.loading : ready;
   const receivables = useMemo(() => groupOpen(arRows, dateTo, ['client_name', 'entity_name']), [arRows, dateTo]);
   const payables = useMemo(() => groupOpen(apRows, dateTo, ['supplier_name', 'entity_name']), [apRows, dateTo]);
   const arTotal = receivables.reduce((sum, r) => sum + r.total, 0);
@@ -122,9 +129,8 @@ export function ReportsSnapshot({
   const stockRows = useMemo(() => {
     return products
       .map((p) => {
-        const unitCost = p.avgCost != null && Number.isFinite(Number(p.avgCost)) ? Number(p.avgCost) : Number(p.cost) || 0;
         const qty = Number(p.stock) || 0;
-        return { id: p.id, name: p.name, qty, value: qty * unitCost };
+        return { id: p.id, name: p.name, qty, value: qty * reportUnitCost(p) };
       })
       .filter((p) => p.qty > 0)
       .sort((a, b) => b.value - a.value);
@@ -135,7 +141,11 @@ export function ReportsSnapshot({
     {
       id: 'vendas' as const,
       title: t.reportsCenterUi.doorVendas,
-      hint: t.reportsCenterUi.snapshotSalesCount.replace('{count}', String(liveSales.length)),
+      hint: cardHint(
+        salesLoading && sales.length === 0,
+        !!salesError && sales.length === 0,
+        t.reportsCenterUi.snapshotSalesCount.replace('{count}', String(liveSales.length)),
+      ),
       amount: salesTotal,
       tone: 'sky' as NexorTone,
       icon: TrendingUp,
@@ -143,7 +153,7 @@ export function ReportsSnapshot({
     {
       id: 'receber' as const,
       title: t.reportsCenterUi.doorReceivable,
-      hint: t.reportsCenterUi.snapshotPeopleCount.replace('{count}', String(receivables.length)),
+      hint: cardHint(cardsLoading, failed.ar, t.reportsCenterUi.snapshotPeopleCount.replace('{count}', String(receivables.length))),
       amount: arTotal,
       tone: 'amber' as NexorTone,
       icon: Clock,
@@ -151,7 +161,7 @@ export function ReportsSnapshot({
     {
       id: 'pagar' as const,
       title: t.reportsCenterUi.doorPayable,
-      hint: t.reportsCenterUi.snapshotPeopleCount.replace('{count}', String(payables.length)),
+      hint: cardHint(cardsLoading, failed.ap, t.reportsCenterUi.snapshotPeopleCount.replace('{count}', String(payables.length))),
       amount: apTotal,
       tone: 'rose' as NexorTone,
       icon: Truck,
@@ -159,7 +169,11 @@ export function ReportsSnapshot({
     {
       id: 'stock' as const,
       title: t.reportsCenterUi.doorStock,
-      hint: t.reportsCenterUi.snapshotProductsCount.replace('{count}', String(stockRows.length)),
+      hint: cardHint(
+        stockLoading && stockRows.length === 0,
+        !!stockError && stockRows.length === 0,
+        t.reportsCenterUi.snapshotProductsCount.replace('{count}', String(stockRows.length)),
+      ),
       amount: stockTotal,
       tone: 'emerald' as NexorTone,
       icon: Package,
@@ -175,7 +189,7 @@ export function ReportsSnapshot({
     {
       id: 'iva' as const,
       title: t.reportsCenterUi.doorVat,
-      hint: t.reportsCenterUi.snapshotVatPay,
+      hint: cardHint(cardsLoading, failed.iva, t.reportsCenterUi.snapshotVatPay),
       amount: iva.net,
       tone: 'slate' as NexorTone,
       icon: Receipt,

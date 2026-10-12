@@ -18,22 +18,23 @@ import {
 } from '@/components/ui/select';
 import { Download, Printer, ArrowDownCircle, ArrowUpCircle, FileSpreadsheet, FileDown, Package, Search } from 'lucide-react';
 import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
-import { useProducts } from '@/hooks/useERP';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { useReportBranchId } from '@/hooks/useReportProducts';
+import { normalizeProductSkuKey } from '@/lib/productDedupe';
 import { api } from '@/lib/api/client';
 import { getStockMovements as getLocalStockMovements } from '@/lib/storage';
 import { StockMovement } from '@/types/erp';
 import { useTranslation } from '@/i18n';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
 
+const MAX_TABLE_ROWS = 1000;
+
 export default function StockMovementReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
-  const branchFilter = apiBranchId;
-  const { products } = useProducts(branchFilter, { light: true });
-  
+  const branchFilter = useReportBranchId();
+
   const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [movementsLoading, setMovementsLoading] = useState(true);
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();
     date.setDate(1);
@@ -44,11 +45,20 @@ export default function StockMovementReport() {
   const [selectedProduct, setSelectedProduct] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Load real stock movements from storage
+  // The server returns the newest `limit` rows; without the period it only ever sent the last
+  // 200 movements, so on a busy Sede the month showed little more than today.
   useEffect(() => {
+    let cancelled = false;
     const loadMovements = async () => {
+      setMovementsLoading(true);
       try {
-        const result = await api.transactions.stockMovements({ warehouseId: branchFilter });
+        const result = await api.transactions.stockMovements({
+          warehouseId: branchFilter,
+          dateFrom: startDate,
+          dateTo: endDate,
+          limit: 5000,
+        });
+        if (cancelled) return;
         if (result.data) {
           setMovements(result.data.map((m: any) => ({
             id: m.id, productId: m.product_id, productName: m.product_name,
@@ -58,14 +68,30 @@ export default function StockMovementReport() {
             costAtTime: Number(m.unit_cost || 0), notes: m.notes,
             createdBy: m.created_by, createdAt: m.created_at,
           })));
+          setMovementsLoading(false);
           return;
         }
       } catch { /* fall through */ }
       const data = await getLocalStockMovements(branchFilter);
+      if (cancelled) return;
       setMovements(data);
+      setMovementsLoading(false);
     };
-    loadMovements();
-  }, [branchFilter]);
+    void loadMovements();
+    return () => {
+      cancelled = true;
+    };
+  }, [branchFilter, startDate, endDate]);
+
+  const productOptions = useMemo(() => {
+    const bySku = new Map<string, { key: string; sku: string; name: string }>();
+    for (const m of movements) {
+      const key = normalizeProductSkuKey(m.sku) || String(m.productId || '');
+      if (!key || bySku.has(key)) continue;
+      bySku.set(key, { key, sku: m.sku || '', name: m.productName || '' });
+    }
+    return Array.from(bySku.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [movements]);
 
   const getReasonLabel = (reason: string) => {
     switch (reason) {
@@ -120,7 +146,9 @@ export default function StockMovementReport() {
     
     // Product filter
     if (selectedProduct !== 'all') {
-      result = result.filter(m => m.productId === selectedProduct);
+      result = result.filter(
+        m => (normalizeProductSkuKey(m.sku) || String(m.productId || '')) === selectedProduct,
+      );
     }
 
     // Search filter
@@ -248,8 +276,8 @@ export default function StockMovementReport() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{t.stockMovementUi.allProducts}</SelectItem>
-                  {products.map(p => (
-                    <SelectItem key={p.id} value={p.id}>{p.sku} — {p.name}</SelectItem>
+                  {productOptions.map(p => (
+                    <SelectItem key={p.key} value={p.key}>{p.sku} — {p.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -322,11 +350,11 @@ export default function StockMovementReport() {
                 {filteredMovements.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
-                      {t.common.noResults}
+                      {movementsLoading ? t.common.loading : t.common.noResults}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredMovements.map((m) => (
+                  filteredMovements.slice(0, MAX_TABLE_ROWS).map((m) => (
                     <TableRow key={m.id}>
                       <TableCell className="text-sm">
                         {new Date(m.createdAt).toLocaleDateString(locale)}<br />
@@ -362,6 +390,13 @@ export default function StockMovementReport() {
               </TableBody>
             </Table>
           </div>
+          {filteredMovements.length > MAX_TABLE_ROWS && (
+            <p className="px-4 py-2 text-xs text-muted-foreground border-t">
+              {t.stockMovementUi.showingNewest
+                .replace('{shown}', String(MAX_TABLE_ROWS))
+                .replace('{total}', String(filteredMovements.length))}
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

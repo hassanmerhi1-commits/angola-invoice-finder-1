@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, Fragment } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -13,6 +13,7 @@ import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
 
 interface AgingEntry {
   clientId: string;
@@ -42,11 +43,26 @@ export default function AccountsReceivableReport() {
   const [loading, setLoading] = useState(true);
   const [repairing, setRepairing] = useState(false);
   const [lines, setLines] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const requestSeq = useRef(0);
 
   const loadReceivables = async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
-    const res = await api.payments.receivablesAging(apiBranchId || undefined);
-    setLines(Array.isArray(res.data) ? res.data : []);
+    let res: { data?: unknown; error?: string };
+    try {
+      res = await api.payments.receivablesAging(apiBranchId || undefined);
+    } catch (e) {
+      res = { error: e instanceof Error ? e.message : String(e) };
+    }
+    if (seq !== requestSeq.current) return;
+    if (Array.isArray(res.data)) {
+      setLines(res.data);
+      setLoadError(null);
+    } else {
+      setLines([]);
+      setLoadError(res.error || t.common.loadFailed);
+    }
     setLoading(false);
   };
 
@@ -119,7 +135,8 @@ export default function AccountsReceivableReport() {
       const entry = byClient[clientId];
       const dueRaw = row.due_date || row.dueDate || docDate;
       const dueDate = String(dueRaw).slice(0, 10);
-      const daysOverdue = Math.max(0, differenceInDays(asOfDate, parseISO(dueDate)));
+      const rawDays = differenceInDays(asOfDate, parseISO(dueDate));
+      const daysOverdue = Number.isFinite(rawDays) ? Math.max(0, rawDays) : 0;
 
       if (daysOverdue <= 30) entry.current += amount;
       else if (daysOverdue <= 60) entry.days30 += amount;
@@ -202,6 +219,13 @@ export default function AccountsReceivableReport() {
 
   return (
     <div className="space-y-3">
+      <ReportStockStatus
+        loading={false}
+        error={loadError}
+        empty={false}
+        errorMessage={t.reportsCenterUi.serverLoadFailed}
+        onRetry={() => void loadReceivables()}
+      />
       <ReportStatStrip
         columns="xl:grid-cols-5"
         items={[

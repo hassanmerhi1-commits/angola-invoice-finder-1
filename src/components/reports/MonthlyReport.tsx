@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useReportCreditNotes } from '@/hooks/useReportCreditNotes';
-import { useProducts } from '@/hooks/useERP';
+import { reportUnitCost, useReportProducts } from '@/hooks/useReportProducts';
 import { Calendar, Download, Printer, FileDown } from 'lucide-react';
 import { format, startOfYear, endOfYear } from 'date-fns';
 import { exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
@@ -44,7 +44,7 @@ export default function MonthlyReport() {
   const { dateFrom, dateTo, setDateFrom, setDateTo, comparePrevious, setComparePrevious, branchFilter, apiBranchId } = filters;
   const { selectedBranch } = branchFilter;
   const { sales, truncated } = useReportSales();
-  const { products } = useProducts(apiBranchId, { light: true });
+  const { lookup } = useReportProducts(apiBranchId);
   const { companyName, preview } = useReportExportMeta();
 
   const [purchases, setPurchases] = useState<any[]>([]);
@@ -65,12 +65,6 @@ export default function MonthlyReport() {
       cancelled = true;
     };
   }, [apiBranchId]);
-
-  const costMap = useMemo(() => {
-    const m = new Map<string, number>();
-    products.forEach((p) => m.set(p.id, p.avgCost || p.cost || 0));
-    return m;
-  }, [products]);
 
   const { rows, totals } = useMemo(() => {
     const inRange = (raw?: string) => {
@@ -93,7 +87,7 @@ export default function MonthlyReport() {
       const row = get(month);
       row.sales += Number(s.subtotal || 0);
       s.items.forEach((item) => {
-        row.cost += (costMap.get(item.productId) || 0) * Number(item.quantity || 0);
+        row.cost += reportUnitCost(lookup(item.productId, item.sku)) * Number(item.quantity || 0);
       });
       map.set(month, row);
     });
@@ -124,7 +118,7 @@ export default function MonthlyReport() {
     );
 
     return { rows: list, totals: tot };
-  }, [sales, creditNotes, purchases, costMap, dateFrom, dateTo, reportBranchId]);
+  }, [sales, creditNotes, purchases, lookup, dateFrom, dateTo, reportBranchId]);
 
   const fmt = (n: number) =>
     new Intl.NumberFormat(locale, { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n || 0);

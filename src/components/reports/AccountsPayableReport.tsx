@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -13,6 +13,7 @@ import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
 
 interface PayableEntry {
   supplierId: string;
@@ -54,11 +55,26 @@ export default function AccountsPayableReport() {
   const [loading, setLoading] = useState(true);
   const [repairing, setRepairing] = useState(false);
   const [payableLines, setPayableLines] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const requestSeq = useRef(0);
 
   const loadPayables = async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
-    const res = await api.payments.payablesAging(apiBranchId || undefined);
-    setPayableLines(Array.isArray(res.data) ? res.data : []);
+    let res: { data?: unknown; error?: string };
+    try {
+      res = await api.payments.payablesAging(apiBranchId || undefined);
+    } catch (e) {
+      res = { error: e instanceof Error ? e.message : String(e) };
+    }
+    if (seq !== requestSeq.current) return;
+    if (Array.isArray(res.data)) {
+      setPayableLines(res.data);
+      setLoadError(null);
+    } else {
+      setPayableLines([]);
+      setLoadError(res.error || t.common.loadFailed);
+    }
     setLoading(false);
   };
 
@@ -134,13 +150,14 @@ export default function AccountsPayableReport() {
 
       const entry = bySupplier[supplierId];
       const dueRaw = row.due_date || row.dueDate;
+      const docTime = parseISO(docDate).getTime();
       const dueDate = dueRaw
         ? String(dueRaw).slice(0, 10)
-        : format(
-            new Date(docDate).getTime() + getPaymentTermDays(entry.paymentTerms) * 86400000,
-            'yyyy-MM-dd',
-          );
-      const daysUntilDue = differenceInDays(parseISO(dueDate), asOfDate);
+        : Number.isFinite(docTime)
+          ? format(docTime + getPaymentTermDays(entry.paymentTerms) * 86400000, 'yyyy-MM-dd')
+          : asOf;
+      const rawDays = differenceInDays(parseISO(dueDate), asOfDate);
+      const daysUntilDue = Number.isFinite(rawDays) ? rawDays : 0;
 
       if (daysUntilDue >= 0) entry.current += amount;
       else if (daysUntilDue >= -30) entry.days30 += amount;
@@ -228,6 +245,13 @@ export default function AccountsPayableReport() {
 
   return (
     <div className="space-y-3">
+      <ReportStockStatus
+        loading={false}
+        error={loadError}
+        empty={false}
+        errorMessage={t.reportsCenterUi.serverLoadFailed}
+        onRetry={() => void loadPayables()}
+      />
       <ReportStatStrip
         columns="xl:grid-cols-5"
         items={[

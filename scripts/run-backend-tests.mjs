@@ -39,6 +39,7 @@ const testFiles = [
   'test/stockBySku.test.js',
   'test/inventoryGridBranch.test.js',
   'test/inventoryGridServerCache.test.js',
+  'test/lastSaleDates.test.js',
 ];
 
 function resolveElectronBinary() {

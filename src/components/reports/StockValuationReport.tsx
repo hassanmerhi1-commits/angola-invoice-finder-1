@@ -26,17 +26,19 @@ import {
 } from '@/components/ui/select';
 import { Printer, Package, FileSpreadsheet, FileDown, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react';
 import { buildDataTableHtml, exportReportExcel, printReport, saveReportPdf } from '@/lib/reportExport';
-import { useProducts } from '@/hooks/useERP';
-import { useBranchScope } from '@/hooks/useBranchScope';
+import { reportUnitCost, useReportBranchId, useReportProducts } from '@/hooks/useReportProducts';
 import { useTranslation } from '@/i18n';
 import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
+
+const MAX_TABLE_ROWS = 1000;
 
 export default function StockValuationReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId, { light: true });
+  const branchId = useReportBranchId();
+  const { products, loading, error, refresh } = useReportProducts(branchId);
   
   const [sortBy, setSortBy] = useState('value');
   const [filterCategory, setFilterCategory] = useState('all');
@@ -58,9 +60,7 @@ export default function StockValuationReport() {
 
   // Add calculated values — prefer weighted average cost for inventory valuation
   const productsWithValues = filteredProducts.map(p => {
-    const unitCost = (p.avgCost != null && Number.isFinite(Number(p.avgCost)))
-      ? Number(p.avgCost)
-      : Number(p.cost) || 0;
+    const unitCost = reportUnitCost(p);
     return {
       ...p,
       unitCost,
@@ -248,6 +248,14 @@ export default function StockValuationReport() {
         </CardContent>
       </Card>
 
+      <ReportStockStatus
+        loading={loading}
+        error={error}
+        empty={productsWithValues.length === 0}
+        emptyHint={showZeroStock ? undefined : t.stockValuationUi.noRowsInStock}
+        onRetry={() => void refresh({ force: true })}
+      />
+
       {/* Stock Table */}
       <Card>
         <CardContent className="p-0">
@@ -267,7 +275,7 @@ export default function StockValuationReport() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {productsWithValues.map((product) => (
+                {productsWithValues.slice(0, MAX_TABLE_ROWS).map((product) => (
                   <TableRow key={product.id}>
                     <TableCell className="font-mono text-sm">{product.sku}</TableCell>
                     <TableCell>
@@ -325,6 +333,13 @@ export default function StockValuationReport() {
               </TableBody>
             </Table>
           </div>
+          {productsWithValues.length > MAX_TABLE_ROWS && (
+            <p className="px-4 py-2 text-xs text-muted-foreground border-t">
+              {t.stockValuationUi.showingTop
+                .replace('{shown}', String(MAX_TABLE_ROWS))
+                .replace('{total}', String(productsWithValues.length))}
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

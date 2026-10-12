@@ -303,6 +303,7 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
       reservedStock: Number(p.reservedStock ?? p.reserved_stock ?? 0) || 0,
       lockedStock: Number(p.lockedStock ?? p.locked_stock ?? 0) || 0,
       quotedStock: Number(p.quotedStock ?? p.quoted_stock ?? 0) || 0,
+      minStock: Number(p.min_stock ?? p.minStock ?? 0) || 0,
       unit: p.unit ?? 'UN',
       taxRate: parseTaxRateOrNull(p.tax_rate ?? p.taxRate) ?? 0,
       branchId: p.branch_id ?? p.branchId ?? '',

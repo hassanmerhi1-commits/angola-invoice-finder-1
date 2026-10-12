@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from 'react';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useProducts } from '@/hooks/useERP';
+import { reportUnitCost, useReportProducts } from '@/hooks/useReportProducts';
 import { useTranslation } from '@/i18n';
 import type { ProductMeta, SalesPivotContext } from '@/lib/reports/salesPivot';
 
@@ -12,19 +12,20 @@ import type { ProductMeta, SalesPivotContext } from '@/lib/reports/salesPivot';
 export function useSalesPivotContext(apiBranchId?: string): SalesPivotContext {
   const { t } = useTranslation();
   const { branches, currentBranch } = useBranchScope();
-  const { products } = useProducts(apiBranchId, { light: true });
+  const { lookup } = useReportProducts(apiBranchId);
 
-  const productMeta = useMemo(() => {
-    const m = new Map<string, ProductMeta>();
-    products.forEach((p) =>
-      m.set(p.id, {
+  const productMeta = useCallback(
+    (productId: string, sku?: string): ProductMeta | undefined => {
+      const p = lookup(productId, sku);
+      if (!p) return undefined;
+      return {
         category: p.category || t.salesAnalysisUi.noCategory,
         supplierName: p.supplierName || t.salesAnalysisUi.noSupplier,
-        cost: p.avgCost || p.cost || 0,
-      }),
-    );
-    return m;
-  }, [products, t.salesAnalysisUi.noCategory, t.salesAnalysisUi.noSupplier]);
+        cost: reportUnitCost(p),
+      };
+    },
+    [lookup, t.salesAnalysisUi.noCategory, t.salesAnalysisUi.noSupplier],
+  );
 
   const branchName = useCallback(
     (id: string) => branches.find((b) => b.id === id)?.name || currentBranch?.name || t.common.unknown,

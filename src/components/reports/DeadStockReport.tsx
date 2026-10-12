@@ -1,13 +1,14 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, Download, Package } from 'lucide-react';
-import { REPORT_SALES_LIMIT } from '@/contexts/ReportsPeriodContext';
 import { format, parseISO, subDays } from 'date-fns';
-import { useBranchScope } from '@/hooks/useBranchScope';
-import { useProducts, useSales } from '@/hooks/useERP';
+import { api } from '@/lib/api/client';
+import { normalizeProductSkuKey } from '@/lib/productDedupe';
+import { reportUnitCost, useReportBranchId, useReportProducts } from '@/hooks/useReportProducts';
+import { ReportStockStatus } from '@/components/reports/ReportStockStatus';
 import { useTranslation } from '@/i18n';
 import { exportReportExcel } from '@/lib/reportExport';
 
@@ -18,46 +19,52 @@ type DeadReason = 'belowMin' | 'noSale90d' | 'both';
 export default function DeadStockReport() {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const { apiBranchId } = useBranchScope();
-  const { products } = useProducts(apiBranchId, { light: true });
+  const branchId = useReportBranchId();
+  const { products, loading: stockLoading, error: stockError, refresh } = useReportProducts(branchId);
   const cutoff = useMemo(() => subDays(new Date(), DEAD_DAYS), []);
   const cutoffKey = format(cutoff, 'yyyy-MM-dd');
-  const lookbackFrom = format(subDays(new Date(), 365), 'yyyy-MM-dd');
-  const lookbackTo = format(new Date(), 'yyyy-MM-dd');
-  const { sales } = useSales(apiBranchId, {
-    light: false,
-    dateFrom: lookbackFrom,
-    dateTo: lookbackTo,
-    limit: REPORT_SALES_LIMIT,
-  });
 
-  const lastSaleByProduct = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const sale of sales) {
-      if (sale.status === 'voided') continue;
-      const saleDate = String(sale.createdAt || '').slice(0, 10);
-      if (!saleDate) continue;
-      for (const item of sale.items || []) {
-        if (!item.productId) continue;
-        const prev = map.get(item.productId);
-        if (!prev || saleDate > prev) map.set(item.productId, saleDate);
+  // Last sale per SKU straight from the server — a year of sales with line items was the slowest
+  // download in Reports, and capped at 10k sales it marked busy products as never sold.
+  const [lastSaleBySku, setLastSaleBySku] = useState<Map<string, string>>(new Map());
+  const [salesLoading, setSalesLoading] = useState(true);
+  const [salesError, setSalesError] = useState<string | null>(null);
+  const [salesReloadKey, setSalesReloadKey] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setSalesLoading(true);
+    setSalesError(null);
+    void api.products.lastSaleDates(branchId).then((res) => {
+      if (cancelled) return;
+      if (res.error) {
+        setSalesError(res.error);
+      } else {
+        const map = new Map<string, string>();
+        for (const row of res.data?.rows || []) {
+          const key = normalizeProductSkuKey(row.sku_key);
+          if (key && row.last_sale) map.set(key, String(row.last_sale).slice(0, 10));
+        }
+        setLastSaleBySku(map);
       }
-    }
-    return map;
-  }, [sales]);
+      setSalesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId, salesReloadKey]);
 
   const rows = useMemo(() => {
+    if (salesLoading || salesError) return [];
     return products
       .filter((p) => p.isActive !== false && Number(p.stock) > 0)
       .map((p) => {
         const minStock = Number(p.minStock) || 0;
         const belowMin = minStock > 0 && Number(p.stock) <= minStock;
-        const lastSale = lastSaleByProduct.get(p.id);
+        const lastSale = lastSaleBySku.get(normalizeProductSkuKey(p.sku));
         const noSale90d = !lastSale || lastSale < cutoffKey;
         if (!belowMin && !noSale90d) return null;
         const reason: DeadReason = belowMin && noSale90d ? 'both' : belowMin ? 'belowMin' : 'noSale90d';
-        const unitCost =
-          p.avgCost != null && Number.isFinite(Number(p.avgCost)) ? Number(p.avgCost) : Number(p.cost) || 0;
+        const unitCost = reportUnitCost(p);
         return {
           id: p.id,
           sku: p.sku,
@@ -82,7 +89,9 @@ export default function DeadStockReport() {
       reason: DeadReason;
       costTied: number;
     }>;
-  }, [products, lastSaleByProduct, cutoffKey]);
+  }, [products, lastSaleBySku, cutoffKey, salesLoading, salesError]);
+  const loading = stockLoading || salesLoading;
+  const error = stockError || salesError;
 
   const totalCost = rows.reduce((s, r) => s + r.costTied, 0);
 
@@ -146,9 +155,19 @@ export default function DeadStockReport() {
         </CardContent>
       </Card>
 
+      <ReportStockStatus
+        loading={loading}
+        error={error}
+        empty={false}
+        onRetry={() => {
+          void refresh({ force: true });
+          setSalesReloadKey((k) => k + 1);
+        }}
+      />
+
       <Card>
         <CardContent className="p-0">
-          {rows.length === 0 ? (
+          {loading || error ? null : rows.length === 0 ? (
             <p className="text-center py-16 text-muted-foreground text-sm">{t.inventoryOpsUi.empty}</p>
           ) : (
             <div className="overflow-x-auto">
