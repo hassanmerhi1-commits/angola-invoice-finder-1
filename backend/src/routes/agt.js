@@ -364,7 +364,7 @@ module.exports = function(broadcastTable) {
         `SELECT
            COUNT(*)::int AS total,
            COUNT(*) FILTER (WHERE LOWER(COALESCE(agt_status, '')) IN ('validated', 'approved'))::int AS validated,
-           COUNT(*) FILTER (WHERE LOWER(COALESCE(agt_status, '')) IN ('error', 'rejected'))::int AS failed,
+           COUNT(*) FILTER (WHERE LOWER(COALESCE(agt_status, '')) IN ('error', 'rejected', 'invalid'))::int AS failed,
            COUNT(*) FILTER (WHERE LOWER(COALESCE(agt_status, '')) IN ('pending', 'submitted'))::int AS pending
          FROM agt_transmissions
          ${where}`,
@@ -444,7 +444,7 @@ module.exports = function(broadcastTable) {
       const params = [];
 
       if (status === 'failed') {
-        query += ` WHERE t.agt_status IN ('error', 'rejected')`;
+        query += ` WHERE t.agt_status IN ('error', 'rejected', 'invalid')`;
       } else if (status === 'pending') {
         query += ` WHERE t.agt_status IN ('pending', 'submitted')`;
       } else if (status) {

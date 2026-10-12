@@ -17,7 +17,7 @@ function parseAgtRequestPayload(raw) {
 function isLiveRegistarFacturaPayload(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
   const version = String(obj.schemaVersion || '');
-  return version.startsWith('1.') && Array.isArray(obj.documents);
+  return /^[12]\./.test(version) && Array.isArray(obj.documents);
 }
 
 function formatAgtRequestPayloadForPortal(raw) {

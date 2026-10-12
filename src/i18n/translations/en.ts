@@ -3582,6 +3582,7 @@ export const en = {
     statusValidated: "Validated",
     statusPending: "Pending",
     statusError: "Error",
+    statusInvalid: "Invalid at AGT — issue a correction with a new number",
     statusVoided: "Voided",
     filterAll: "All",
     filterFailed: "Failed",

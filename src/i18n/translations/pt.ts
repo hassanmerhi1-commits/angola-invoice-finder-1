@@ -3585,6 +3585,7 @@ export const pt: TranslationKeys = {
     statusValidated: "Validado",
     statusPending: "Pendente",
     statusError: "Erro",
+    statusInvalid: "Inválido na AGT — emita correcção com novo número",
     statusVoided: "Anulado",
     filterAll: "Todas",
     filterFailed: "Falhadas",

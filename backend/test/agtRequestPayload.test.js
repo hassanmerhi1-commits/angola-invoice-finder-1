@@ -17,6 +17,14 @@ test('live schema 1.2 payload is not marked simulated', () => {
   assert.match(formatted.json, /"schemaVersion":"1.2"/);
 });
 
+test('live schema 2.0 payload is not marked simulated', () => {
+  assert.equal(isLiveRegistarFacturaPayload({
+    schemaVersion: '2.0',
+    taxRegistrationNumber: '5000413178',
+    documents: [{ documentType: 'FT', documentNo: 'FT FT-SOY-2026-00001' }],
+  }), true);
+});
+
 test('simulate stub is marked simulated', () => {
   const formatted = formatAgtRequestPayloadForPortal({
     documentType: 'FR',

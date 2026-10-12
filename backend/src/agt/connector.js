@@ -195,24 +195,102 @@ async function transmitVoid(payload, config) {
   return normalizeResponse({ ...body, status: body.status || 'voided' });
 }
 
-async function checkDocumentStatus(documentNumber, config, options = {}) {
+/** obterEstado HTTP errors that only mean "ask again later". */
+const RETRY_LATER_CODES = new Set(['E96', 'E97', 'E98']);
+
+function errorEntries(body) {
+  const list = []
+    .concat(Array.isArray(body?.requestErrorList) ? body.requestErrorList : [])
+    .concat(Array.isArray(body?.errorList) ? body.errorList : [])
+    .concat(body?.errorCode || body?.idError ? [body] : []);
+  return list
+    .map((row) => ({
+      code: String(row?.errorCode || row?.idError || row?.code || '').trim(),
+      description: String(row?.errorDescription || row?.descriptionError || row?.description || '').trim(),
+    }))
+    .filter((row) => row.code || row.description);
+}
+
+/**
+ * Map an obterEstado response onto NEXOR statuses.
+ * resultCode: 0 all valid, 1 mixed, 2 none valid, 7 too early/repeated, 8 processing, 9 cancelled.
+ * documentStatus per document: V valid, I invalid.
+ */
+function interpretStatusResponse(body, documentNo) {
+  const resultCode = Number(body?.resultCode);
+  const list = Array.isArray(body?.documentStatusList) ? body.documentStatusList : [];
+  const target = String(documentNo || '').trim();
+  const entry = list.find((row) => String(row?.documentNo || '').trim() === target) || (list.length === 1 ? list[0] : null);
+  const base = {
+    requestId: String(body?.requestID || ''),
+    resultCode: Number.isFinite(resultCode) ? resultCode : null,
+    responsePayload: body,
+  };
+
+  if (resultCode === 7 || resultCode === 8 || (!Number.isFinite(resultCode) && !entry)) {
+    return { ...base, agtStatus: 'submitted', retryLater: true, errors: [] };
+  }
+  if (resultCode === 9) {
+    return { ...base, agtStatus: 'invalid', errors: [{ code: 'R09', description: 'Processamento cancelado pela AGT' }] };
+  }
+  const status = String(entry?.documentStatus || '').toUpperCase();
+  if (status === 'V') {
+    return { ...base, agtStatus: 'validated', validatedAt: new Date().toISOString(), errors: [] };
+  }
+  if (status === 'I' || resultCode === 2) {
+    const errors = errorEntries({ errorList: entry?.errorList || [] });
+    return { ...base, agtStatus: 'invalid', errors };
+  }
+  return { ...base, agtStatus: 'submitted', retryLater: true, errors: [] };
+}
+
+/**
+ * @param {string} documentNo AGT documentNo as transmitted (e.g. "FR FR-SOY-2026-00001")
+ * @param {object} options { requestId, privateKeyPem, softwarePrivateKeyPem }
+ */
+async function checkDocumentStatus(documentNo, config, options = {}) {
   if (shouldSimulate(config)) {
     return {
-      documentNumber,
+      documentNumber: documentNo,
       agtStatus: 'validated',
       simulated: true,
     };
   }
-  const url = resolveStatusUrl(config);
-  const requestId = options.requestId || documentNumber;
-  const payload = {
-    schemaVersion: '1.2',
-    taxRegistrationNumber: String(config?.companyNif || '').trim(),
-    requestID: requestId,
-  };
-  if (documentNumber) payload.documentNo = documentNumber;
-  const body = await httpJson('POST', url, payload, config);
-  return normalizeResponse(body);
+  const requestId = String(options.requestId || '').trim();
+  if (!requestId) {
+    const err = new Error('Sem requestID da AGT — volte a transmitir o documento');
+    err.code = 'AGT_NO_REQUEST_ID';
+    throw err;
+  }
+  if (!options.privateKeyPem) {
+    const err = new Error('Chave privada do contribuinte em falta para consultar o estado na AGT');
+    err.code = 'AGT_NO_KEY';
+    throw err;
+  }
+  const { buildObterEstadoPayload } = require('./fePayload');
+  const payload = buildObterEstadoPayload({
+    config,
+    requestId,
+    privateKeyPem: options.privateKeyPem,
+    softwarePrivateKeyPem: options.softwarePrivateKeyPem,
+  });
+  try {
+    const body = await httpJson('POST', resolveStatusUrl(config), payload, config);
+    return interpretStatusResponse(body, documentNo);
+  } catch (err) {
+    const codes = errorEntries(err.body || {}).map((e) => e.code);
+    // 400 + E96 is a malformed request (a real error); 422 + E96/E97 and 429 + E98 mean "later".
+    if (err.status === 429 || (err.status === 422 && codes.some((c) => RETRY_LATER_CODES.has(c)))) {
+      return {
+        requestId,
+        agtStatus: 'submitted',
+        retryLater: true,
+        errors: errorEntries(err.body || {}),
+        responsePayload: err.body || null,
+      };
+    }
+    throw err;
+  }
 }
 
 /** @deprecated use transmitDocument */
@@ -229,6 +307,7 @@ module.exports = {
   transmitInvoice,
   transmitVoid,
   checkDocumentStatus,
+  interpretStatusResponse,
   shouldSimulate,
   hasLiveCredentials,
   resolveApiUrl,

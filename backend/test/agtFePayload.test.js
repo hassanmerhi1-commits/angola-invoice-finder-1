@@ -70,7 +70,7 @@ test('JWS RS256 payload round-trips with JOSE typ', () => {
   assert.deepEqual(decodeJwsPayload(token), payload);
 });
 
-test('registarFactura payload matches AGT schema 1.2', () => {
+test('registarFactura payload matches AGT schema', () => {
   const pem = testKeyPem();
   const payload = buildRegistarFacturaPayload({
     config: {

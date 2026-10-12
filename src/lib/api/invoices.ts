@@ -207,7 +207,7 @@ export async function getAGTStatus(invoiceId: string): Promise<{
         validatedAt: data.agtValidatedAt || data.validatedAt || undefined,
       };
     }
-    if (raw === 'rejected' || raw === 'failed') {
+    if (raw === 'rejected' || raw === 'failed' || raw === 'invalid') {
       return { status: 'rejected', agtCode: data.agtCode || undefined };
     }
     if (raw === 'not_found' || (!raw && !data.agtCode)) {

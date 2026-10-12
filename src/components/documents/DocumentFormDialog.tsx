@@ -1407,7 +1407,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 <p className="text-muted-foreground text-xs">
                   {agtValidated
                     ? t.invoiceViewUi.agtValidated
-                    : agtStatus === 'rejected'
+                    : agtStatus === 'rejected' || agtStatus === 'invalid'
                       ? t.invoiceViewUi.agtRejected
                       : t.invoiceViewUi.agtPending}
                   {agtCode ? ` · ${t.invoiceViewUi.cuce}: ${agtCode}` : ''}

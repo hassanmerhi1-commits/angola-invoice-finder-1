@@ -175,6 +175,7 @@ export function AgtTransmissionsCard() {
     const s = String(status || 'pending').toLowerCase();
     if (s === 'validated' || s === 'approved') return <Badge>{ui.statusValidated}</Badge>;
     if (s === 'error' || s === 'rejected') return <Badge variant="destructive">{ui.statusError}</Badge>;
+    if (s === 'invalid') return <Badge variant="destructive">{ui.statusInvalid}</Badge>;
     if (s === 'voided') return <Badge variant="secondary">{ui.statusVoided}</Badge>;
     return <Badge variant="outline">{ui.statusPending}</Badge>;
   };
@@ -191,7 +192,7 @@ export function AgtTransmissionsCard() {
     return map[key] || key || '—';
   };
 
-  const failedCount = rows.filter((r) => ['error', 'rejected'].includes(String(r.agt_status || '').toLowerCase())).length;
+  const failedCount = rows.filter((r) => ['error', 'rejected', 'invalid'].includes(String(r.agt_status || '').toLowerCase())).length;
 
   return (
     <Card>

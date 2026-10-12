@@ -6,8 +6,9 @@ const db = require('../db');
 const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { signFiscalEntity } = require('./fiscalSigning');
 const { transmitDocument, checkDocumentStatus, shouldSimulate } = require('./connector');
-const { buildRegistarFacturaPayload } = require('./fePayload');
+const { buildRegistarFacturaPayload, agtDocumentType, formatDocumentNo } = require('./fePayload');
 const { loadActiveSigningMaterial } = require('./certificateStore');
+const { resolveSoftwareSigningKey } = require('./softwareKey');
 
 const ENTITY_MAP = {
   sale: {
@@ -123,6 +124,12 @@ async function buildLivePayload(config, meta, doc, items, entityKind) {
   if (!String(config.companyNif || '').trim()) {
     throw new Error('NIF da empresa em falta nas definições AGT');
   }
+  if ((entityKind === 'credit_note' || entityKind === 'debit_note') && !doc.original_invoice_type) {
+    doc.original_invoice_type = await loadOriginalInvoiceType(doc);
+  }
+  if (entityKind === 'credit_note' && !String(doc.original_invoice_number || '').trim()) {
+    throw new Error('Nota de crédito sem factura de origem — a AGT exige a referência (E13)');
+  }
   return buildRegistarFacturaPayload({
     config,
     entityKind,
@@ -130,7 +137,27 @@ async function buildLivePayload(config, meta, doc, items, entityKind) {
     items,
     meta,
     privateKeyPem: material.privateKeyPem,
+    softwarePrivateKeyPem: resolveSoftwareSigningKey(material.privateKeyPem),
   });
+}
+
+async function loadOriginalInvoiceType(doc) {
+  try {
+    if (doc.original_invoice_id) {
+      const res = await db.query('SELECT invoice_type FROM sales WHERE id = $1', [doc.original_invoice_id]);
+      if (res.rows[0]?.invoice_type) return res.rows[0].invoice_type;
+    }
+    if (doc.original_invoice_number) {
+      const res = await db.query(
+        'SELECT invoice_type FROM sales WHERE invoice_number = $1 ORDER BY created_at DESC LIMIT 1',
+        [doc.original_invoice_number],
+      );
+      if (res.rows[0]?.invoice_type) return res.rows[0].invoice_type;
+    }
+  } catch (e) {
+    console.warn('[AGT] original invoice type lookup failed:', e.message);
+  }
+  return 'FT';
 }
 
 async function updateEntityAgtStatus(meta, entityId, result) {
@@ -298,11 +325,22 @@ async function getEntityAgtStatus(entityKind, entityId, options = {}) {
 
   const config = await getAgtConfigWithSecrets();
   let remote = null;
-  if (!config.simulate && row.document_number) {
+  if (!shouldSimulate(config) && row.document_number) {
     try {
-      remote = await checkDocumentStatus(row.document_number, config, {
-        requestId: doc.agt_request_id || undefined,
+      const material = await loadActiveSigningMaterial();
+      const agtType = agtDocumentType(doc.invoice_type || doc.invoiceType || meta.docType, entityKind);
+      remote = await checkDocumentStatus(formatDocumentNo(agtType, row.document_number), config, {
+        requestId: doc.agt_request_id || (await latestRequestId(meta.entityType, doc.id)) || undefined,
+        privateKeyPem: material?.privateKeyPem,
+        softwarePrivateKeyPem: material?.privateKeyPem
+          ? resolveSoftwareSigningKey(material.privateKeyPem)
+          : undefined,
       });
+      if (remote.agtStatus === 'validated' || remote.agtStatus === 'invalid') {
+        await applyRemoteStatus(meta, doc.id, remote);
+        row.agt_status = remote.agtStatus;
+        if (remote.validatedAt) row.agt_validated_at = remote.validatedAt;
+      }
     } catch (e) {
       remote = { error: e.message };
     }
@@ -315,6 +353,68 @@ async function getEntityAgtStatus(entityKind, entityId, options = {}) {
     documentNumber: row.document_number,
     remote,
   };
+}
+
+async function latestRequestId(entityType, entityId) {
+  try {
+    const res = await db.query(
+      `SELECT request_id FROM agt_transmissions
+       WHERE entity_type = $1 AND entity_id = $2 AND request_id IS NOT NULL AND request_id <> ''
+       ORDER BY transmitted_at DESC LIMIT 1`,
+      [entityType, entityId],
+    );
+    return res.rows[0]?.request_id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist AGT's final answer. "invalid" is kept apart from "rejected"/"error" so the
+ * reconcile worker does not resend the same number — AGT refuses that (E46); a corrected
+ * document needs a new number.
+ */
+async function applyRemoteStatus(meta, entityId, remote) {
+  const errorText = (remote.errors || [])
+    .map((e) => `${e.code} ${e.description}`.trim())
+    .filter(Boolean)
+    .join('; ')
+    .slice(0, 2000) || null;
+  await db.query(
+    `UPDATE ${meta.table}
+     SET agt_status = $1, agt_validated_at = COALESCE($2, agt_validated_at)
+     WHERE id = $3`,
+    [remote.agtStatus, remote.validatedAt || null, entityId],
+  );
+  await db.query(
+    `UPDATE agt_transmissions
+     SET agt_status = $1, validated_at = COALESCE($2, validated_at),
+         error_message = $3, error_code = $4, response_payload = COALESCE($5, response_payload)
+     WHERE id = (
+       SELECT id FROM agt_transmissions
+       WHERE entity_type = $6 AND entity_id = $7 AND transmission_type != 'void'
+       ORDER BY transmitted_at DESC LIMIT 1
+     )`,
+    [
+      remote.agtStatus,
+      remote.validatedAt || null,
+      errorText,
+      remote.agtStatus === 'invalid' ? String(remote.errors?.[0]?.code || 'INVALID') : null,
+      remote.responsePayload ? JSON.stringify(remote.responsePayload) : null,
+      meta.entityType,
+      entityId,
+    ],
+  ).catch((e) => console.warn('[AGT] could not store remote status on transmission:', e.message));
+  if (remote.agtStatus === 'invalid') {
+    try {
+      const { notifyAgtFailure } = require('../lib/notifications');
+      await notifyAgtFailure({
+        entityType: meta.entityType,
+        entityId,
+        message: errorText || 'Documento inválido na AGT',
+      });
+    } catch (_) { /* non-fatal */ }
+  }
 }
 
 module.exports = {
