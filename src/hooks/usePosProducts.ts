@@ -10,6 +10,7 @@ import {
   withSellingPriceFromMap,
 } from '@/lib/productDedupe';
 import { readSellingPriceHintsSession } from '@/lib/sellingPriceHints';
+import { createThrottledRefresh } from '@/lib/throttledRefresh';
 
 function synthesizeBranch(id: string, nameHint?: string): Branch {
   const label = String(nameHint || id).trim() || id;
@@ -87,20 +88,16 @@ export function usePosProducts() {
   );
 
   useEffect(() => {
-    // Sales already patch qty via applySoldQuantities; debounce full grid refresh
-    // so a burst of SALES_CHANGED / PRODUCTS_CHANGED doesn't hammer Tailscale.
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onStockChanged = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        void refreshProducts();
-      }, 1800);
-    };
+    // Own sales already patch qty via applySoldQuantities. Every other till's sale also lands
+    // here, so reload the branch grid at most every 10s instead of after each burst.
+    const throttled = createThrottledRefresh(() => {
+      void refreshProducts();
+    }, 10_000, 1800);
+    const onStockChanged = () => throttled.trigger();
     window.addEventListener(SALES_CHANGED_EVENT, onStockChanged);
     window.addEventListener(PRODUCTS_CHANGED_EVENT, onStockChanged);
     return () => {
-      if (timer) clearTimeout(timer);
+      throttled.cancel();
       window.removeEventListener(SALES_CHANGED_EVENT, onStockChanged);
       window.removeEventListener(PRODUCTS_CHANGED_EVENT, onStockChanged);
     };

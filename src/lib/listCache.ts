@@ -6,8 +6,12 @@
  * without that, Invoices/Journals felt "slow again" after every theme switch.
  */
 
+import { cancelStorageWrite, estimateJsonChars, scheduleStorageWrite } from '@/lib/idleStorageWrite';
+
 export const LIST_CACHE_FRESH_MS = 180_000; // 3 min — Tailscale revisits stay warm
 const SESSION_PREFIX = 'nexor:list-cache:v1:';
+/** Stale flag lives in its own tiny key so marking stale never re-serializes the list. */
+const STALE_PREFIX = 'nexor:list-cache-stale:v1:';
 /** Bound session payload size (approx) — skip huge dumps. */
 const SESSION_MAX_CHARS = 1_800_000;
 
@@ -21,6 +25,7 @@ function readSession(key: string): CacheEntry | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheEntry;
     if (!parsed || typeof parsed.at !== 'number') return null;
+    if (sessionStorage.getItem(STALE_PREFIX + key)) parsed.at = 0;
     return parsed;
   } catch {
     return null;
@@ -28,18 +33,32 @@ function readSession(key: string): CacheEntry | null {
 }
 
 function writeSession(key: string, entry: CacheEntry): void {
-  try {
+  const fullKey = SESSION_PREFIX + key;
+  // Report sales lists (10k rows + items) blew past the cap only after a full stringify.
+  if (estimateJsonChars(entry.value) > SESSION_MAX_CHARS) {
+    scheduleStorageWrite(sessionStorage, fullKey, () => null);
+    return;
+  }
+  scheduleStorageWrite(sessionStorage, fullKey, () => {
     const raw = JSON.stringify(entry);
-    if (raw.length > SESSION_MAX_CHARS) return;
-    sessionStorage.setItem(SESSION_PREFIX + key, raw);
+    return raw.length > SESSION_MAX_CHARS ? null : raw;
+  });
+}
+
+function setSessionStale(key: string, stale: boolean): void {
+  try {
+    if (stale) sessionStorage.setItem(STALE_PREFIX + key, '1');
+    else sessionStorage.removeItem(STALE_PREFIX + key);
   } catch {
-    /* quota / private mode */
+    /* ignore */
   }
 }
 
 function removeSession(key: string): void {
+  cancelStorageWrite(sessionStorage, SESSION_PREFIX + key);
   try {
     sessionStorage.removeItem(SESSION_PREFIX + key);
+    sessionStorage.removeItem(STALE_PREFIX + key);
   } catch {
     /* ignore */
   }
@@ -74,39 +93,34 @@ export function isCachedListFresh(key: string, maxAgeMs = LIST_CACHE_FRESH_MS): 
 export function setCachedList<T>(key: string, value: T): void {
   const entry: CacheEntry = { at: Date.now(), value };
   store.set(key, entry);
+  setSessionStale(key, false);
   writeSession(key, entry);
 }
 
 /** Mark cache stale so the next mount refreshes (keeps rows for warm paint). */
 export function markCachedListStale(key: string): void {
-  const mem = store.get(key) ?? readSession(key);
-  if (!mem) return;
-  const entry: CacheEntry = { at: 0, value: mem.value };
-  store.set(key, entry);
-  writeSession(key, entry);
+  const mem = store.get(key);
+  if (mem) store.set(key, { at: 0, value: mem.value });
+  setSessionStale(key, true);
 }
 
 /** Stale-mark every cached list whose key starts with prefix (e.g. 'products:'). */
 export function markCachedListsStaleByPrefix(prefix: string): void {
+  // Runs on every remote sale — only flags, never parses or rewrites the cached rows.
   for (const [key, entry] of store) {
     if (!key.startsWith(prefix)) continue;
-    const next: CacheEntry = { at: 0, value: entry.value };
-    store.set(key, next);
-    writeSession(key, next);
+    store.set(key, { at: 0, value: entry.value });
+    setSessionStale(key, true);
   }
-  // Also stale-mark session keys we may not have in memory yet.
   try {
+    const keys: string[] = [];
     for (let i = 0; i < sessionStorage.length; i++) {
       const full = sessionStorage.key(i);
       if (!full || !full.startsWith(SESSION_PREFIX)) continue;
       const key = full.slice(SESSION_PREFIX.length);
-      if (!key.startsWith(prefix)) continue;
-      const session = readSession(key);
-      if (!session) continue;
-      const next: CacheEntry = { at: 0, value: session.value };
-      store.set(key, next);
-      writeSession(key, next);
+      if (key.startsWith(prefix) && !store.has(key)) keys.push(key);
     }
+    for (const key of keys) setSessionStale(key, true);
   } catch {
     /* ignore */
   }
@@ -118,12 +132,13 @@ export function clearCachedList(key?: string): void {
     removeSession(key);
     return;
   }
+  for (const k of store.keys()) cancelStorageWrite(sessionStorage, SESSION_PREFIX + k);
   store.clear();
   try {
     const toRemove: string[] = [];
     for (let i = 0; i < sessionStorage.length; i++) {
       const full = sessionStorage.key(i);
-      if (full?.startsWith(SESSION_PREFIX)) toRemove.push(full);
+      if (full?.startsWith(SESSION_PREFIX) || full?.startsWith(STALE_PREFIX)) toRemove.push(full);
     }
     for (const full of toRemove) sessionStorage.removeItem(full);
   } catch {

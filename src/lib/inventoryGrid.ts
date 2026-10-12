@@ -15,6 +15,7 @@ import {
   withSellingPriceFromMap,
 } from '@/lib/productDedupe';
 import { readSellingPriceHintsSession, writeSellingPriceHintsSession } from '@/lib/sellingPriceHints';
+import { cancelStorageWrite, scheduleStorageWrite } from '@/lib/idleStorageWrite';
 
 // v20 / LAN v5: drop grids that older builds cached from the products_cache fallback (0 qty/cost).
 const CACHE_PREFIX = 'nexor:inventory-grid:v20:';
@@ -167,17 +168,14 @@ export function mergeFilialInventoryCachesAsHqFallback(): Product[] | null {
   };
 
   try {
+    const scopes = new Set(memoryGridCache.keys());
     for (let i = 0; i < sessionStorage.length; i++) {
       const k = sessionStorage.key(i);
-      if (!k?.startsWith(CACHE_PREFIX)) continue;
-      const scope = k.slice(CACHE_PREFIX.length);
+      if (k?.startsWith(CACHE_PREFIX)) scopes.add(k.slice(CACHE_PREFIX.length));
+    }
+    for (const scope of scopes) {
       if (!scope || scope === 'hq' || scope === 'none') continue;
-      try {
-        const parsed = JSON.parse(sessionStorage.getItem(k) || '') as CacheEntry;
-        ingest(parsed?.rows);
-      } catch {
-        /* skip */
-      }
+      ingest(readCacheEntryAnyAge(scope)?.rows);
     }
   } catch {
     /* ignore */
@@ -199,16 +197,33 @@ export function mergeFilialInventoryCachesAsHqFallback(): Product[] | null {
   return Array.from(bySku.values());
 }
 
-function readCacheEntry(key: string): CacheEntry | null {
+/** In-process copy of the session grid cache — reads never wait for the idle session write. */
+const memoryGridCache = new Map<string, CacheEntry>();
+
+function readCacheEntryAnyAge(key: string): CacheEntry | null {
+  const mem = memoryGridCache.get(key);
+  if (mem) return mem;
   try {
     const raw = sessionStorage.getItem(CACHE_PREFIX + key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheEntry;
-    if (Date.now() - parsed.at > CACHE_TTL_MS) return null;
+    if (parsed?.rows) memoryGridCache.set(key, parsed);
     return parsed;
   } catch {
     return null;
   }
+}
+
+function readCacheEntry(key: string): CacheEntry | null {
+  const entry = readCacheEntryAnyAge(key);
+  if (!entry || Date.now() - entry.at > CACHE_TTL_MS) return null;
+  return entry;
+}
+
+function dropGridCacheKey(key: string): void {
+  memoryGridCache.delete(key);
+  cancelStorageWrite(sessionStorage, CACHE_PREFIX + key);
+  sessionStorage.removeItem(CACHE_PREFIX + key);
 }
 
 function readCache(key: string): Product[] | null {
@@ -220,23 +235,14 @@ export function readInventoryGridCacheStale(
   branchId: string | undefined,
   consolidated: boolean,
 ): Product[] | null {
-  try {
-    const raw = sessionStorage.getItem(CACHE_PREFIX + cacheKey(branchId, consolidated));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CacheEntry;
-    return parsed?.rows?.length ? parsed.rows : null;
-  } catch {
-    return null;
-  }
+  const entry = readCacheEntryAnyAge(cacheKey(branchId, consolidated));
+  return entry?.rows?.length ? entry.rows : null;
 }
 
 export function writeCache(key: string, rows: Product[]): void {
-  try {
-    const entry: CacheEntry = { at: Date.now(), rows };
-    sessionStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry));
-  } catch {
-    /* quota */
-  }
+  const entry: CacheEntry = { at: Date.now(), rows };
+  memoryGridCache.set(key, entry);
+  scheduleStorageWrite(sessionStorage, CACHE_PREFIX + key, () => JSON.stringify(entry));
 }
 
 /** Clear cached grid rows after stock transfers or branch-scoped product changes. */
@@ -256,11 +262,11 @@ export function invalidateInventoryGridCacheForBranches(
 export function invalidateInventoryGridCache(branchId?: string, consolidated?: boolean): void {
   try {
     if (branchId != null || consolidated != null) {
-      const key = cacheKey(branchId, !!consolidated);
-      sessionStorage.removeItem(CACHE_PREFIX + key);
+      dropGridCacheKey(cacheKey(branchId, !!consolidated));
       invalidateLanInventoryGrid(lanCatalogScopeKey(branchId, !!consolidated));
       return;
     }
+    for (const key of [...memoryGridCache.keys()]) dropGridCacheKey(key);
     const keys: string[] = [];
     for (let i = 0; i < sessionStorage.length; i++) {
       const k = sessionStorage.key(i);
@@ -352,7 +358,7 @@ export function invalidateInventoryGridSessionCache(
   consolidated?: boolean,
 ): void {
   try {
-    sessionStorage.removeItem(CACHE_PREFIX + cacheKey(branchId, !!consolidated));
+    dropGridCacheKey(cacheKey(branchId, !!consolidated));
   } catch {
     /* ignore */
   }

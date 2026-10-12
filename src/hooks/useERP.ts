@@ -12,6 +12,7 @@ import { isDemoMode, isThinClientMode } from '@/lib/api/config';
 import { isOfflineModeActive } from '@/lib/offlineAuth';
 import { lanCatalogScopeKey, readLanProducts, readLanSuppliers, saveLanProducts, saveLanSuppliers } from '@/lib/lanCatalogCache';
 import { getCachedList, isCachedListFresh, markCachedListStale, setCachedList } from '@/lib/listCache';
+import { createThrottledRefresh } from '@/lib/throttledRefresh';
 import { TABLE_REFRESH_EVENT } from '@/lib/realtime/tableRefreshBridge';
 import * as storage from '@/lib/storage';
 import { ensureSupplierAccount } from '@/lib/chartOfAccountsEngine';
@@ -456,7 +457,11 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
   }, [refreshProducts, listEnabled]);
 
   useEffect(() => {
-    let lightweightRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    // Lightweight = stock moved (any till's sale). A catalog list only needs that every so
+    // often; it used to re-download the whole catalog 300ms after every sale company-wide.
+    const lightweightRefresh = createThrottledRefresh(() => {
+      void refreshProducts({ force: true });
+    }, 15_000);
     const handleProductsChanged = (event: Event) => {
       const customEvent = event as CustomEvent<{
         branchId?: string;
@@ -473,11 +478,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
       // Inventory creates use lightweight:true — previously ignored here, so the
       // purchase product picker kept a stale list until cache TTL expired.
       if (customEvent.detail?.lightweight) {
-        if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
-        lightweightRefreshTimer = setTimeout(() => {
-          lightweightRefreshTimer = null;
-          void refreshProducts({ force: true });
-        }, 300);
+        lightweightRefresh.trigger();
         return;
       }
       void refreshProducts({ force: true });
@@ -485,7 +486,7 @@ export function useProducts(branchId?: string, listOptions?: ProductsListOptions
     window.addEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
     return () => {
       window.removeEventListener(storage.PRODUCTS_CHANGED_EVENT, handleProductsChanged as EventListener);
-      if (lightweightRefreshTimer) clearTimeout(lightweightRefreshTimer);
+      lightweightRefresh.cancel();
     };
   }, [branchId, refreshProducts, productsCacheKey]);
 
@@ -944,23 +945,17 @@ export function useSales(
   useEffect(() => {
     // Every till's sale reaches every open client. Report-sized lists (thousands of sales with
     // items) reload at most every 15s; small lists stay near-instant.
-    const minGapMs = !light || limit > 1000 ? 15_000 : 2_000;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let lastRefreshAt = 0;
+    const throttled = createThrottledRefresh(() => {
+      void refreshSales({ force: true });
+    }, !light || limit > 1000 ? 15_000 : 2_000);
     const onSalesChanged = () => {
       markCachedListStale(salesCacheKey);
-      if (timer) return;
-      const wait = Math.max(300, minGapMs - (Date.now() - lastRefreshAt));
-      timer = setTimeout(() => {
-        timer = null;
-        lastRefreshAt = Date.now();
-        void refreshSales({ force: true });
-      }, wait);
+      throttled.trigger();
     };
     window.addEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
     return () => {
       window.removeEventListener(storage.SALES_CHANGED_EVENT, onSalesChanged);
-      if (timer) clearTimeout(timer);
+      throttled.cancel();
     };
   }, [refreshSales, salesCacheKey, light, limit]);
 

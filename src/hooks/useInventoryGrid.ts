@@ -46,12 +46,10 @@ export function useInventoryGrid(opts: {
         // Always allow stale/filial-merge fallback so Sede never sits on a blank spinner.
         noFallback: false,
       });
+      // fetchInventoryGrid caches live rows itself and deliberately not offline fallbacks.
       if (gen !== generationRef.current) return;
       setRows(fresh);
       setError(null);
-      const key = cacheKey(opts.branchId, opts.consolidated);
-      writeCache(key, fresh);
-      saveLanInventoryGrid(key, fresh);
     },
     [opts.branchId, opts.consolidated, filialKey],
   );
