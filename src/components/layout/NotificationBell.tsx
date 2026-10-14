@@ -46,9 +46,10 @@ export function NotificationBell() {
 
   const handleClick = (notif: Notification) => {
     markAsRead(notif.id);
-    if (notif.link) {
-      navigate(notif.link);
-    }
+    if (!notif.link) return;
+    // Old expense alerts still carry ?expenseId= and used to open the edit form.
+    const path = notif.link.split('?')[0];
+    navigate(path === '/expenses' ? '/expenses' : notif.link);
   };
 
   const handleScan = async () => {

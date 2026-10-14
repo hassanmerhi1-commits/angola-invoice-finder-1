@@ -410,7 +410,7 @@ export default function Expenses() {
     searchFocusKeyRef.current = deepLinkExpenseId;
     setDateFrom('');
     setDateTo('');
-    handleOpenDialog(hit);
+    // Notifications (and search) land on the list. Do not open the edit dialog.
     scrollToNexorRow(hit.id);
   }, [deepLinkExpenseId, expenses]);
 

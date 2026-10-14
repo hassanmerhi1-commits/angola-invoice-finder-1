@@ -232,12 +232,8 @@ async function scanPeriodCloseReminders() {
 }
 
 /** The id keeps the request visible even when the approver's branch scope would hide it. */
-function expensePendingLink(expenseId) {
-  return `/expenses?expenseId=${encodeURIComponent(expenseId)}`;
-}
-
-function expenseDecisionLink(expenseId) {
-  return `/expenses?expenseId=${encodeURIComponent(expenseId)}`;
+function expenseListLink() {
+  return '/expenses';
 }
 const DECIDED_EXPENSE_STATUSES = new Set(['approved', 'rejected', 'paid']);
 
@@ -295,7 +291,7 @@ async function notifyExpensePendingApproval(expense) {
       title: 'Despesa aguarda aprovação',
       message: `${requester || 'Operador'} pediu ${formatAoa(expense.totalAmount)} — ${detail}`,
       severity: 'warning',
-      link: expensePendingLink(expense.id),
+      link: expenseListLink(),
       userId: String(approver.id),
       branchId: expense.branchId || null,
       dedupeKey: `expense_approval:${expense.id}:${approver.id}`,
@@ -324,7 +320,7 @@ async function notifyExpenseDecision(expense, decision, actorName) {
     title: approved ? 'Despesa aprovada' : 'Despesa recusada',
     message: `${formatAoa(expense.totalAmount)} — ${detail}${by ? ` (${by})` : ''}`,
     severity: approved ? 'info' : 'warning',
-    link: expenseDecisionLink(expense.id),
+    link: expenseListLink(),
     userId: requesterId,
     branchId: expense.branchId || null,
     dedupeKey: `expense_decision:${expense.id}:${approved ? 'approved' : 'rejected'}`,
