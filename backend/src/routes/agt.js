@@ -429,31 +429,51 @@ module.exports = function(broadcastTable) {
    */
   router.get('/transmissions', async (req, res) => {
     try {
-      const { status, limit = 50 } = req.query;
-
-      let query = `
-        SELECT t.id, t.invoice_id, t.invoice_number, t.transmission_type,
-               t.entity_type, t.entity_id, t.agt_status, t.agt_code,
-               t.error_message, t.retry_count, t.transmitted_at,
-               COALESCE(t.invoice_number, s.invoice_number) AS document_number,
-               s.total AS sale_total,
-               s.customer_name
-        FROM agt_transmissions t
-        LEFT JOIN sales s ON t.invoice_id = s.id
-      `;
+      const { status, limit = 50, branchId } = req.query;
       const params = [];
+      const where = ['latest.rn = 1'];
 
       if (status === 'failed') {
-        query += ` WHERE t.agt_status IN ('error', 'rejected', 'invalid')`;
+        where.push(`latest.agt_status IN ('error', 'rejected', 'invalid')`);
       } else if (status === 'pending') {
-        query += ` WHERE t.agt_status IN ('pending', 'submitted')`;
+        where.push(`latest.agt_status IN ('pending', 'submitted')`);
       } else if (status) {
         params.push(status);
-        query += ` WHERE t.agt_status = $${params.length}`;
+        where.push(`latest.agt_status = $${params.length}`);
+      }
+
+      const branch = String(branchId || '').trim();
+      if (branch && branch !== 'all') {
+        params.push(branch);
+        where.push(`COALESCE(s.branch_id, cn.branch_id, dn.branch_id) = $${params.length}`);
       }
 
       params.push(parseInt(limit, 10) || 50);
-      query += ` ORDER BY t.transmitted_at DESC LIMIT $${params.length}`;
+
+      const query = `
+        SELECT latest.id, latest.invoice_id, latest.invoice_number, latest.transmission_type,
+               latest.entity_type, latest.entity_id, latest.agt_status, latest.agt_code,
+               latest.error_message, latest.retry_count, latest.transmitted_at,
+               COALESCE(latest.invoice_number, s.invoice_number, cn.document_number, dn.document_number) AS document_number,
+               s.total AS sale_total,
+               COALESCE(s.customer_name, cn.customer_name, dn.customer_name) AS customer_name
+        FROM (
+          SELECT t.*,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY t.entity_type, t.entity_id
+                   ORDER BY t.transmitted_at DESC, t.id DESC
+                 ) AS rn
+          FROM agt_transmissions t
+          WHERE COALESCE(t.transmission_type, '') != 'void'
+            AND t.entity_id IS NOT NULL
+        ) latest
+        LEFT JOIN sales s ON latest.entity_type = 'sale' AND latest.entity_id = s.id
+        LEFT JOIN credit_notes cn ON latest.entity_type = 'credit_note' AND latest.entity_id = cn.id
+        LEFT JOIN debit_notes dn ON latest.entity_type = 'debit_note' AND latest.entity_id = dn.id
+        WHERE ${where.join(' AND ')}
+        ORDER BY latest.transmitted_at DESC
+        LIMIT $${params.length}
+      `;
 
       const result = await db.query(query, params);
       res.json(result.rows);

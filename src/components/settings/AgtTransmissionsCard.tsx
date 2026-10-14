@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
+import { useBranchScope } from '@/hooks/useBranchScope';
 
 type TransmissionRow = {
   id: string;
@@ -50,6 +51,7 @@ export function AgtTransmissionsCard() {
   const ui = t.agtTransmitUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { toast } = useToast();
+  const { apiBranchId } = useBranchScope();
   const [rows, setRows] = useState<TransmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -62,6 +64,7 @@ export function AgtTransmissionsCard() {
       const res = await api.agt.listTransmissions({
         status: statusFilter === 'all' ? undefined : statusFilter,
         limit: 50,
+        branchId: apiBranchId,
       });
       setRows(res.data || []);
     } catch {
@@ -69,7 +72,7 @@ export function AgtTransmissionsCard() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, apiBranchId]);
 
   useEffect(() => {
     void refresh();

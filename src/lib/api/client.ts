@@ -3287,10 +3287,11 @@ export const api = {
         documentNumber?: string;
       }>(`/agt/document-status/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}${q ? `?${q}` : ''}`);
     },
-    listTransmissions: (params?: { status?: 'failed' | 'pending' | string; limit?: number }) => {
+    listTransmissions: (params?: { status?: 'failed' | 'pending' | string; limit?: number; branchId?: string }) => {
       const qs = new URLSearchParams();
       if (params?.status) qs.set('status', params.status);
       if (params?.limit) qs.set('limit', String(params.limit));
+      if (params?.branchId) qs.set('branchId', params.branchId);
       const q = qs.toString();
       return apiFetch<any[]>(`/agt/transmissions${q ? `?${q}` : ''}`);
     },

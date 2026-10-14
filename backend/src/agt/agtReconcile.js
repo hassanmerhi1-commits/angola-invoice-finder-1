@@ -16,7 +16,15 @@ function kindForEntityType(entityType) {
   return Object.keys(ENTITY_MAP).find((k) => ENTITY_MAP[k].entityType === entityType) || null;
 }
 
+function liveSendReady(config) {
+  return Boolean(config?.simulate || (config?.hasApiKey && config?.hasUsername));
+}
+
 async function reconcileFailedTransmissions(limit = 5) {
+  const config = await getAgtConfig();
+  if (!liveSendReady(config)) {
+    return { retried: 0, failed: 0, scanned: 0, skipped: true };
+  }
   const res = await db.query(
     `SELECT id, entity_type, entity_id, retry_count, invoice_number
      FROM agt_transmissions
@@ -24,6 +32,8 @@ async function reconcileFailedTransmissions(limit = 5) {
        AND transmission_type != 'void'
        AND entity_id IS NOT NULL
        AND COALESCE(retry_count, 0) < $2
+       AND COALESCE(error_code, '') != 'AGT_NOT_CONFIGURED'
+       AND COALESCE(error_message, '') NOT LIKE '%Credenciais AGT%'
      ORDER BY transmitted_at ASC
      LIMIT $1`,
     [limit, MAX_AUTO_RETRIES],
@@ -91,6 +101,7 @@ async function reconcilePendingRemoteStatuses(limit = 5) {
 async function backfillUntransmittedDocs(limit = 5) {
   const config = await getAgtConfig();
   if (!config.autoTransmit) return { transmitted: 0, failed: 0, skipped: true };
+  if (!liveSendReady(config)) return { transmitted: 0, failed: 0, skipped: true };
 
   const perType = Math.max(1, Math.ceil(limit / 3));
   const jobs = [];
@@ -103,7 +114,7 @@ async function backfillUntransmittedDocs(limit = 5) {
        AND NOT EXISTS (
          SELECT 1 FROM agt_transmissions t
          WHERE t.entity_type = 'sale' AND t.entity_id = sales.id
-           AND t.agt_status IN ('validated', 'approved', 'submitted')
+           AND COALESCE(t.transmission_type, '') != 'void'
        )
      ORDER BY created_at ASC LIMIT $1`,
     [perType],
@@ -117,7 +128,7 @@ async function backfillUntransmittedDocs(limit = 5) {
        AND NOT EXISTS (
          SELECT 1 FROM agt_transmissions t
          WHERE t.entity_type = 'credit_note' AND t.entity_id = credit_notes.id
-           AND t.agt_status IN ('validated', 'approved', 'submitted')
+           AND COALESCE(t.transmission_type, '') != 'void'
        )
      ORDER BY issued_at ASC LIMIT $1`,
     [perType],
@@ -131,7 +142,7 @@ async function backfillUntransmittedDocs(limit = 5) {
        AND NOT EXISTS (
          SELECT 1 FROM agt_transmissions t
          WHERE t.entity_type = 'debit_note' AND t.entity_id = debit_notes.id
-           AND t.agt_status IN ('validated', 'approved', 'submitted')
+           AND COALESCE(t.transmission_type, '') != 'void'
        )
      ORDER BY issued_at ASC LIMIT $1`,
     [perType],

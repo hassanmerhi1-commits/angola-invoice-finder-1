@@ -197,6 +197,64 @@ async function loadFiscalDocumentRow(meta, entityId, options = {}) {
   return null;
 }
 
+async function latestOpenTransmission(entityType, entityId) {
+  const res = await db.query(
+    `SELECT id, agt_status FROM agt_transmissions
+     WHERE entity_type = $1 AND entity_id = $2
+       AND COALESCE(transmission_type, '') != 'void'
+     ORDER BY transmitted_at DESC, id DESC
+     LIMIT 1`,
+    [entityType, entityId],
+  );
+  return res.rows[0] || null;
+}
+
+async function upsertOpenTransmission({
+  preferredId,
+  entityType,
+  entityId,
+  invoiceId,
+  invoiceNumber,
+  transmissionType,
+  payload,
+}) {
+  const body = JSON.stringify(payload);
+  if (preferredId) {
+    const existing = await db.query('SELECT id FROM agt_transmissions WHERE id = $1', [preferredId]);
+    if (existing.rows.length) {
+      await db.query(
+        `UPDATE agt_transmissions
+         SET request_payload = $1, invoice_number = $2, agt_status = 'pending',
+             error_message = NULL, error_code = NULL, transmitted_at = CURRENT_TIMESTAMP
+         WHERE id = $3`,
+        [body, invoiceNumber, preferredId],
+      );
+      return preferredId;
+    }
+  }
+  const open = await latestOpenTransmission(entityType, entityId);
+  const openStatus = String(open?.agt_status || '').toLowerCase();
+  if (open && !['validated', 'approved', 'submitted', 'voided'].includes(openStatus)) {
+    await db.query(
+      `UPDATE agt_transmissions
+       SET request_payload = $1, invoice_number = $2, agt_status = 'pending',
+           error_message = NULL, error_code = NULL, transmitted_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [body, invoiceNumber, open.id],
+    );
+    return open.id;
+  }
+  const transmissionId = crypto.randomUUID();
+  await db.query(
+    `INSERT INTO agt_transmissions (
+      id, invoice_id, invoice_number, transmission_type,
+      entity_type, entity_id, request_payload, agt_status
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`,
+    [transmissionId, invoiceId, invoiceNumber, transmissionType, entityType, entityId, body],
+  );
+  return transmissionId;
+}
+
 async function transmitFiscalEntity(entityKind, entityId, options = {}) {
   const meta = ENTITY_MAP[entityKind];
   if (!meta) throw new Error(`Tipo de documento AGT não suportado: ${entityKind}`);
@@ -232,24 +290,16 @@ async function transmitFiscalEntity(entityKind, entityId, options = {}) {
   const payload = shouldSimulate(config)
     ? buildPayload(config, meta, doc, items, signature)
     : await buildLivePayload(config, meta, doc, items, entityKind);
-  const transmissionId = crypto.randomUUID();
   const invoiceId = entityKind === 'sale' ? resolvedEntityId : doc.original_invoice_id || null;
-
-  await db.query(
-    `INSERT INTO agt_transmissions (
-      id, invoice_id, invoice_number, transmission_type,
-      entity_type, entity_id, request_payload, agt_status
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`,
-    [
-      transmissionId,
-      invoiceId,
-      doc[meta.numberCol],
-      meta.transmissionType,
-      meta.entityType,
-      resolvedEntityId,
-      JSON.stringify(payload),
-    ],
-  );
+  const transmissionId = await upsertOpenTransmission({
+    preferredId: options.transmissionId,
+    entityType: meta.entityType,
+    entityId: resolvedEntityId,
+    invoiceId,
+    invoiceNumber: doc[meta.numberCol],
+    transmissionType: meta.transmissionType,
+    payload,
+  });
 
   try {
     const result = await transmitDocument(payload, config);
@@ -280,7 +330,7 @@ async function transmitFiscalEntity(entityKind, entityId, options = {}) {
        SET agt_status = 'error', error_message = $1, error_code = $2,
            retry_count = COALESCE(retry_count, 0) + 1
        WHERE id = $3`,
-      [err.message, String(err.status || 'TRANSMIT_ERROR'), transmissionId],
+      [err.message, String(err.code || err.status || 'TRANSMIT_ERROR'), transmissionId],
     );
     await db.query(
       `UPDATE ${meta.table} SET agt_status = 'rejected' WHERE id = $1`,
@@ -308,7 +358,7 @@ async function retryTransmission(transmissionId) {
   const kind = Object.keys(ENTITY_MAP).find((k) => ENTITY_MAP[k].entityType === entityType);
   if (!kind || !entityId) throw new Error('Transmissão sem documento associado');
 
-  return transmitFiscalEntity(kind, entityId, { force: true });
+  return transmitFiscalEntity(kind, entityId, { force: true, transmissionId: row.id });
 }
 
 async function getEntityAgtStatus(entityKind, entityId, options = {}) {
