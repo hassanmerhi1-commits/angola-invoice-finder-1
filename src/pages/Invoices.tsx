@@ -40,6 +40,7 @@ import {
   getPurchaseInvoicesAsDocuments,
   mapCreditNoteToDocument,
   mapTransportDocumentToErpDocument,
+  sortDocumentsByIssue,
 } from '@/lib/documentStorage';
 import type { BranchRef } from '@/lib/purchaseInvoiceStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
@@ -111,6 +112,10 @@ function documentIssueHour(doc: ERPDocument): string {
   return hhmm === '00:00' ? '' : hhmm;
 }
 
+function invoiceDocKey(doc: ERPDocument): string {
+  return `${doc.documentType}:${doc.documentNumber || doc.id}`;
+}
+
 function upsertInvoiceDocument(docs: ERPDocument[], extra: ERPDocument | null | undefined): ERPDocument[] {
   if (!extra) return docs;
   const idx = docs.findIndex((d) =>
@@ -119,10 +124,10 @@ function upsertInvoiceDocument(docs: ERPDocument[], extra: ERPDocument | null | 
       && d.documentNumber === extra.documentNumber
       && d.documentType === extra.documentType),
   );
-  if (idx < 0) return [extra, ...docs];
+  if (idx < 0) return sortDocumentsByIssue([extra, ...docs]);
   const next = docs.slice();
   next[idx] = extra;
-  return next;
+  return sortDocumentsByIssue(next);
 }
 
 const PINNED_INVOICES_KEY = 'nexor:invoices-pinned:v1';
@@ -261,6 +266,19 @@ export default function Invoices() {
   const { debitNotes, createDebitNote } = useDebitNotes(listBranchId, !debitNoteDialog);
   const navigate = useNavigate();
   const location = useLocation();
+  const listFocusKey = useMemo(() => {
+    const params = readAppSearchParams(location.search);
+    const focus = readNexorSearchFocus(location.state);
+    const invoiceId = params.get('invoiceId')?.trim()
+      || (focus?.kind === 'sale' ? String(focus.invoiceId || '') : '');
+    const q = params.get('q')?.trim()
+      || (focus?.kind === 'sale' ? String(focus.q || '') : '');
+    return `${invoiceId}|${q}`;
+  }, [location.search, location.state]);
+  const branchNamesKey = useMemo(
+    () => branches.map((b) => `${b.id}:${b.name}:${b.code}:${b.isMain ? 1 : 0}`).join('|'),
+    [branches],
+  );
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { transmit: transmitAgt } = useAgtTransmit();
   const { voidInvoice, voiding } = useVoidInvoice();
@@ -271,6 +289,7 @@ export default function Invoices() {
   const [dateFrom, setDateFrom] = useState(() => localISODate());
   const [dateTo, setDateTo] = useState(() => localISODate());
   const pinnedInvoiceDocsRef = useRef<ERPDocument[]>(loadPinnedInvoiceDocs());
+  const listScopeRef = useRef('');
   // Search can widen the range to show one old invoice. Today / the pickers must stay put.
   const dateHoldRef = useRef(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -304,7 +323,7 @@ export default function Invoices() {
     const scheduleSoftRefresh = () => {
       markCachedListsStaleByPrefix('invoicesDocs:');
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => setRefreshKey((k) => k + 1), 2500);
+      debounce = setTimeout(() => setRefreshKey((k) => k + 1), 500);
     };
     window.addEventListener(SALES_CHANGED_EVENT, scheduleSoftRefresh);
     window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, scheduleSoftRefresh);
@@ -330,16 +349,22 @@ export default function Invoices() {
     const rangeFrom = dateFrom.slice(0, 10);
     const rangeTo = dateTo.slice(0, 10);
     const onPickedDays = (doc: ERPDocument) => invoiceFallsOnRange(doc, rangeFrom, rangeTo);
-    // Drop previous branch/tab rows immediately; seed only this scope's cache.
-    setSelectedDocId(null);
     const cached = (getCachedList<ERPDocument[]>(cacheKey) ?? []).filter(onPickedDays);
-    const seeded = pinnedInvoiceDocsRef.current.reduce(
-      (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
-      cached,
+    const seeded = sortDocumentsByIssue(
+      pinnedInvoiceDocsRef.current.reduce(
+        (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
+        cached,
+      ),
     );
-    setDocuments(seeded);
-    // Soft loading only when empty — fresh cache still revalidates in background (SWR).
-    setListLoading(seeded.length === 0);
+    const scopeKey = `${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`;
+    const scopeChanged = listScopeRef.current !== scopeKey;
+    listScopeRef.current = scopeKey;
+    // Don't flash the cached snapshot (or clear the row) on a background refresh.
+    if (scopeChanged) {
+      setSelectedDocId(null);
+      setDocuments(seeded);
+      setListLoading(seeded.length === 0);
+    }
 
     let cancelled = false;
     const params = readAppSearchParams(location.search);
@@ -362,9 +387,11 @@ export default function Invoices() {
     };
     const paintDocs = (rows: ERPDocument[]) => {
       if (cancelled) return;
-      const withPinned = pinnedInvoiceDocsRef.current.reduce(
-        (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
-        rows.filter(onPickedDays),
+      const withPinned = sortDocumentsByIssue(
+        pinnedInvoiceDocsRef.current.reduce(
+          (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
+          rows.filter(onPickedDays),
+        ),
       );
       setDocuments(withPinned);
       setCachedList(cacheKey, withPinned);
@@ -449,7 +476,7 @@ export default function Invoices() {
             salesDocs.filter((d) => d.documentNumber).map((d) => [d.documentNumber, d]),
           );
           const merged: ERPDocument[] = [];
-          const seenNumbers = new Set<string>();
+          const seenKeys = new Set<string>();
           for (const doc of storedDocs) {
             if (doc.documentType === 'fatura_venda' && doc.documentNumber && salesByNumber.has(doc.documentNumber)) {
               continue;
@@ -460,17 +487,19 @@ export default function Invoices() {
             // Tab-scoped local docs: skip purchase rows when not loading purchases, etc.
             if (type === 'fatura_venda' && doc.documentType === 'fatura_compra') continue;
             if (type === 'fatura_compra' && doc.documentType === 'fatura_venda') continue;
+            const key = invoiceDocKey(doc);
+            if (seenKeys.has(key)) continue;
+            seenKeys.add(key);
             merged.push(doc);
-            if (doc.documentNumber) seenNumbers.add(doc.documentNumber);
           }
           for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs, ...fiscalTransportDocs]) {
-            if (!doc.documentNumber || seenNumbers.has(doc.documentNumber)) continue;
-            seenNumbers.add(doc.documentNumber);
+            const key = invoiceDocKey(doc);
+            if (seenKeys.has(key)) continue;
+            seenKeys.add(key);
             merged.push(doc);
           }
-          merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
           const result = type ? merged.filter((d) => d.documentType === type) : merged;
-          paintDocs(result);
+          paintDocs(sortDocumentsByIssue(result));
         };
 
         // "All" tab: paint sales first so the grid is usable; purchases/CN fill in after.
@@ -544,7 +573,7 @@ export default function Invoices() {
 
     void load();
     return () => { cancelled = true; };
-  }, [activeTab, listBranchId, isHeadOffice, branches, refreshKey, dateFrom, dateTo, t.pos.finalConsumer, location.search, location.state]);
+  }, [activeTab, listBranchId, isHeadOffice, branchNamesKey, refreshKey, dateFrom, dateTo, t.pos.finalConsumer, listFocusKey]);
 
   useEffect(() => {
     setInvoicesWorkspaceTab(activeTab);
@@ -773,16 +802,21 @@ export default function Invoices() {
     };
   }, [openNewDocumentForTab, navigate]);
 
+  const documentsRef = useRef(documents);
+  documentsRef.current = documents;
+
   const filteredDocs = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
     const from = dateFrom.slice(0, 10);
     const to = dateTo.slice(0, 10);
-    return documents.filter((d) => {
-      if (!invoiceFallsOnRange(d, from, to)) return false;
-      if (!q) return true;
-      const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
-      return hay.includes(q);
-    });
+    return sortDocumentsByIssue(
+      documents.filter((d) => {
+        if (!invoiceFallsOnRange(d, from, to)) return false;
+        if (!q) return true;
+        const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
+        return hay.includes(q);
+      }),
+    );
   }, [documents, searchTerm, dateFrom, dateTo]);
 
   // The page search box used to filter only the dated grid. Global search hits
@@ -793,7 +827,7 @@ export default function Invoices() {
     let cancelled = false;
     const handle = window.setTimeout(() => {
       void (async () => {
-        const already = documents.some((d) => {
+        const already = documentsRef.current.some((d) => {
           const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
           return hay.includes(q.toLowerCase());
         });
@@ -838,7 +872,7 @@ export default function Invoices() {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [searchTerm, documents, branches, dateFrom, dateTo]);
+  }, [searchTerm, branches, dateFrom, dateTo]);
 
   const selectedDoc = filteredDocs.find(d => d.id === selectedDocId);
 
@@ -1675,6 +1709,7 @@ export default function Invoices() {
         initialSaleId={initialDebitSaleId}
         sales={sales}
         debitNotes={debitNotes}
+        branchId={listBranchId}
         submitting={debitNoteSubmitting}
         onOpenChange={(open) => {
           setDebitNoteDialog(open);

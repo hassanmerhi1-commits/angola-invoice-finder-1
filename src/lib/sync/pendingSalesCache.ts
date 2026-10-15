@@ -197,8 +197,15 @@ export function mergeSaleRows(serverRows: PendingSaleRow[], extraRows: PendingSa
   }
 
   return merged.sort((a, b) => {
-    const ta = new Date(String(a.created_at || a.createdAt || 0)).getTime();
-    const tb = new Date(String(b.created_at || b.createdAt || 0)).getTime();
-    return tb - ta;
+    const ta = Date.parse(String(a.created_at || a.createdAt || ''));
+    const tb = Date.parse(String(b.created_at || b.createdAt || ''));
+    const sa = Number.isFinite(ta) ? ta : 0;
+    const sb = Number.isFinite(tb) ? tb : 0;
+    if (sb !== sa) return sb - sa;
+    return String(b.invoice_number || b.invoiceNumber || '').localeCompare(
+      String(a.invoice_number || a.invoiceNumber || ''),
+      undefined,
+      { numeric: true },
+    );
   });
 }

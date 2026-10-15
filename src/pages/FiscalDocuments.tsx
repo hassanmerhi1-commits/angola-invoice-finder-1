@@ -1310,6 +1310,7 @@ export default function FiscalDocuments() {
         initialSaleId={initialDebitSaleId}
         sales={sales}
         debitNotes={debitNotes}
+        branchId={apiBranchId}
         submitting={debitNoteSubmitting}
         onOpenChange={(open) => {
           if (open && !canCreateDebitNote) {

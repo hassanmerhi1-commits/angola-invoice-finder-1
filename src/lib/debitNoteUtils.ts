@@ -49,7 +49,7 @@ export function getSaleDebitContext(
     sale,
     priorDebitCount: prior?.count || 0,
     priorDebitTotal: prior?.total || 0,
-    lines: sale.items.map((item) => ({
+    lines: (sale.items || []).map((item) => ({
       item,
       soldQty: item.quantity,
       originalUnitPrice: item.unitPrice,
@@ -58,17 +58,31 @@ export function getSaleDebitContext(
 }
 
 export function buildDebitLinesFromSale(sale: Sale): DebitLineDraft[] {
-  return sale.items.map((item) => ({
+  const items = Array.isArray(sale.items) ? sale.items : [];
+  return items.map((item) => recalcDebitLine({
     sourceProductId: item.productId,
     soldQty: item.quantity,
     originalUnitPrice: item.unitPrice,
-    description: item.productName,
-    quantity: 0,
+    description: item.productName || '',
+    // Keep sold qty so the invoice body is visible; unit price is the extra to charge.
+    quantity: item.quantity || 1,
     unitPrice: 0,
     taxRate: item.taxRate ?? DEFAULT_VAT_RATE,
     taxAmount: 0,
     subtotal: 0,
   }));
+}
+
+/** Invoice lines when available; always at least one fillable charge line. */
+export function buildDebitLinesForReason(
+  reason: DebitNote['reason'],
+  sale: Sale | null,
+): DebitLineDraft[] {
+  const fromSale = sale ? buildDebitLinesFromSale(sale) : [];
+  if (reason === 'interest' || reason === 'other') {
+    return fromSale.length > 0 ? [...fromSale, buildCustomDebitLine()] : [buildCustomDebitLine()];
+  }
+  return fromSale.length > 0 ? fromSale : [buildCustomDebitLine()];
 }
 
 export function buildCustomDebitLine(): DebitLineDraft {
@@ -124,9 +138,9 @@ export function filterDebitEligibleSales(
       || sale.customerName?.toLowerCase().includes(term)
       || sale.customerNif?.toLowerCase().includes(term)
       || sale.cashierName?.toLowerCase().includes(term)
-      || sale.items.some((item) =>
-        item.productName.toLowerCase().includes(term)
-        || item.sku.toLowerCase().includes(term),
+      || (sale.items || []).some((item) =>
+        (item.productName || '').toLowerCase().includes(term)
+        || (item.sku || '').toLowerCase().includes(term),
       )
     );
   });

@@ -3039,6 +3039,7 @@ export const pt: TranslationKeys = {
     addCustomLine: "Adicionar linha",
     interestLinePlaceholder: "ex. Juros de mora",
     debitDescriptionRequired: "Indique a descrição da nota de débito.",
+    debitExtraAmountHint: "Nas linhas da factura, indique só o valor extra a cobrar — não o total original.",
     debitSummaryTotal: "Total da nota de débito",
     colUnitPrice: "Preço unit.",
     colTaxRate: "IVA %",

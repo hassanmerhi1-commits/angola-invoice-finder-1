@@ -25,6 +25,37 @@ import { timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
 
+function documentIssueMs(doc: ERPDocument): number {
+  const created = Date.parse(String(doc.createdAt || ''));
+  if (Number.isFinite(created) && created > 0) return created;
+  const day = timestampLocalDate(doc.issueDate) || String(doc.issueDate || '').slice(0, 10);
+  const timeRaw = String(doc.issueTime || '').trim();
+  const time = /^\d{2}:\d{2}/.test(timeRaw)
+    ? (timeRaw.length >= 8 ? timeRaw.slice(0, 8) : `${timeRaw.slice(0, 5)}:00`)
+    : '00:00:00';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    const ms = Date.parse(`${day}T${time}`);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return 0;
+}
+
+/** Newest issued first; invoice number is the tie-breaker so FT/FR stay in sequence. */
+export function compareDocumentsByIssueDesc(a: ERPDocument, b: ERPDocument): number {
+  const dt = documentIssueMs(b) - documentIssueMs(a);
+  if (dt !== 0) return dt;
+  const num = String(b.documentNumber || '').localeCompare(String(a.documentNumber || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+  if (num !== 0) return num;
+  return String(b.id || '').localeCompare(String(a.id || ''));
+}
+
+export function sortDocumentsByIssue(docs: ERPDocument[]): ERPDocument[] {
+  return [...docs].sort(compareDocumentsByIssueDesc);
+}
+
 export function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
   const createdAt = sale.createdAt || sale.created_at || new Date().toISOString();
   const issueDate = timestampLocalDate(createdAt) || String(createdAt).slice(0, 10);
@@ -151,10 +182,11 @@ function mapPurchaseInvoiceToDocument(inv: PurchaseInvoice, branchName = ''): ER
     amountPaid: 0,
     amountDue: Number(inv.total || 0),
     status,
-    issueDate: inv.date || String(inv.createdAt || '').split('T')[0] || '',
+    issueDate: timestampLocalDate(inv.date || inv.createdAt) || String(inv.date || '').slice(0, 10),
+    issueTime: timestampLocalTime(inv.createdAt),
     createdBy: inv.createdBy || '',
     createdByName: inv.createdByName || '',
-    createdAt: inv.createdAt || '',
+    createdAt: inv.createdAt || inv.date || '',
     updatedAt: inv.updatedAt || inv.createdAt || '',
   };
 }
@@ -166,9 +198,7 @@ export function mapCreditNoteToDocument(
   finalConsumerLabel = 'Consumidor Final',
 ): ERPDocument {
   const issuedAt = cn.issuedAt || cn.createdAt || new Date().toISOString();
-  const issueDate = String(issuedAt).includes('T')
-    ? String(issuedAt).split('T')[0]
-    : String(issuedAt).slice(0, 10);
+  const issueDate = timestampLocalDate(issuedAt) || String(issuedAt).slice(0, 10);
   return {
     id: cn.id,
     documentType: 'nota_credito',
@@ -201,17 +231,13 @@ export function mapCreditNoteToDocument(
     parentDocumentNumber: cn.originalInvoiceNumber,
     status: cn.status === 'cancelled' ? 'cancelled' : 'confirmed',
     issueDate,
-    issueTime: new Date(issuedAt).toLocaleTimeString('pt-AO', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    }),
+    issueTime: timestampLocalTime(issuedAt),
     fiscalLocked: true,
     agtStatus: cn.agtStatus as ERPDocument['agtStatus'],
     agtCode: cn.agtCode,
     createdBy: cn.issuedBy || '',
-    createdAt: cn.createdAt,
-    updatedAt: cn.createdAt,
+    createdAt: cn.createdAt || issuedAt,
+    updatedAt: cn.createdAt || issuedAt,
   };
 }
 
@@ -222,9 +248,7 @@ export function mapTransportDocumentToErpDocument(
   finalConsumerLabel = 'Consumidor Final',
 ): ERPDocument {
   const issuedAt = doc.issuedAt || doc.createdAt || new Date().toISOString();
-  const issueDate = String(issuedAt).includes('T')
-    ? String(issuedAt).split('T')[0]
-    : String(issuedAt).slice(0, 10);
+  const issueDate = timestampLocalDate(issuedAt) || String(issuedAt).slice(0, 10);
   const lines = (doc.items || []).map((item, idx) => {
     const quantity = Number(item.quantity) || 0;
     const unitPrice = Number(item.unitPrice) || 0;
@@ -269,11 +293,7 @@ export function mapTransportDocumentToErpDocument(
     parentDocumentType: doc.relatedInvoiceId ? 'fatura_venda' : undefined,
     status,
     issueDate,
-    issueTime: new Date(issuedAt).toLocaleTimeString('pt-AO', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    }),
+    issueTime: timestampLocalTime(issuedAt),
     fiscalLocked: true,
     notes: doc.notes,
     createdBy: doc.issuedBy || '',
@@ -299,12 +319,12 @@ export async function getPurchaseInvoicesAsDocuments(
       limit: opts?.limit ?? 200,
     },
   );
-  return invoices
-    .map((inv) => {
+  return sortDocumentsByIssue(
+    invoices.map((inv) => {
       const bid = inv.branchId || inv.warehouseId || '';
       return mapPurchaseInvoiceToDocument(inv, branchNames[bid] || inv.branchName || '');
-    })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }),
+  );
 }
 
 /** Sales invoices from POS / transaction engine (`sales` table) — canonical in production. */
@@ -370,12 +390,12 @@ export async function getSalesInvoicesAsDocuments(
     }
   }
 
-  return rows
-    .map((sale) => {
+  return sortDocumentsByIssue(
+    rows.map((sale) => {
       const bid = sale.branchId || sale.branch_id || '';
       return mapSaleRowToDocument(sale, branchNames[bid] || '');
-    })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }),
+  );
 }
 
 /** Full sale with line items — use when opening an invoice after a light list fetch. */
@@ -415,13 +435,13 @@ export async function getDocuments(
     let docs = Array.from(byId.values());
     if (type) docs = docs.filter(d => d.documentType === type);
     if (branchId) docs = docs.filter(d => branchIdsEqual(d.branchId, branchId));
-    return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return sortDocumentsByIssue(docs);
   }
   // List path / browser: localStorage only — never block on full erp_documents IPC dump.
   let docs = lsGet<ERPDocument[]>(STORAGE_KEY, []).map(normalizeSupplierPurchaseReturnDocument);
   if (type) docs = docs.filter(d => d.documentType === type);
   if (branchId) docs = docs.filter(d => branchIdsEqual(d.branchId, branchId));
-  return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return sortDocumentsByIssue(docs);
 }
 
 export async function getDocumentById(id: string): Promise<ERPDocument | undefined> {

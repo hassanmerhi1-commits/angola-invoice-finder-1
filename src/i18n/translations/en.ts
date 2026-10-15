@@ -3037,6 +3037,7 @@ export const en = {
     addCustomLine: "Add line",
     interestLinePlaceholder: "e.g. Late payment interest",
     debitDescriptionRequired: "Enter a description for the debit note.",
+    debitExtraAmountHint: "On invoice lines, enter only the extra amount to charge — not the original total.",
     debitSummaryTotal: "Debit total",
     colUnitPrice: "Unit price",
     colTaxRate: "Tax %",

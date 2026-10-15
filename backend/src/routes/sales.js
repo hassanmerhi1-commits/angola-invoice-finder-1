@@ -200,6 +200,14 @@ module.exports = function(broadcastTable) {
           sale.items_count = 0;
         }
       }
+      sales.sort((a, b) => {
+        const tb = new Date(b.created_at || b.createdAt || 0).getTime();
+        const ta = new Date(a.created_at || a.createdAt || 0).getTime();
+        const nb = Number.isFinite(tb) ? tb : 0;
+        const na = Number.isFinite(ta) ? ta : 0;
+        if (nb !== na) return nb - na;
+        return String(b.invoice_number || '').localeCompare(String(a.invoice_number || ''), undefined, { numeric: true });
+      });
       res.json(sales);
     } catch (error) {
       console.error('[SALES ERROR]', error);
