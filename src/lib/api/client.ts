@@ -3326,16 +3326,6 @@ export const api = {
         documentType?: string | null;
         documentNo?: string | null;
       }>(`/agt/transmissions/${encodeURIComponent(transmissionId)}/payload`),
-    getPortalPayload: (documentNumber: string) =>
-      apiFetch<{
-        id: string;
-        invoiceNumber?: string;
-        json: string;
-        simulated: boolean;
-        schemaVersion?: string | null;
-        documentType?: string | null;
-        documentNo?: string | null;
-      }>(`/agt/portal-payload?documentNumber=${encodeURIComponent(documentNumber)}`),
     retryTransmission: (transmissionId: string) =>
       apiFetch<any>(`/agt/retry/${encodeURIComponent(transmissionId)}`, { method: 'POST' }),
     voidInvoice: (data: { invoiceId: string; reason: string }) =>
