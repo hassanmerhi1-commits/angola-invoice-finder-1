@@ -54,6 +54,7 @@ export function AgtTransmissionsCard() {
   const { apiBranchId } = useBranchScope();
   const [rows, setRows] = useState<TransmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [bulkWorking, setBulkWorking] = useState(false);
   const [copyingId, setCopyingId] = useState<string | null>(null);
@@ -66,9 +67,12 @@ export function AgtTransmissionsCard() {
         limit: 50,
         branchId: apiBranchId,
       });
+      if (res.error) throw new Error(res.error);
       setRows(res.data || []);
-    } catch {
+      setListError(null);
+    } catch (err) {
       setRows([]);
+      setListError(err instanceof Error ? err.message : t.common.loadFailed);
     } finally {
       setLoading(false);
     }
@@ -247,13 +251,17 @@ export function AgtTransmissionsCard() {
 
         {loading ? (
           <p className="text-sm text-muted-foreground">{t.common.loading}</p>
+        ) : listError ? (
+          <p className="text-sm text-destructive">{listError}</p>
         ) : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{ui.empty}</p>
         ) : (
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>{ui.colDocument}</TableHead>
+                <TableHead>{ui.copyJson}</TableHead>
                 <TableHead>{ui.colType}</TableHead>
                 <TableHead>{ui.colStatus}</TableHead>
                 <TableHead>{ui.colCode}</TableHead>
@@ -268,6 +276,23 @@ export function AgtTransmissionsCard() {
                   <TableCell className="font-mono text-xs">
                     {row.document_number || row.invoice_number || '—'}
                   </TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1 shrink-0"
+                      title={ui.copyJson}
+                      disabled={copyingId === row.id}
+                      onClick={() => void handleCopyJson(row.id)}
+                    >
+                      {copyingId === row.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                      {ui.copyJson}
+                    </Button>
+                  </TableCell>
                   <TableCell>{typeLabel(row)}</TableCell>
                   <TableCell>{statusBadge(row.agt_status)}</TableCell>
                   <TableCell className="font-mono text-xs">{row.agt_code || '—'}</TableCell>
@@ -280,33 +305,17 @@ export function AgtTransmissionsCard() {
                       : '—'}
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-1"
-                        title={ui.copyJson}
-                        disabled={copyingId === row.id}
-                        onClick={() => void handleCopyJson(row.id)}
-                      >
-                        {copyingId === row.id ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Copy className="h-3 w-3" />
-                        )}
-                        {ui.copyJson}
+                    {(row.agt_status === 'error' || row.agt_status === 'rejected') && (
+                      <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
+                        {ui.retryButton}
                       </Button>
-                      {(row.agt_status === 'error' || row.agt_status === 'rejected') && (
-                        <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
-                          {ui.retryButton}
-                        </Button>
-                      )}
-                    </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </CardContent>
     </Card>

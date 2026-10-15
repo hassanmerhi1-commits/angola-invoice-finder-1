@@ -445,7 +445,10 @@ module.exports = function(broadcastTable) {
       const branch = String(branchId || '').trim();
       if (branch && branch !== 'all') {
         params.push(branch);
-        where.push(`COALESCE(s.branch_id, cn.branch_id, dn.branch_id) = $${params.length}`);
+        where.push(`(
+          COALESCE(s.branch_id, cn.branch_id, dn.branch_id) = $${params.length}
+          OR COALESCE(s.branch_id, cn.branch_id, dn.branch_id) IS NULL
+        )`);
       }
 
       params.push(parseInt(limit, 10) || 50);
