@@ -112,7 +112,11 @@ test('credit note lines reference the original invoice (E13) and use debitAmount
   assert.equal(doc.documentType, 'NC');
   assert.equal(doc.documentNo, 'NC NC-SOY-2026-00003');
   const line = doc.lines[0];
-  assert.deepEqual(line.referenceInfo, { reference: 'FR FR-SOY-2026-00041', reason: 'Devolução de mercadoria' });
+  assert.deepEqual(line.referenceInfo, {
+    reference: 'FR FR-SOY-2026-00041',
+    reason: 'Devolução de mercadoria',
+    referenceItemLineNo: 1,
+  });
   assert.equal(line.debitAmount, 100);
   assert.ok(!Object.prototype.hasOwnProperty.call(line, 'creditAmount'));
 });

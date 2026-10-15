@@ -135,13 +135,26 @@ function buildLine(item, index, { isCreditNote, operationType, referenceInfo }) 
     taxes: [tax],
     settlementAmount,
   };
-  if (referenceInfo) line.referenceInfo = referenceInfo;
+  if (referenceInfo) {
+    line.referenceInfo = {
+      ...referenceInfo,
+      referenceItemLineNo: originalLineNo(item, index),
+    };
+  }
   if (isCreditNote) {
     line.debitAmount = base;
   } else {
     line.creditAmount = base;
   }
   return line;
+}
+
+/** 1-based line on the original FT/FR. Schema 2.0 marks this required for NC/ND. */
+function originalLineNo(item, index) {
+  const raw = item?.referenceItemLineNo ?? item?.reference_item_line_no ?? item?.originalLineNumber;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 1) return n;
+  return index + 1;
 }
 
 /** NC (and ND when known) must point at the invoice they correct. */

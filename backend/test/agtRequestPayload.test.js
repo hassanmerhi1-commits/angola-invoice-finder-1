@@ -40,3 +40,19 @@ test('invalid payload throws', () => {
   assert.throws(() => formatAgtRequestPayloadForPortal(''), /em falta ou inválido/);
   assert.throws(() => formatAgtRequestPayloadForPortal('not-json'), /em falta ou inválido/);
 });
+
+test('Copy JSON fills referenceItemLineNo on NC lines', () => {
+  const formatted = formatAgtRequestPayloadForPortal({
+    schemaVersion: '2.0',
+    documents: [{
+      documentType: 'NC',
+      documentNo: 'NC NC-1',
+      lines: [{
+        lineNumber: 1,
+        referenceInfo: { reference: 'FT FT-1', reason: 'return' },
+      }],
+    }],
+  });
+  const parsed = JSON.parse(formatted.json);
+  assert.equal(parsed.documents[0].lines[0].referenceInfo.referenceItemLineNo, 1);
+});

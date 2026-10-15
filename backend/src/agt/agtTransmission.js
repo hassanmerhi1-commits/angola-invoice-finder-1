@@ -62,27 +62,65 @@ async function loadItemsForSale(saleId) {
 
 async function loadItemsForCreditNote(noteId) {
   const res = await db.query('SELECT * FROM credit_note_items WHERE credit_note_id = $1', [noteId]);
-  return res.rows.map((item) => ({
+  const note = await db.query(
+    'SELECT original_invoice_id FROM credit_notes WHERE id = $1',
+    [noteId],
+  ).catch(() => ({ rows: [] }));
+  const originalLines = await loadOriginalSaleLineNos(note.rows[0]?.original_invoice_id);
+  return res.rows.map((item, idx) => ({
     productName: item.product_name,
     sku: item.sku,
+    productId: item.product_id,
     quantity: Number(item.quantity),
     unitPrice: Number(item.unit_price),
     taxRate: Number(item.tax_rate),
     taxAmount: Number(item.tax_amount),
     subtotal: Number(item.subtotal),
+    referenceItemLineNo: matchOriginalLineNo(item, originalLines, idx),
   }));
 }
 
 async function loadItemsForDebitNote(noteId) {
   const res = await db.query('SELECT * FROM debit_note_items WHERE debit_note_id = $1', [noteId]);
-  return res.rows.map((item) => ({
+  const note = await db.query(
+    'SELECT original_invoice_id FROM debit_notes WHERE id = $1',
+    [noteId],
+  ).catch(() => ({ rows: [] }));
+  const originalLines = await loadOriginalSaleLineNos(note.rows[0]?.original_invoice_id);
+  return res.rows.map((item, idx) => ({
     description: item.description,
     quantity: Number(item.quantity),
     unitPrice: Number(item.unit_price),
     taxRate: Number(item.tax_rate),
     taxAmount: Number(item.tax_amount),
     subtotal: Number(item.subtotal),
+    referenceItemLineNo: matchOriginalLineNo(item, originalLines, idx),
   }));
+}
+
+async function loadOriginalSaleLineNos(saleId) {
+  if (!saleId) return [];
+  try {
+    const res = await db.query(
+      `SELECT product_id, sku FROM sale_items WHERE sale_id = $1 ORDER BY id`,
+      [saleId],
+    );
+    return res.rows || [];
+  } catch (e) {
+    console.warn('[AGT] original sale lines lookup failed:', e.message);
+    return [];
+  }
+}
+
+function matchOriginalLineNo(item, originalLines, index) {
+  const productId = String(item.product_id || item.productId || '').trim();
+  const sku = String(item.sku || '').trim().toLowerCase();
+  const hit = originalLines.findIndex((row) => {
+    if (productId && String(row.product_id || '') === productId) return true;
+    if (sku && String(row.sku || '').trim().toLowerCase() === sku) return true;
+    return false;
+  });
+  return hit >= 0 ? hit + 1 : index + 1;
 }
 
 function resolveDocType(meta, doc) {
