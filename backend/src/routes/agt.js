@@ -395,13 +395,65 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  function sendPortalPayload(res, row) {
+    const { formatAgtRequestPayloadForPortal } = require('../agt/agtRequestPayload');
+    const formatted = formatAgtRequestPayloadForPortal(row.request_payload);
+    res.json({
+      id: row.id,
+      invoiceNumber: row.invoice_number,
+      ...formatted,
+    });
+  }
+
+  /**
+   * Signed JSON by document number (Settings Copiar JSON).
+   * GET /api/agt/portal-payload?documentNumber=NC-00005
+   */
+  router.get('/portal-payload', requireAuth, async (req, res) => {
+    try {
+      const raw = String(req.query.documentNumber || req.query.invoiceNumber || '').trim();
+      if (!raw) return res.status(400).json({ error: 'documentNumber is required' });
+      const exact = raw;
+      const fuzzy = `%${raw}%`;
+      const result = await db.query(
+        `SELECT t.id, t.invoice_number, t.request_payload
+         FROM agt_transmissions t
+         LEFT JOIN sales s ON (
+           (t.entity_type = 'sale' AND t.entity_id = s.id)
+           OR t.invoice_id = s.id
+         )
+         LEFT JOIN credit_notes cn ON t.entity_type = 'credit_note' AND t.entity_id = cn.id
+         LEFT JOIN debit_notes dn ON t.entity_type = 'debit_note' AND t.entity_id = dn.id
+         WHERE COALESCE(t.transmission_type, '') != 'void'
+           AND (
+             t.invoice_number ILIKE $1 OR t.invoice_number ILIKE $2
+             OR s.invoice_number ILIKE $1 OR s.invoice_number ILIKE $2
+             OR cn.document_number ILIKE $1 OR cn.document_number ILIKE $2
+             OR dn.document_number ILIKE $1 OR dn.document_number ILIKE $2
+           )
+         ORDER BY
+           CASE WHEN t.invoice_number ILIKE $1 THEN 0 ELSE 1 END,
+           t.transmitted_at DESC NULLS LAST,
+           t.id DESC
+         LIMIT 1`,
+        [exact, fuzzy],
+      );
+      if (!result.rows.length) {
+        return res.status(404).json({ error: 'Transmissão não encontrada' });
+      }
+      sendPortalPayload(res, result.rows[0]);
+    } catch (error) {
+      const status = /em falta|inválido/i.test(error.message) ? 400 : 500;
+      res.status(status).json({ error: error.message });
+    }
+  });
+
   /**
    * Signed JSON for one transmission (AGT Partner Portal paste).
    * GET /api/agt/transmissions/:id/payload
    */
   router.get('/transmissions/:id/payload', requireAuth, async (req, res) => {
     try {
-      const { formatAgtRequestPayloadForPortal } = require('../agt/agtRequestPayload');
       const id = String(req.params.id || '').trim();
       if (!id) return res.status(400).json({ error: 'id is required' });
       const result = await db.query(
@@ -411,12 +463,7 @@ module.exports = function(broadcastTable) {
       if (!result.rows.length) {
         return res.status(404).json({ error: 'Transmissão não encontrada' });
       }
-      const formatted = formatAgtRequestPayloadForPortal(result.rows[0].request_payload);
-      res.json({
-        id: result.rows[0].id,
-        invoiceNumber: result.rows[0].invoice_number,
-        ...formatted,
-      });
+      sendPortalPayload(res, result.rows[0]);
     } catch (error) {
       const status = /em falta|inválido/i.test(error.message) ? 400 : 500;
       res.status(status).json({ error: error.message });
@@ -451,7 +498,7 @@ module.exports = function(broadcastTable) {
         )`);
       }
 
-      params.push(parseInt(limit, 10) || 50);
+      params.push(Math.min(parseInt(limit, 10) || 50, 200));
 
       const query = `
         SELECT latest.id, latest.invoice_id, latest.invoice_number, latest.transmission_type,
@@ -463,18 +510,22 @@ module.exports = function(broadcastTable) {
         FROM (
           SELECT t.*,
                  ROW_NUMBER() OVER (
-                   PARTITION BY t.entity_type, t.entity_id
-                   ORDER BY t.transmitted_at DESC, t.id DESC
+                   PARTITION BY
+                     COALESCE(t.entity_type, t.transmission_type, ''),
+                     COALESCE(t.entity_id::text, t.invoice_id::text, t.invoice_number, t.id::text)
+                   ORDER BY t.transmitted_at DESC NULLS LAST, t.id DESC
                  ) AS rn
           FROM agt_transmissions t
           WHERE COALESCE(t.transmission_type, '') != 'void'
-            AND t.entity_id IS NOT NULL
         ) latest
-        LEFT JOIN sales s ON latest.entity_type = 'sale' AND latest.entity_id = s.id
+        LEFT JOIN sales s ON (
+          (latest.entity_type = 'sale' AND latest.entity_id = s.id)
+          OR ((latest.entity_type IS NULL OR latest.entity_type IN ('invoice', 'sale')) AND latest.invoice_id = s.id)
+        )
         LEFT JOIN credit_notes cn ON latest.entity_type = 'credit_note' AND latest.entity_id = cn.id
         LEFT JOIN debit_notes dn ON latest.entity_type = 'debit_note' AND latest.entity_id = dn.id
         WHERE ${where.join(' AND ')}
-        ORDER BY latest.transmitted_at DESC
+        ORDER BY latest.transmitted_at DESC NULLS LAST
         LIMIT $${params.length}
       `;
 

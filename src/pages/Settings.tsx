@@ -275,12 +275,12 @@ export default function Settings() {
       case 'fiscal':
         return (
           <div className="space-y-6">
+            <AgtTransmissionsCard />
             <CertificationReadinessCard />
             <CompanySettingsLauncherCard />
             <FinalConsumerDocSettingsCard />
             <SigningSettingsCard />
             <AgtSettingsCard />
-            <AgtTransmissionsCard />
           </div>
         );
       case 'security':

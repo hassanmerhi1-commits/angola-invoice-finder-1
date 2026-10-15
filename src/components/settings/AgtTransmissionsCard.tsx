@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Send, RotateCcw, Radio, Copy, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
-import { useBranchScope } from '@/hooks/useBranchScope';
 
 type TransmissionRow = {
   id: string;
@@ -24,6 +23,12 @@ type TransmissionRow = {
 };
 
 type StatusFilter = 'all' | 'failed' | 'pending';
+
+type PortalPayload = {
+  json?: string;
+  simulated?: boolean;
+  documentType?: string | null;
+};
 
 async function copyText(text: string) {
   try {
@@ -51,21 +56,20 @@ export function AgtTransmissionsCard() {
   const ui = t.agtTransmitUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { toast } = useToast();
-  const { apiBranchId } = useBranchScope();
   const [rows, setRows] = useState<TransmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [bulkWorking, setBulkWorking] = useState(false);
   const [copyingId, setCopyingId] = useState<string | null>(null);
+  const [docQuery, setDocQuery] = useState('');
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.agt.listTransmissions({
         status: statusFilter === 'all' ? undefined : statusFilter,
-        limit: 50,
-        branchId: apiBranchId,
+        limit: 200,
       });
       if (res.error) throw new Error(res.error);
       setRows(res.data || []);
@@ -76,39 +80,71 @@ export function AgtTransmissionsCard() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, apiBranchId]);
+  }, [statusFilter, t.common.loadFailed]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
+  const applyCopiedPayload = async (res: { error?: string; data?: PortalPayload }) => {
+    if (res.error || !res.data?.json) {
+      throw new Error(res.error || ui.copyJsonFailed);
+    }
+    await copyText(res.data.json);
+    if (res.data.simulated) {
+      toast({
+        variant: 'destructive',
+        title: ui.copyJson,
+        description: ui.copyJsonSimulated,
+      });
+      return;
+    }
+    const type = res.data.documentType;
+    toast({
+      title: type
+        ? ui.copyJsonSuccessType.replace('{type}', type)
+        : ui.copyJsonSuccess,
+    });
+  };
+
   const handleCopyJson = async (id: string) => {
     setCopyingId(id);
     try {
-      const res = await api.agt.getTransmissionPayload(id);
-      if (res.error || !res.data?.json) {
-        throw new Error(res.error || ui.copyJsonFailed);
-      }
-      await copyText(res.data.json);
-      if (res.data.simulated) {
-        toast({
-          variant: 'destructive',
-          title: ui.copyJson,
-          description: ui.copyJsonSimulated,
-        });
-        return;
-      }
-      const type = res.data.documentType;
-      toast({
-        title: type
-          ? ui.copyJsonSuccessType.replace('{type}', type)
-          : ui.copyJsonSuccess,
-      });
+      await applyCopiedPayload(await api.agt.getTransmissionPayload(id));
     } catch (err) {
       toast({
         variant: 'destructive',
         title: ui.copyJsonFailed,
         description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setCopyingId(null);
+    }
+  };
+
+  const handleCopyByNumber = async () => {
+    const q = docQuery.trim();
+    if (!q) {
+      toast({ variant: 'destructive', title: ui.copyJsonFailed, description: ui.copyByNumberEmpty });
+      return;
+    }
+    const needle = q.toLowerCase();
+    const match = rows.find((row) => {
+      const n = String(row.document_number || row.invoice_number || '').toLowerCase();
+      return n === needle || n.includes(needle);
+    });
+    setCopyingId(match?.id || `number:${q}`);
+    try {
+      if (match) {
+        await applyCopiedPayload(await api.agt.getTransmissionPayload(match.id));
+        return;
+      }
+      await applyCopiedPayload(await api.agt.getPortalPayload(q));
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: ui.copyJsonFailed,
+        description: err instanceof Error ? err.message : ui.copyByNumberMissing,
       });
     } finally {
       setCopyingId(null);
@@ -201,6 +237,15 @@ export function AgtTransmissionsCard() {
 
   const failedCount = rows.filter((r) => ['error', 'rejected', 'invalid'].includes(String(r.agt_status || '').toLowerCase())).length;
 
+  const visibleRows = useMemo(() => {
+    const q = docQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => {
+      const n = String(row.document_number || row.invoice_number || '').toLowerCase();
+      return n.includes(q);
+    });
+  }, [rows, docQuery]);
+
   return (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -241,6 +286,36 @@ export function AgtTransmissionsCard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        <div className="rounded-md border bg-muted/40 p-3 space-y-2">
+          <p className="text-sm font-medium">{ui.copyJsonHint}</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              value={docQuery}
+              onChange={(e) => setDocQuery(e.target.value)}
+              placeholder={ui.searchDocPlaceholder}
+              aria-label={ui.searchDoc}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleCopyByNumber();
+                }
+              }}
+            />
+            <Button
+              className="gap-1 shrink-0"
+              disabled={copyingId != null}
+              onClick={() => void handleCopyByNumber()}
+            >
+              {copyingId?.startsWith('number:') ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+              {ui.copyJson}
+            </Button>
+          </div>
+        </div>
+
         <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
           <TabsList>
             <TabsTrigger value="all">{ui.filterAll}</TabsTrigger>
@@ -253,68 +328,55 @@ export function AgtTransmissionsCard() {
           <p className="text-sm text-muted-foreground">{t.common.loading}</p>
         ) : listError ? (
           <p className="text-sm text-destructive">{listError}</p>
-        ) : rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{ui.empty}</p>
+        ) : visibleRows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{rows.length === 0 ? ui.empty : ui.copyByNumberMissing}</p>
         ) : (
-          <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{ui.colDocument}</TableHead>
-                <TableHead>{ui.copyJson}</TableHead>
-                <TableHead>{ui.colType}</TableHead>
-                <TableHead>{ui.colStatus}</TableHead>
-                <TableHead>{ui.colCode}</TableHead>
-                <TableHead>{ui.colError}</TableHead>
-                <TableHead>{ui.colDate}</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="font-mono text-xs">
+          <div className="space-y-2">
+            {visibleRows.map((row) => (
+              <div
+                key={row.id}
+                className="flex flex-col gap-2 rounded-md border p-3 sm:flex-row sm:items-center"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="font-mono text-sm font-semibold">
                     {row.document_number || row.invoice_number || '—'}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1 shrink-0"
-                      title={ui.copyJson}
-                      disabled={copyingId === row.id}
-                      onClick={() => void handleCopyJson(row.id)}
-                    >
-                      {copyingId === row.id ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
-                      )}
-                      {ui.copyJson}
-                    </Button>
-                  </TableCell>
-                  <TableCell>{typeLabel(row)}</TableCell>
-                  <TableCell>{statusBadge(row.agt_status)}</TableCell>
-                  <TableCell className="font-mono text-xs">{row.agt_code || '—'}</TableCell>
-                  <TableCell className="text-xs text-destructive max-w-[200px] truncate" title={row.error_message}>
-                    {row.error_message || '—'}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {row.transmitted_at
-                      ? new Date(row.transmitted_at).toLocaleString(locale)
-                      : '—'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {(row.agt_status === 'error' || row.agt_status === 'rejected') && (
-                      <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
-                        {ui.retryButton}
-                      </Button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span>{typeLabel(row)}</span>
+                    {statusBadge(row.agt_status)}
+                    {row.agt_code ? <span className="font-mono">{row.agt_code}</span> : null}
+                    <span>
+                      {row.transmitted_at
+                        ? new Date(row.transmitted_at).toLocaleString(locale)
+                        : '—'}
+                    </span>
+                  </div>
+                  {row.error_message ? (
+                    <p className="text-xs text-destructive">{row.error_message}</p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    className="gap-1"
+                    disabled={copyingId === row.id}
+                    onClick={() => void handleCopyJson(row.id)}
+                  >
+                    {copyingId === row.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
                     )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    {ui.copyJson}
+                  </Button>
+                  {(row.agt_status === 'error' || row.agt_status === 'rejected') && (
+                    <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
+                      {ui.retryButton}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </CardContent>
