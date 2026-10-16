@@ -813,7 +813,7 @@ function saleInRequestedRange(sale: Sale, dateFrom?: string, dateTo?: string): b
   const to = dateTo?.slice(0, 10);
   if (!from && !to) return true;
   const day = timestampLocalDate(sale.createdAt);
-  if (!day) return true;
+  if (!day) return false;
   if (from && day < from) return false;
   if (to && day > to) return false;
   return true;

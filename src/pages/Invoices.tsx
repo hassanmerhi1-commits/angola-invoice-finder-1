@@ -80,7 +80,7 @@ function isProvisionalInvoiceNumber(documentNumber: string): boolean {
 
 /** Calendar day of the date column, as YYYY-MM-DD. A stored Date string such as "Wed Jul 15 ..." is not a day. */
 function invoiceIssueDay(doc: ERPDocument): string {
-  const raw = String(doc.issueDate || '').trim();
+  const raw = String(doc.issueDate || doc.createdAt || '').trim();
   const parsed = timestampLocalDate(raw);
   if (/^\d{4}-\d{2}-\d{2}$/.test(parsed)) return parsed;
   const head = raw.slice(0, 10);
@@ -292,6 +292,8 @@ export default function Invoices() {
   const listScopeRef = useRef('');
   // Search can widen the range to show one old invoice. Today / the pickers must stay put.
   const dateHoldRef = useRef(false);
+  const listRangeRef = useRef({ from: dateFrom, to: dateTo });
+  const rangeGenRef = useRef(0);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [listLoading, setListLoading] = useState(false);
@@ -315,6 +317,25 @@ export default function Invoices() {
   const [documents, setDocuments] = useState<ERPDocument[]>(
     () => getCachedList<ERPDocument[]>(`invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`) ?? [],
   );
+
+  const applyListRange = useCallback((from: string, to: string) => {
+    dateHoldRef.current = true;
+    const same = listRangeRef.current.from === from && listRangeRef.current.to === to;
+    listRangeRef.current = { from, to };
+    rangeGenRef.current += 1;
+    setDateFrom(from);
+    setDateTo(to);
+    if (from || to) {
+      setDocuments((prev) => prev.filter((doc) => invoiceFallsOnRange(doc, from, to)));
+    }
+    if (same) setRefreshKey((k) => k + 1);
+  }, []);
+
+  const invoicesRouteKey = `${location.pathname}|${String(location.hash || '').split('?')[0]}`;
+  useEffect(() => {
+    const today = localISODate();
+    applyListRange(today, today);
+  }, [invoicesRouteKey, applyListRange]);
 
   useEffect(() => {
     // Soft-stale only — every remote POS sale used to force a full Tailscale refetch
@@ -346,9 +367,11 @@ export default function Invoices() {
     }));
 
     const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`;
-    const rangeFrom = dateFrom.slice(0, 10);
-    const rangeTo = dateTo.slice(0, 10);
-    const onPickedDays = (doc: ERPDocument) => invoiceFallsOnRange(doc, rangeFrom, rangeTo);
+    const loadGen = rangeGenRef.current;
+    const onPickedDays = (doc: ERPDocument) => {
+      const range = listRangeRef.current;
+      return invoiceFallsOnRange(doc, range.from.slice(0, 10), range.to.slice(0, 10));
+    };
     const cached = (getCachedList<ERPDocument[]>(cacheKey) ?? []).filter(onPickedDays);
     const seeded = sortDocumentsByIssue(
       pinnedInvoiceDocsRef.current.reduce(
@@ -386,7 +409,7 @@ export default function Invoices() {
       invoiceNumbers: uniqueInvoiceKeys([focusQ]),
     };
     const paintDocs = (rows: ERPDocument[]) => {
-      if (cancelled) return;
+      if (cancelled || loadGen !== rangeGenRef.current) return;
       const withPinned = sortDocumentsByIssue(
         pinnedInvoiceDocsRef.current.reduce(
           (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
@@ -453,6 +476,10 @@ export default function Invoices() {
             listOpts,
           );
         };
+        const datedList = !!(dateFrom.slice(0, 10) || dateTo.slice(0, 10));
+        const storedDocsPromise = datedList
+          ? Promise.resolve([] as ERPDocument[])
+          : getDocuments(type, branchFilter, { skipLocalDb: true });
         const mergeStoredWithProformas = (stored: ERPDocument[], pfDocs: ERPDocument[]) => {
           const seen = new Set(stored.map((d) => d.id));
           const out = [...stored];
@@ -505,9 +532,7 @@ export default function Invoices() {
         // "All" tab: paint sales first so the grid is usable; purchases/CN fill in after.
         if (!type) {
           const [storedDocs, salesDocs, pfDocs] = await Promise.all([
-            // Skip Electron erp_documents dump — API lists are canonical and the IPC scan was
-            // blocking every Invoices open over Tailscale.
-            getDocuments(type, branchFilter, { skipLocalDb: true }),
+            storedDocsPromise,
             fetchSalesDocs(),
             proformaDocsPromise,
           ]);
@@ -533,7 +558,7 @@ export default function Invoices() {
         }
 
         const [storedDocs, salesDocs, purchaseDocs, cnRes, pfDocs, gtRes] = await Promise.all([
-          getDocuments(type, branchFilter, { skipLocalDb: true }),
+          storedDocsPromise,
           fetchSalesDocs(),
           loadPurchase
             ? getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice, listOpts)
@@ -1025,10 +1050,7 @@ export default function Invoices() {
       setPrefillDoc(null);
       setActiveTab('all');
       setInvoicesWorkspaceTab('all');
-      dateHoldRef.current = true;
-      setDateFrom('');
-      setDateTo('');
-      setRefreshKey((k) => k + 1);
+      applyListRange('', '');
       toast.info(t.invoicesUi.showAllDocuments);
     };
     const onPrint = () => {
@@ -1073,7 +1095,7 @@ export default function Invoices() {
         window.removeEventListener(event, handler);
       }
     };
-  }, [documents, selectedDocId, filteredDocs, t, branches, printErpDocument]);
+  }, [documents, selectedDocId, filteredDocs, t, branches, printErpDocument, applyListRange]);
 
   useEffect(() => {
     setContextMenuResolver((target) => {
@@ -1297,20 +1319,14 @@ export default function Invoices() {
         <span className="text-xs text-muted-foreground">{t.common.from}:</span>
         <DatePickerButton
           value={dateFrom}
-          onChange={(value) => {
-            dateHoldRef.current = true;
-            setDateFrom(value);
-          }}
+          onChange={(value) => applyListRange(value, listRangeRef.current.to)}
           placeholder={t.common.from}
           locale={language === 'pt' ? 'pt' : 'en'}
         />
         <span className="text-xs text-muted-foreground">{t.common.to}:</span>
         <DatePickerButton
           value={dateTo}
-          onChange={(value) => {
-            dateHoldRef.current = true;
-            setDateTo(value);
-          }}
+          onChange={(value) => applyListRange(listRangeRef.current.from, value)}
           placeholder={t.common.to}
           locale={language === 'pt' ? 'pt' : 'en'}
         />
@@ -1321,9 +1337,7 @@ export default function Invoices() {
           className="h-7 text-xs px-2"
           onClick={() => {
             const today = localISODate();
-            dateHoldRef.current = true;
-            setDateFrom(today);
-            setDateTo(today);
+            applyListRange(today, today);
           }}
         >
           {t.invoicesUi.todayOnly}
@@ -1333,11 +1347,7 @@ export default function Invoices() {
           variant="ghost"
           size="sm"
           className="h-7 text-xs px-2"
-          onClick={() => {
-            dateHoldRef.current = true;
-            setDateFrom('');
-            setDateTo('');
-          }}
+          onClick={() => applyListRange('', '')}
         >
           {t.invoicesUi.allDates}
         </Button>
