@@ -41,20 +41,38 @@ export async function replaceStockAdjustmentDocument(
     lines: { productId: string; quantity: number; unitCost: number }[];
     notes?: string;
     referenceNumber?: string;
+    warehouseId?: string;
+    direction?: 'IN' | 'OUT';
+    referenceType?: string;
+    entryDate?: string;
+    landingCosts?: number;
+    freightSourceAccount?: string;
+    freightSourceName?: string;
+    supplierId?: string;
+    supplierName?: string;
   },
 ): Promise<{ documentId: string; referenceNumber: string; journalEntryId?: string | null }> {
+  const warehouseId = payload.warehouseId || original.branchId;
+  const landingCosts = Number(payload.landingCosts) || 0;
   const res = await api.transactions.replaceStockAdjustment(original.id, {
-    direction: original.direction,
-    warehouseId: original.branchId,
+    direction: payload.direction || original.direction,
+    warehouseId,
     referenceNumber: payload.referenceNumber || original.referenceNumber,
-    referenceType: original.reason || 'adjustment',
+    referenceType: payload.referenceType || original.reason || 'adjustment',
+    entryDate: payload.entryDate,
     notes: payload.notes ?? original.notes,
     createdBy: currentUserId(),
     lines: payload.lines,
+    landingCosts: landingCosts > 0 ? landingCosts : undefined,
+    freightSourceAccount: payload.freightSourceAccount?.trim() || undefined,
+    freightSourceName: payload.freightSourceName?.trim() || undefined,
+    supplierId: payload.supplierId?.trim() || undefined,
+    supplierName: payload.supplierName?.trim() || undefined,
     voidReason: `Substituição de ${original.referenceNumber}`,
   });
   if (res.error) throw new Error(res.error);
   notifyProductsChanged(original.branchId);
+  if (warehouseId !== original.branchId) notifyProductsChanged(warehouseId);
   return {
     documentId: res.data?.documentId || '',
     referenceNumber: res.data?.referenceNumber || payload.referenceNumber || original.referenceNumber,

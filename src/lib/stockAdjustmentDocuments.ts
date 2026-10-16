@@ -37,6 +37,49 @@ export interface StockAdjustmentDocument {
   totalQuantity: number;
   totalValue: number;
   lines: StockAdjustmentLine[];
+  landingCosts?: number;
+  freightSourceAccount?: string;
+  freightSourceName?: string;
+  supplierId?: string;
+  supplierName?: string;
+}
+
+export function freightFromJournalLines(lines: Array<Record<string, unknown>>): {
+  landingCosts: number;
+  freightSourceAccount: string;
+  freightSourceName: string;
+  supplierAccountCode: string;
+  supplierName: string;
+} {
+  let landingCosts = 0;
+  let freightSourceAccount = '';
+  let freightSourceName = '';
+  let supplierAccountCode = '';
+  let supplierName = '';
+
+  for (const line of lines) {
+    const code = String(line.accountCode ?? line.account_code ?? '').trim();
+    const name = String(line.accountName ?? line.account_name ?? '').trim();
+    const debit = Number(line.debit ?? line.debitAmount ?? line.debit_amount ?? 0) || 0;
+    const credit = Number(line.credit ?? line.creditAmount ?? line.credit_amount ?? 0) || 0;
+    if (code === '752' || code.startsWith('752')) {
+      landingCosts += debit;
+    } else if (credit > 0 && (code.startsWith('45') || code.startsWith('43'))) {
+      freightSourceAccount = code;
+      freightSourceName = name;
+    } else if (credit > 0 && /^321\d*$/i.test(code)) {
+      supplierAccountCode = code;
+      supplierName = name;
+    }
+  }
+
+  return {
+    landingCosts: Math.round(landingCosts * 100) / 100,
+    freightSourceAccount,
+    freightSourceName,
+    supplierAccountCode,
+    supplierName,
+  };
 }
 
 export function isStockAdjustmentMovement(

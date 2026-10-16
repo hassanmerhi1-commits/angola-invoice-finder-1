@@ -3879,6 +3879,11 @@ export const api = {
         notes?: string;
         createdBy?: string;
         lines: { productId: string; quantity: number; unitCost: number }[];
+        landingCosts?: number;
+        freightSourceAccount?: string;
+        freightSourceName?: string;
+        supplierId?: string;
+        supplierName?: string;
         voidReason?: string;
       },
     ) =>
