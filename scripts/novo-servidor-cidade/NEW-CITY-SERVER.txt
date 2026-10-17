@@ -1,0 +1,27 @@
+NEXOR — new city server (5 steps)
+=================================
+Do this on THIS PC only. Do not copy database.env or passwords from another city.
+
+1. Tailscale
+   Click the company invite, install, and sign in.
+
+2. PostgreSQL 18
+   Install with Next, Next. Choose a password for the "postgres" user
+   and write it down. Do not share it with another city.
+
+3. Node.js 22 LTS
+   Run the Node installer from this USB (node-v22-x64.msi). Next, Next.
+   Download once at https://nodejs.org (green LTS, Windows x64).
+
+4. NEXOR
+   Install NEXOR-ERP-1.3.8-x64.exe as Administrator.
+
+5. This script
+   Right-click preparar-servidor-cidade.cmd
+   -> Run as administrator.
+   When it asks for a password, use the one from step 2.
+   At the end, open the NEXOR icon and create the administrator.
+   Write down the Tailscale IP the script shows — that is what the tills use.
+
+After this: updates = the "Update NEXOR" button in Settings.
+Do not run this script again. Do not use this password / database.env in another city.

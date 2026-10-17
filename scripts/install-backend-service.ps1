@@ -11,6 +11,7 @@
 #
 # -ServiceName  Windows service name (default NexorBackend)
 # -InstallDir   where database.env and data\secrets live (default C:\NEXOR ERP)
+# -BackendDir   folder that contains src\server.js (default: this repo's backend)
 # -Port         API port (default 3000)
 # -NssmPath     full path to nssm.exe if it is not on PATH
 # -NoFirewall   skip the inbound rule for -Port
@@ -23,6 +24,7 @@
 param(
   [string]$ServiceName = 'NexorBackend',
   [string]$InstallDir = 'C:\NEXOR ERP',
+  [string]$BackendDir = '',
   [int]$Port = 3000,
   [string]$NssmPath = '',
   [switch]$NoFirewall,
@@ -104,8 +106,12 @@ Right-click PowerShell and choose "Run as administrator", then re-run.
 }
 Write-Ok 'Running elevated'
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
-$backendDir = Join-Path $repoRoot 'backend'
+if ($BackendDir) {
+  $backendDir = [System.IO.Path]::GetFullPath($BackendDir)
+} else {
+  $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+  $backendDir = Join-Path $repoRoot 'backend'
+}
 $serverEntry = Join-Path $backendDir 'src\server.js'
 
 # ---------------------------------------------------------------- locate nssm

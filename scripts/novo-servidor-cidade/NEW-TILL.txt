@@ -1,0 +1,11 @@
+NEXOR — new shop till
+=====================
+1. Tailscale: same company invite, sign in.
+2. Install NEXOR-ERP-1.3.8-x64.exe (do not install PostgreSQL).
+3. Create the file C:\NEXOR ERP\IP with ONE line: the Tailscale IP of
+   THIS city's server (the number the server script showed).
+   Example: 100.x.x.x
+4. Open NEXOR. If the screen looks old, double-click
+   Enable-City-Screen.bat (in this same folder), close NEXOR, and open it again.
+
+Do not copy database.env. Do not put "postgres" in the till IP file.

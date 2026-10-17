@@ -1,0 +1,11 @@
+NEXOR — nova caixa (loja)
+=========================
+1. Tailscale: mesmo convite da empresa, inicie sessao.
+2. Instale NEXOR-ERP-1.3.8-x64.exe (nao instale PostgreSQL).
+3. Crie o ficheiro C:\NEXOR ERP\IP com UMA linha: o IP Tailscale do
+   servidor DESTA cidade (o numero que o script do servidor mostrou).
+   Exemplo: 100.x.x.x
+4. Abra o NEXOR. Se o ecran estiver antigo, faca duplo clique em
+   Enable-City-Screen.bat (nesta mesma pasta), feche o NEXOR e abra outra vez.
+
+Nao copie database.env. Nao ponha "postgres" no IP da caixa.
