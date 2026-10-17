@@ -291,7 +291,7 @@ export default function Invoices() {
   const pinnedInvoiceDocsRef = useRef<ERPDocument[]>(loadPinnedInvoiceDocs());
   const listScopeRef = useRef('');
   // Search can widen the range to show one old invoice. Today / the pickers must stay put.
-  const dateHoldRef = useRef(false);
+  const dateHoldRef = useRef(true);
   const listRangeRef = useRef({ from: dateFrom, to: dateTo });
   const rangeGenRef = useRef(0);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -318,8 +318,13 @@ export default function Invoices() {
     () => getCachedList<ERPDocument[]>(`invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`) ?? [],
   );
 
-  const applyListRange = useCallback((from: string, to: string) => {
-    dateHoldRef.current = true;
+  const applyListRange = useCallback((from: string, to: string, opts?: { allDates?: boolean }) => {
+    // Today / a picked range stays put. Empty from+to is "all dates" and must be
+    // explicit — toolbar All and a late undated fetch used to dump a month back.
+    if (!from && !to && !opts?.allDates && dateHoldRef.current) {
+      return;
+    }
+    dateHoldRef.current = !!(from || to);
     const same = listRangeRef.current.from === from && listRangeRef.current.to === to;
     listRangeRef.current = { from, to };
     rangeGenRef.current += 1;
@@ -330,6 +335,11 @@ export default function Invoices() {
     }
     if (same) setRefreshKey((k) => k + 1);
   }, []);
+
+  const showAllDates = useCallback(() => {
+    dateHoldRef.current = false;
+    applyListRange('', '', { allDates: true });
+  }, [applyListRange]);
 
   const invoicesRouteKey = `${location.pathname}|${String(location.hash || '').split('?')[0]}`;
   useEffect(() => {
@@ -366,11 +376,14 @@ export default function Invoices() {
       isMain: b.isMain,
     }));
 
-    const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`;
+    const range = listRangeRef.current;
+    const rangeFrom = range.from.slice(0, 10);
+    const rangeTo = range.to.slice(0, 10);
+    const cacheKey = `invoicesDocs:${activeTab}:${listBranchId ?? 'all'}:${rangeFrom}:${rangeTo}`;
     const loadGen = rangeGenRef.current;
     const onPickedDays = (doc: ERPDocument) => {
-      const range = listRangeRef.current;
-      return invoiceFallsOnRange(doc, range.from.slice(0, 10), range.to.slice(0, 10));
+      const live = listRangeRef.current;
+      return invoiceFallsOnRange(doc, live.from.slice(0, 10), live.to.slice(0, 10));
     };
     const cached = (getCachedList<ERPDocument[]>(cacheKey) ?? []).filter(onPickedDays);
     const seeded = sortDocumentsByIssue(
@@ -379,7 +392,7 @@ export default function Invoices() {
         cached,
       ),
     );
-    const scopeKey = `${activeTab}:${listBranchId ?? 'all'}:${dateFrom}:${dateTo}`;
+    const scopeKey = `${activeTab}:${listBranchId ?? 'all'}:${rangeFrom}:${rangeTo}`;
     const scopeChanged = listScopeRef.current !== scopeKey;
     listScopeRef.current = scopeKey;
     // Don't flash the cached snapshot (or clear the row) on a background refresh.
@@ -400,8 +413,8 @@ export default function Invoices() {
       || '';
     const listOpts = {
       light: true as const,
-      dateFrom,
-      dateTo,
+      dateFrom: rangeFrom,
+      dateTo: rangeTo,
       limit: 500,
       // Only the invoice opened from search. Sending every pinned number made the
       // server add older sales (substring match) on top of the chosen day.
@@ -410,6 +423,8 @@ export default function Invoices() {
     };
     const paintDocs = (rows: ERPDocument[]) => {
       if (cancelled || loadGen !== rangeGenRef.current) return;
+      const live = listRangeRef.current;
+      if (dateHoldRef.current && (live.from || live.to) && !rangeFrom && !rangeTo) return;
       const withPinned = sortDocumentsByIssue(
         pinnedInvoiceDocsRef.current.reduce(
           (acc, doc) => (onPickedDays(doc) ? upsertInvoiceDocument(acc, doc) : acc),
@@ -476,7 +491,7 @@ export default function Invoices() {
             listOpts,
           );
         };
-        const datedList = !!(dateFrom.slice(0, 10) || dateTo.slice(0, 10));
+        const datedList = !!(rangeFrom || rangeTo);
         const storedDocsPromise = datedList
           ? Promise.resolve([] as ERPDocument[])
           : getDocuments(type, branchFilter, { skipLocalDb: true });
@@ -1042,7 +1057,7 @@ export default function Invoices() {
     const selected = documents.find((d) => d.id === selectedDocId) || null;
 
     const onAll = () => {
-      // Classic ERP "All": leave the open document, clear filters, show the full list.
+      // All document types, not all dates. Clearing the day dumped a month of rows.
       setSelectedDocId(null);
       setSearchTerm('');
       setFormOpen(false);
@@ -1050,8 +1065,11 @@ export default function Invoices() {
       setPrefillDoc(null);
       setActiveTab('all');
       setInvoicesWorkspaceTab('all');
-      applyListRange('', '');
-      toast.info(t.invoicesUi.showAllDocuments);
+      const today = localISODate();
+      applyListRange(
+        listRangeRef.current.from || today,
+        listRangeRef.current.to || today,
+      );
     };
     const onPrint = () => {
       if (!selected) {
@@ -1347,7 +1365,7 @@ export default function Invoices() {
           variant="ghost"
           size="sm"
           className="h-7 text-xs px-2"
-          onClick={() => applyListRange('', '')}
+          onClick={() => showAllDates()}
         >
           {t.invoicesUi.allDates}
         </Button>
