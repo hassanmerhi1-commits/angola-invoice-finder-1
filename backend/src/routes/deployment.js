@@ -17,6 +17,38 @@ module.exports = function deploymentRoutes() {
     }
   });
 
+  router.get('/update/status', requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const { buildUpdateStatus } = require('../lib/serverUpdate');
+      const refresh = req.query.refresh !== '0' && req.query.refresh !== 'false';
+      const status = await buildUpdateStatus(db, { refreshLatest: refresh });
+      res.json(status);
+    } catch (error) {
+      console.error('[DEPLOYMENT update/status]', error);
+      res.status(500).json({ ok: false, error: error.message || 'Failed to read update status' });
+    }
+  });
+
+  router.post('/update/apply', requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const { startServerUpdate } = require('../lib/serverUpdate');
+      const job = await startServerUpdate(db, {
+        confirm: req.body?.confirm === true,
+        user: req.user,
+      });
+      res.status(202).json({ ok: true, job });
+    } catch (error) {
+      const code = error.code || '';
+      const status =
+        code === 'CONFIRM_REQUIRED' ? 400
+          : code === 'NOT_ELIGIBLE' ? 403
+            : code === 'UPDATE_IN_PROGRESS' ? 409
+              : 500;
+      console.error('[DEPLOYMENT update/apply]', error);
+      res.status(status).json({ ok: false, error: error.message || 'Update failed' });
+    }
+  });
+
   router.post('/repair-schema', requirePermission('admin_settings'), async (_req, res) => {
     try {
       const { ensureSalesCreditPaymentMethod, ensureBranchPricingColumn } = require('../lib/ensurePhaseSchema');

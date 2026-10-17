@@ -63,8 +63,42 @@ function readAppVersion() {
  * once at load: the answer must describe the code this process actually loaded,
  * not a newer checkout that nobody has restarted into yet.
  */
+/**
+ * Stamp written by Actualizar NEXOR (pack apply). Preferred over .git because
+ * the button copies files without moving HEAD.
+ */
+function readBuildStamp() {
+  const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
+  const candidates = [
+    path.resolve(__dirname, '../../BUILD_STAMP.json'),
+    path.resolve(__dirname, '../../webapp/build.json'),
+    path.join(installDir, 'updates', 'current.json'),
+  ];
+  let best = null;
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const commit = String(json.commit || json.buildId || '').trim();
+      if (!commit) continue;
+      const builtAt = json.builtAt || json.appliedAt || null;
+      const stamp = { commit, builtAt, source: filePath };
+      if (!best) {
+        best = stamp;
+        continue;
+      }
+      const nextTs = Date.parse(String(builtAt || '')) || 0;
+      const bestTs = Date.parse(String(best.builtAt || '')) || 0;
+      if (nextTs >= bestTs) best = stamp;
+    } catch (_) { /* next */ }
+  }
+  return best;
+}
+
 function readGitCommit() {
   if (process.env.NEXOR_COMMIT) return String(process.env.NEXOR_COMMIT).trim();
+  const stamp = readBuildStamp();
+  if (stamp?.commit) return stamp.commit;
   const roots = [
     path.resolve(__dirname, '../../..'),
     path.resolve(__dirname, '../../../..'),
@@ -403,6 +437,7 @@ module.exports = {
   GIT_COMMIT,
   readAppVersion,
   readGitCommit,
+  readBuildStamp,
   readSchemaVersionFromDb,
   buildDeploymentStatus,
   recordAppMeta,

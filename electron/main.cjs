@@ -1373,6 +1373,10 @@ function injectBackendPortToAllWindows() {
   if (typeof p !== 'number' || p <= 0 || p >= 65536) return;
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win || win.isDestroyed() || win === splashWindow) continue;
+    try {
+      const loaded = win.webContents.getURL() || '';
+      if (/^https?:\/\/127\.0\.0\.1:3000\/app/i.test(loaded)) continue;
+    } catch (_) { /* ignore */ }
     win.webContents
       .executeJavaScript(
         `window.__KWANZA_BACKEND_PORT__ = ${p}; try { window.dispatchEvent(new Event('nexor:backend-port')); } catch (_) {}`,
@@ -3093,8 +3097,9 @@ function getRendererSource() {
     return { type: 'dev', url: 'http://localhost:18080' };
   }
 
-  // The server PC must use the UI packed in the installer. Hot Updates load
-  // ${server}/app, and a missing JS bundle there is a white window.
+  // Server PC: packed installer is the safe default. loadRendererRoute may
+  // switch to http://127.0.0.1:3000/app after a probe so Actualizar NEXOR
+  // updates this desktop too; a missing bundle falls back to this packed copy.
   if (isServerMode) {
     return getLocalRendererSource();
   }
@@ -3142,9 +3147,93 @@ function showRendererRecoveryScreen(targetWindow, message) {
   targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 
+function probeLoopbackWebappReady() {
+  return new Promise((resolve) => {
+    const req = http.get('http://127.0.0.1:3000/app/', { timeout: 1500 }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > 24000) {
+          try { res.destroy(); } catch (_) { /* ignore */ }
+        }
+      });
+      res.on('end', () => {
+        const ok = res.statusCode === 200 && /index-[^"' ]+\.js/.test(body);
+        resolve(ok);
+      });
+      res.on('error', () => resolve(false));
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      try { req.destroy(); } catch (_) { /* ignore */ }
+      resolve(false);
+    });
+  });
+}
+
+function loadServerRenderer(targetWindow, source, normalizedRoute) {
+  const fallbackSource = getLocalRendererSource();
+  let recovered = false;
+  const baseUrl = String(source.url || '').replace(/\/$/, '');
+  const serverLoadUrl = `${baseUrl}/#${normalizedRoute}`;
+
+  const cleanup = () => {
+    targetWindow.webContents.removeListener('did-fail-load', handleFail);
+    targetWindow.webContents.removeListener('render-process-gone', handleGone);
+  };
+
+  const fallbackToLocal = (reason) => {
+    if (recovered) return;
+    recovered = true;
+    cleanup();
+    console.warn('[HotUpdate] Server renderer failed, falling back to local bundle:', reason);
+    try {
+      targetWindow.loadFile(fallbackSource.path, { hash: normalizedRoute });
+    } catch (error) {
+      console.error('[HotUpdate] Local fallback failed:', error);
+      showRendererRecoveryScreen(targetWindow, error?.message || reason);
+    }
+  };
+
+  const handleFail = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    fallbackToLocal(`${errorDescription || 'Load failed'} (${validatedURL || serverLoadUrl})`);
+  };
+
+  const handleGone = (_event, details) => {
+    fallbackToLocal(details?.reason || 'Renderer process crashed');
+  };
+
+  cleanup();
+  targetWindow.webContents.once('did-fail-load', handleFail);
+  targetWindow.webContents.once('render-process-gone', handleGone);
+  targetWindow.loadURL(serverLoadUrl).catch((error) => fallbackToLocal(error?.message || 'loadURL failed'));
+}
+
 function loadRendererRoute(targetWindow, route = '/') {
   const normalizedRoute = route.startsWith('/') ? route : `/${route}`;
   const source = getRendererSource();
+
+  if (isServerMode && source.type !== 'dev') {
+    void probeLoopbackWebappReady().then((ready) => {
+      if (!targetWindow || targetWindow.isDestroyed()) return;
+      if (ready) {
+        console.warn('[Renderer] Server desktop using http://127.0.0.1:3000/app');
+        loadServerRenderer(targetWindow, {
+          type: 'server',
+          url: 'http://127.0.0.1:3000/app',
+          baseUrl: 'http://127.0.0.1:3000',
+        }, normalizedRoute);
+        return;
+      }
+      const local = getLocalRendererSource();
+      targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((error) => {
+        console.error('[Renderer] Failed to load local renderer:', error);
+        showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
+      });
+    });
+    return;
+  }
 
   if (source.type === 'dev') {
     const devUrl = `${source.url}/#${normalizedRoute}`;
@@ -3167,44 +3256,7 @@ function loadRendererRoute(targetWindow, route = '/') {
   }
 
   if (source.type === 'server') {
-    const fallbackSource = getLocalRendererSource();
-    let recovered = false;
-    // Must match HashRouter (same as dev): route + query live in the fragment, not in pathname.
-    // Loading `${base}/purchase-invoices?mode=…` leaves hash empty → blank/wrong screen until reload.
-    const baseUrl = String(source.url || '').replace(/\/$/, '');
-    const serverLoadUrl = `${baseUrl}/#${normalizedRoute}`;
-
-    const cleanup = () => {
-      targetWindow.webContents.removeListener('did-fail-load', handleFail);
-      targetWindow.webContents.removeListener('render-process-gone', handleGone);
-    };
-
-    const fallbackToLocal = (reason) => {
-      if (recovered) return;
-      recovered = true;
-      cleanup();
-      console.warn('[HotUpdate] Server renderer failed, falling back to local bundle:', reason);
-      try {
-        targetWindow.loadFile(fallbackSource.path, { hash: normalizedRoute });
-      } catch (error) {
-        console.error('[HotUpdate] Local fallback failed:', error);
-        showRendererRecoveryScreen(targetWindow, error?.message || reason);
-      }
-    };
-
-    const handleFail = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame) return;
-      fallbackToLocal(`${errorDescription || 'Load failed'} (${validatedURL || serverLoadUrl})`);
-    };
-
-    const handleGone = (_event, details) => {
-      fallbackToLocal(details?.reason || 'Renderer process crashed');
-    };
-
-    cleanup();
-    targetWindow.webContents.once('did-fail-load', handleFail);
-    targetWindow.webContents.once('render-process-gone', handleGone);
-    targetWindow.loadURL(serverLoadUrl).catch((error) => fallbackToLocal(error?.message || 'loadURL failed'));
+    loadServerRenderer(targetWindow, source, normalizedRoute);
     return;
   }
 
@@ -3452,6 +3504,10 @@ function createWindow() {
   // We re-inject on every load (handles hot-update reloads + navigation).
   const injectBackendPort = () => {
     if (getRendererSource().type === 'server') return;
+    try {
+      const loaded = mainWindow?.webContents.getURL() || '';
+      if (/^https?:\/\/127\.0\.0\.1:3000\/app/i.test(loaded)) return;
+    } catch (_) { /* ignore */ }
     const port = backendManager.getPort();
     if (port == null) return;
     mainWindow?.webContents
@@ -3516,6 +3572,10 @@ function createSecondaryWindow() {
 
   const inject = () => {
     if (getRendererSource().type === 'server') return;
+    try {
+      const loaded = win.webContents.getURL() || '';
+      if (/^https?:\/\/127\.0\.0\.1:3000\/app/i.test(loaded)) return;
+    } catch (_) { /* ignore */ }
     const port = backendManager.getPort();
     if (port == null || win.isDestroyed()) return;
     win.webContents

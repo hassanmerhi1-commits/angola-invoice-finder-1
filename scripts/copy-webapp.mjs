@@ -2,6 +2,7 @@
  * Copy Vite dist/ into backend/webapp so Express can serve /app.
  * `vite build --mode webapp` writes dist/ only; Docker mounts backend/webapp.
  */
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -29,9 +30,22 @@ try {
 } catch {
   version = '';
 }
+const builtAt = new Date().toISOString();
+let commit = process.env.GITHUB_SHA || process.env.NEXOR_COMMIT || '';
+if (!commit) {
+  try {
+    commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  } catch {
+    commit = '';
+  }
+}
 fs.writeFileSync(
   path.join(webapp, 'version.json'),
-  `${JSON.stringify({ version, builtAt: new Date().toISOString() }, null, 2)}\n`,
+  `${JSON.stringify({ version, builtAt, commit: commit || undefined }, null, 2)}\n`,
+);
+fs.writeFileSync(
+  path.join(webapp, 'build.json'),
+  `${JSON.stringify({ version, commit: commit || null, builtAt }, null, 2)}\n`,
 );
 
 const js = fs.readdirSync(path.join(webapp, 'assets')).filter((name) => /^index-.*\.js$/.test(name));

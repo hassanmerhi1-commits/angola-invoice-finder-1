@@ -15,6 +15,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:webapp": "vite build --mode webapp && node scripts/copy-webapp.mjs",
+    "pack:server-update": "npm run build:webapp && node scripts/pack-server-update.mjs",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",

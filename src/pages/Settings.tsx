@@ -21,6 +21,7 @@ import { DatabaseBackupCard } from '@/components/settings/DatabaseBackupCard';
 import { ClientSyncSettingsCard } from '@/components/settings/ClientSyncSettingsCard';
 import { SyncHealthSettingsCard } from '@/components/settings/SyncHealthSettingsCard';
 import { DeploymentHealthCard } from '@/components/settings/DeploymentHealthCard';
+import { ServerUpdateCard } from '@/components/settings/ServerUpdateCard';
 import { DataConsistencyCard } from '@/components/settings/DataConsistencyCard';
 import {
   SettingsSectionNav,
@@ -292,19 +293,22 @@ export default function Settings() {
         );
       case 'system':
         return (
-          <div className="grid gap-6 md:grid-cols-2">
-            <AppInfoCard appVersion={appVersion} isElectron={isElectron} />
-            <SoftwareUpdatesCard
-              isElectron={isElectron}
-              updateStatus={updateStatus}
-              isChecking={isChecking}
-              isDownloading={isDownloading}
-              onCheck={handleCheckForUpdates}
-              onDownload={handleDownloadUpdate}
-              onInstall={handleInstallUpdate}
-              onOpenReleasePage={handleOpenReleasePage}
-            />
-            <SetupConfigCard setupConfig={setupConfig} isElectron={isElectron} />
+          <div className="space-y-6">
+            <ServerUpdateCard />
+            <div className="grid gap-6 md:grid-cols-2">
+              <AppInfoCard appVersion={appVersion} isElectron={isElectron} />
+              <SoftwareUpdatesCard
+                isElectron={isElectron}
+                updateStatus={updateStatus}
+                isChecking={isChecking}
+                isDownloading={isDownloading}
+                onCheck={handleCheckForUpdates}
+                onDownload={handleDownloadUpdate}
+                onInstall={handleInstallUpdate}
+                onOpenReleasePage={handleOpenReleasePage}
+              />
+              <SetupConfigCard setupConfig={setupConfig} isElectron={isElectron} />
+            </div>
           </div>
         );
       case 'data':

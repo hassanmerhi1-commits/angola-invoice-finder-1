@@ -46,6 +46,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build city-server update pack
+        run: |
+          npm run build:webapp
+          node scripts/pack-server-update.mjs
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+
       - name: Verify release artifacts
         shell: pwsh
         run: |
@@ -68,6 +75,12 @@ jobs:
             Write-Error "No .exe found in release/"
           }
           Write-Host "OK: $($exe.Name) + latest.yml"
+          if (-not (Test-Path release/nexor-server-update.zip)) {
+            Write-Error "nexor-server-update.zip missing — city servers cannot use Actualizar NEXOR"
+          }
+          if (-not (Test-Path release/latest-server.json)) {
+            Write-Error "latest-server.json missing — city servers cannot check for a pack"
+          }
           node scripts/verify-packaged-updater.mjs
 
       - name: Upload Release Assets
@@ -78,6 +91,8 @@ jobs:
           files: |
             release/*.exe
             release/latest.yml
+            release/nexor-server-update.zip
+            release/latest-server.json
           draft: false
           prerelease: false
           generate_release_notes: true

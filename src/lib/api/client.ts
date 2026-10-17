@@ -3032,6 +3032,50 @@ export const api = {
         commit?: string | null;
         checkedAt: string;
       }>('/deployment/status'),
+    updateStatus: (refreshLatest = true) =>
+      apiFetch<{
+        ok: boolean;
+        canApply: boolean;
+        reason?: string | null;
+        reasons?: string[];
+        appVersion: string;
+        current: {
+          appVersion: string;
+          buildId: string | null;
+          buildIdShort: string | null;
+          builtAt: string | null;
+        };
+        latest: {
+          buildId: string;
+          buildIdShort: string;
+          builtAt: string | null;
+          appVersion: string;
+          sha512?: string;
+        } | null;
+        latestError?: string | null;
+        updateAvailable: boolean;
+        job?: {
+          phase?: string;
+          message?: string;
+          ok?: boolean | null;
+          error?: string | null;
+          rollback?: boolean;
+          buildId?: string;
+        } | null;
+        serviceName?: string;
+      }>(`/deployment/update/status${refreshLatest ? '' : '?refresh=0'}`),
+    applyUpdate: () =>
+      apiFetch<{
+        ok: boolean;
+        job?: {
+          phase?: string;
+          message?: string;
+          buildId?: string;
+        };
+      }>('/deployment/update/apply', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
+      }),
   },
 
   sync: {
