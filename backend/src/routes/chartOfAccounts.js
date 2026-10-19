@@ -338,6 +338,38 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  // Move a supplier leaf under 321 / 3211 / … without dropping its journal UUID.
+  router.post('/move-entity-leaf', requirePermission('accounting_create', 'purchase_create', 'admin_settings'), async (req, res) => {
+    try {
+      const { moveEntityLeafToParent } = require('../lib/entityCoaAccounts');
+      const parentCode = String(req.body?.parentCode || req.body?.accountParentCode || '').trim();
+      const accountId = String(req.body?.accountId || req.body?.id || '').trim() || null;
+      const name = String(req.body?.name || req.body?.supplierName || '').trim() || null;
+      const nif = String(req.body?.nif || req.body?.supplierNif || '').trim() || null;
+      if (!parentCode) {
+        return res.status(400).json({ error: 'parentCode is required' });
+      }
+      if (!accountId && !name && !nif) {
+        return res.status(400).json({ error: 'accountId or supplier name/NIF is required' });
+      }
+      const result = await moveEntityLeafToParent(db, { accountId, name, nif, parentCode });
+      await broadcastTable('chart_of_accounts');
+      auditErpSafe(req, {
+        table: 'chart_of_accounts',
+        id: result.id,
+        action: 'update',
+        description: result.moved
+          ? `Fornecedor movido: ${result.oldCode} → ${result.newCode} (${result.parentCode})`
+          : `Fornecedor já está em ${result.parentCode}`,
+        newValues: result,
+      });
+      res.json(result);
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS move-entity-leaf]', error);
+      res.status(400).json({ error: error.message || 'Failed to move supplier account' });
+    }
+  });
+
   router.post('/ensure-entity-leaves', requirePermission('purchase_create', 'accounting_create', 'admin_settings', 'accounting_view'), async (req, res) => {
     let client = null;
     try {

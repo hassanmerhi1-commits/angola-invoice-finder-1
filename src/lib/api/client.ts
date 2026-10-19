@@ -2012,6 +2012,17 @@ export const api = {
         { method: 'POST', body: '{}' },
         { timeoutMs: 60000 },
       ),
+    moveEntityLeaf: (body: {
+      accountId?: string;
+      parentCode: string;
+      name?: string;
+      nif?: string | null;
+    }) =>
+      apiFetch<{ id: string; oldCode: string; newCode: string; parentCode: string; moved: boolean }>(
+        '/chart-of-accounts/move-entity-leaf',
+        { method: 'POST', body: JSON.stringify(body) },
+        { timeoutMs: 30000 },
+      ),
     /** Find-or-create one supplier leaf — do not use list() for this. */
     ensureSupplier: (body: {
       name: string;

@@ -9,24 +9,61 @@
 // the exact number that will be assigned on save.
 
 export const ENTITY_ACCOUNT_CODE_LENGTH = 8;
+export const SUPPLIER_PARENT_CODE = '321';
 
-type CodeLike = { code?: string | null; is_header?: boolean | null };
+type CodeLike = {
+  code?: string | null;
+  is_header?: boolean | null;
+  name?: string | null;
+  description?: string | null;
+  parent_id?: string | null;
+};
 
 /**
  * Compute the next free 8-digit entity code under a parent (e.g. "311" -> "31100001").
- * Only non-header codes directly numbered under the parent are considered, matching
- * the backend allocator.
+ * Nested category leaves (32110001 under header 3211) are not counted when allocating
+ * under 321.
  */
 export function nextEntityAccountCode(parentCode: string, accounts: CodeLike[]): string {
   const parent = String(parentCode || '').trim();
   if (!parent) return '';
+  const headers = (accounts || [])
+    .filter((a) => a?.is_header)
+    .map((a) => String(a.code || ''))
+    .filter((code) => code.startsWith(parent) && code !== parent && code.length < ENTITY_ACCOUNT_CODE_LENGTH);
   const suffixLen = Math.max(1, ENTITY_ACCOUNT_CODE_LENGTH - parent.length);
   const maxSeq = (accounts || []).reduce((max, a) => {
     if (a?.is_header) return max;
     const code = String(a?.code || '');
-    if (!code.startsWith(parent) || code.length <= parent.length) return max;
+    if (code.length !== ENTITY_ACCOUNT_CODE_LENGTH || !code.startsWith(parent)) return max;
+    if (headers.some((h) => code.startsWith(h))) return max;
     const parsed = Number(code.slice(parent.length));
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 0);
   return `${parent}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
+}
+
+export function isSupplierCategoryParent(code: string): boolean {
+  const c = String(code || '').trim();
+  return c === SUPPLIER_PARENT_CODE
+    || (c.startsWith(SUPPLIER_PARENT_CODE) && c.length > SUPPLIER_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
+}
+
+export function findSupplierLeafAccount<T extends CodeLike>(
+  accounts: T[],
+  name: string,
+  nif?: string | null,
+): T | null {
+  const wantName = String(name || '').trim().toLowerCase();
+  const wantNif = String(nif || '').replace(/\s/g, '').toLowerCase();
+  const leaves = (accounts || []).filter((a) => {
+    const code = String(a.code || '');
+    return code.startsWith('32') && code.length >= ENTITY_ACCOUNT_CODE_LENGTH && !a.is_header;
+  });
+  if (wantNif) {
+    const byNif = leaves.find((a) => String(a.description || '').toLowerCase().includes(wantNif));
+    if (byNif) return byNif;
+  }
+  if (!wantName) return null;
+  return leaves.find((a) => String(a.name || '').trim().toLowerCase() === wantName) || null;
 }

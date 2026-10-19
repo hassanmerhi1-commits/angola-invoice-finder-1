@@ -22,7 +22,8 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
-import { nextEntityAccountCode } from '@/lib/entityAccounts';
+import { findSupplierLeafAccount, isSupplierCategoryParent, nextEntityAccountCode } from '@/lib/entityAccounts';
+import { api } from '@/lib/api/client';
 import { Plus } from 'lucide-react';
 
 const PAYMENT_TERMS = [
@@ -75,22 +76,23 @@ export function SupplierFormDialog({
   const [newSubName, setNewSubName] = useState('');
   const [creatingSub, setCreatingSub] = useState(false);
   // Where the new parent/sub account will be created (the group 32 = a new top-level parent).
-  const [newSubParentCode, setNewSubParentCode] = useState(SUPPLIER_GROUP_CODE);
+  const [newSubParentCode, setNewSubParentCode] = useState(DEFAULT_SUPPLIER_PARENT_CODE);
 
-  // Any non-leaf account under the Fornecedores group (32) can be a parent — at any depth
-  // (321, then 3211 under it, etc.). Supplier leaf accounts are 8 digits and are excluded.
+  // Categories under 321 (321 itself, then 3211, 3212, …). Leaves are 8 digits and excluded.
   const supplierParentOptions = useMemo(() => {
     const opts = accounts.filter(
-      (a) =>
-        a.is_active !== false &&
-        a.code.startsWith(SUPPLIER_GROUP_CODE) &&
-        a.code.length < ENTITY_ACCOUNT_CODE_LENGTH,
+      (a) => a.is_active !== false && isSupplierCategoryParent(a.code),
     );
     return opts.sort((a, b) => a.code.localeCompare(b.code));
   }, [accounts]);
 
+  const currentLeaf = useMemo(
+    () => (supplier ? findSupplierLeafAccount(accounts, supplier.name, supplier.nif) : null),
+    [accounts, supplier],
+  );
+
   // Next compact code under the chosen base (group 32 -> 323 = new top parent; 321 -> 3211).
-  const newSubBaseCode = newSubParentCode?.trim() || SUPPLIER_GROUP_CODE;
+  const newSubBaseCode = newSubParentCode?.trim() || DEFAULT_SUPPLIER_PARENT_CODE;
 
   const nextSubAccountCode = useMemo(() => {
     const used = new Set(accounts.map((a) => a.code));
@@ -108,7 +110,7 @@ export function SupplierFormDialog({
   const startAddingSub = () => {
     // Default the new account's parent to the group (creates a new top-level parent), or to
     // the currently selected sub if one is chosen.
-    setNewSubParentCode(formData.accountParentCode?.trim() || SUPPLIER_GROUP_CODE);
+    setNewSubParentCode(formData.accountParentCode?.trim() || DEFAULT_SUPPLIER_PARENT_CODE);
     setNewSubName('');
     setIsAddingSub(true);
   };
@@ -165,12 +167,13 @@ export function SupplierFormDialog({
         paymentTerms: supplier.paymentTerms,
         isActive: supplier.isActive,
         notes: supplier.notes || '',
-        accountParentCode: DEFAULT_SUPPLIER_PARENT_CODE,
+        accountParentCode: accounts.find((a) => a.id === findSupplierLeafAccount(accounts, supplier.name, supplier.nif)?.parent_id)?.code
+          || DEFAULT_SUPPLIER_PARENT_CODE,
       });
     } else {
       setFormData(EMPTY_FORM);
     }
-  }, [open, supplier]);
+  }, [open, supplier, accounts]);
 
   const handleSave = async () => {
     if (!formData.name.trim() || !formData.nif.trim()) {
@@ -192,10 +195,28 @@ export function SupplierFormDialog({
           updatedAt: new Date().toISOString(),
         });
         saved = { ...supplier, ...formData };
-        toast({
-          title: t.suppliersUi.supplierUpdatedTitle,
-          description: t.suppliersUi.supplierUpdatedDesc.replace('{name}', formData.name),
-        });
+        const currentParent = accounts.find((a) => a.id === currentLeaf?.parent_id)?.code;
+        if (formData.accountParentCode && formData.accountParentCode !== currentParent) {
+          const moved = await api.chartOfAccounts.moveEntityLeaf({
+            name: formData.name,
+            nif: formData.nif,
+            parentCode: formData.accountParentCode,
+          });
+          if (moved.error) throw new Error(moved.error);
+          void refetchAccounts();
+          toast({
+            title: t.suppliersUi.supplierUpdatedTitle,
+            description: t.chartOfAccountsUi.movedToCategory.replace(
+              '{code}',
+              moved.data?.newCode || formData.accountParentCode,
+            ),
+          });
+        } else {
+          toast({
+            title: t.suppliersUi.supplierUpdatedTitle,
+            description: t.suppliersUi.supplierUpdatedDesc.replace('{name}', formData.name),
+          });
+        }
       } else {
         const assignedCode = previewAccountNumber;
         saved = await createSupplier({ ...formData, balance: 0 });
@@ -291,14 +312,17 @@ export function SupplierFormDialog({
               </SelectContent>
             </Select>
           </div>
-          {!supplier && (
-            <div className="col-span-2 space-y-2">
+          <div className="col-span-2 space-y-2">
               <div className="flex items-center justify-between rounded-md border p-2 bg-muted/30">
                 <Label className="m-0">{t.chartOfAccountsUi.accountNumberLabel}</Label>
-                <span className="font-mono text-sm font-semibold">{previewAccountNumber || '—'}</span>
+                <span className="font-mono text-sm font-semibold">
+                  {supplier ? (currentLeaf?.code || previewAccountNumber || '—') : (previewAccountNumber || '—')}
+                </span>
               </div>
-              <p className="text-[11px] text-muted-foreground">{t.chartOfAccountsUi.accountNumberAutoHint}</p>
-              <Label>{t.chartOfAccountsUi.parentAccountLabel}</Label>
+              <p className="text-[11px] text-muted-foreground">
+                {supplier ? t.chartOfAccountsUi.moveToCategoryHint : t.chartOfAccountsUi.accountNumberAutoHint}
+              </p>
+              <Label>{t.chartOfAccountsUi.categoryLabel}</Label>
               {isAddingSub ? (
                 <div className="space-y-2 rounded-md border p-2">
                   <div className="space-y-1">
@@ -381,7 +405,6 @@ export function SupplierFormDialog({
                 </div>
               )}
             </div>
-          )}
           <div className="col-span-2 space-y-2">
             <Label htmlFor="coa-supplier-address">{t.common.address}</Label>
             <Input

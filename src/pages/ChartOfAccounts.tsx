@@ -28,7 +28,7 @@ import { CLIENTS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import {
   Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
-  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw, Plus, X
+  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw, Plus, X, FolderPlus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { readFocusId, readNexorSearchFocus, readAppSearchParams, scrollToNexorRow } from '@/lib/searchFocus';
@@ -138,6 +138,9 @@ export default function ChartOfAccounts() {
   const [ledgerDates, setLedgerDates] = useState<{ from: string; to: string } | null>(null);
   const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
   const [isSupplierDialogOpen, setIsSupplierDialogOpen] = useState(false);
+  const [isMoveOpen, setIsMoveOpen] = useState(false);
+  const [moveParentCode, setMoveParentCode] = useState('321');
+  const [isMoving, setIsMoving] = useState(false);
   // Inline "+" quick-create of a parent/sub header account from inside the account dialog.
   const [isAddingInlineParent, setIsAddingInlineParent] = useState(false);
   const [inlineParentCode, setInlineParentCode] = useState('');
@@ -478,6 +481,32 @@ export default function ChartOfAccounts() {
     setIsDialogOpen(true);
   };
 
+  const openCreateSupplierCategoryDialog = () => {
+    setActiveTab('fornecedores');
+    setEditingAccount(null);
+    setIsAddingInlineParent(false);
+    setInlineParentName('');
+    setInlineParentCode('');
+    const parent = accounts.find((a) => a.code === '321' && a.is_active !== false)
+      || accounts.find((a) => a.code === '32' && a.is_active !== false);
+    const children = parent
+      ? accounts.filter((a) => a.parent_id === parent.id && a.is_active !== false)
+      : [];
+    setFormData({
+      code: parent ? buildSuggestedChildCode(parent.code, children.map((c) => c.code), true) : '3211',
+      name: '',
+      description: '',
+      nif: '',
+      account_type: 'liability',
+      account_nature: 'credit',
+      parent_id: parent?.id || '',
+      level: (parent?.level ?? 2) + 1,
+      is_header: true,
+      opening_balance: 0,
+    });
+    setIsDialogOpen(true);
+  };
+
   // Open the dialog to create a brand-new top-level (parent) account: no parent, level 1,
   // header by default, with the next sequential root code auto-filled.
   const openCreateParentDialog = () => {
@@ -522,6 +551,10 @@ export default function ChartOfAccounts() {
       }
       if (action === 'account:parent') {
         openCreateParentDialog();
+        return;
+      }
+      if (action === 'account:fornecedores-categoria') {
+        openCreateSupplierCategoryDialog();
         return;
       }
       const tab = chartNewActionTab(action);
@@ -605,6 +638,22 @@ export default function ChartOfAccounts() {
     setIsSubmitting(true);
     try {
       if (editingAccount) {
+        const oldParent = editingAccount.parent_id || '';
+        const newParent = formData.parent_id || '';
+        const isSupplierLeaf = String(editingAccount.code || '').startsWith('32')
+          && String(editingAccount.code || '').length >= ENTITY_ACCOUNT_CODE_LENGTH
+          && !editingAccount.is_header;
+        if (isSupplierLeaf && newParent && newParent !== oldParent) {
+          const parent = accounts.find((a) => a.id === newParent);
+          if (parent) {
+            const moved = await api.chartOfAccounts.moveEntityLeaf({
+              accountId: editingAccount.id,
+              parentCode: parent.code,
+            });
+            if (moved.error) throw new Error(moved.error);
+            if (moved.data?.newCode) payload.code = moved.data.newCode;
+          }
+        }
         await updateAccount(editingAccount.id, payload);
         const code = String(payload.code || editingAccount.code || '');
         if (code.length >= ENTITY_ACCOUNT_CODE_LENGTH) {
@@ -709,6 +758,48 @@ export default function ChartOfAccounts() {
 
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const selectedAccountInCurrentTab = selectedAccount && currentTabConfig.filter(selectedAccount) ? selectedAccount : null;
+  const selectedSupplierLeaf = selectedAccountInCurrentTab
+    && String(selectedAccountInCurrentTab.code || '').startsWith('32')
+    && String(selectedAccountInCurrentTab.code || '').length >= ENTITY_ACCOUNT_CODE_LENGTH
+    && !selectedAccountInCurrentTab.is_header
+    ? selectedAccountInCurrentTab
+    : null;
+  const supplierCategoryOptions = accounts
+    .filter((a) => a.is_active !== false && (
+      a.code === '321'
+      || (a.code.startsWith('321') && a.code.length > 3 && a.code.length < ENTITY_ACCOUNT_CODE_LENGTH)
+    ))
+    .sort((a, b) => a.code.localeCompare(b.code));
+
+  const openMoveDialog = () => {
+    if (!selectedSupplierLeaf) return;
+    const currentParent = accounts.find((a) => a.id === selectedSupplierLeaf.parent_id);
+    setMoveParentCode(currentParent?.code || '321');
+    setIsMoveOpen(true);
+  };
+
+  const handleMoveToCategory = async () => {
+    if (!selectedSupplierLeaf || !moveParentCode) return;
+    setIsMoving(true);
+    try {
+      const result = await api.chartOfAccounts.moveEntityLeaf({
+        accountId: selectedSupplierLeaf.id,
+        parentCode: moveParentCode,
+      });
+      if (result.error) throw new Error(result.error);
+      await refetch();
+      window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+      toast.success(
+        t.chartOfAccountsUi.movedToCategory.replace('{code}', result.data?.newCode || moveParentCode),
+      );
+      setIsMoveOpen(false);
+    } catch (error: any) {
+      const raw = String(error?.message || '');
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.moveFailed));
+    } finally {
+      setIsMoving(false);
+    }
+  };
 
   // Keep the toolbar refs pointing at the latest selection + handlers.
   deleteSelectedRef.current = () => {
@@ -729,6 +820,9 @@ export default function ChartOfAccounts() {
         <ChartOfAccountsNewMenu buttonClassName={NEXOR_TOOLBAR_BTN_SM} />
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab} onClick={() => selectedAccountInCurrentTab && openEditDialog(selectedAccountInCurrentTab)}>
           <Edit2 className="w-3 h-3" /> {t.common.edit}
+        </Button>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedSupplierLeaf} onClick={openMoveDialog}>
+          <FolderPlus className="w-3 h-3" /> {t.chartOfAccountsUi.moveToCategory}
         </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab}
           onClick={() => selectedAccountInCurrentTab && handleDelete(selectedAccountInCurrentTab)}>
@@ -1029,6 +1123,9 @@ export default function ChartOfAccounts() {
                 })} />
                 <Label htmlFor="is_header" className="text-sm">{t.chartOfAccountsUi.headerAccountLabel}</Label>
               </div>
+              {formData.is_header && accounts.find((a) => a.id === formData.parent_id)?.code === '321' && (
+                <p className="col-span-2 text-[11px] text-muted-foreground">{t.chartOfAccountsUi.categoryCreateHint}</p>
+              )}
             </div>
           </div>
           <DialogFooter>
@@ -1051,6 +1148,41 @@ export default function ChartOfAccounts() {
       />
       <ClientFormDialog open={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} onSaved={() => refetch()} />
       <SupplierFormDialog open={isSupplierDialogOpen} onOpenChange={setIsSupplierDialogOpen} onSaved={() => refetch()} />
+
+      <Dialog open={isMoveOpen} onOpenChange={setIsMoveOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t.chartOfAccountsUi.moveToCategoryTitle}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t.chartOfAccountsUi.moveToCategoryHint}</p>
+          {selectedSupplierLeaf && (
+            <p className="text-sm font-medium">
+              {selectedSupplierLeaf.code} — {resolveAccountDisplayName(selectedSupplierLeaf, language, t)}
+            </p>
+          )}
+          <div className="space-y-2">
+            <Label>{t.chartOfAccountsUi.categoryLabel}</Label>
+            <Select value={moveParentCode} onValueChange={setMoveParentCode}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {supplierCategoryOptions.map((acc) => (
+                  <SelectItem key={acc.code} value={acc.code}>
+                    {acc.code} — {resolveAccountDisplayName(acc, language, t)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsMoveOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={() => void handleMoveToCategory()} disabled={isMoving || !moveParentCode}>
+              {isMoving ? t.common.saving : t.chartOfAccountsUi.moveToCategory}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

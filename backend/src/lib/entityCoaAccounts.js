@@ -20,14 +20,25 @@ function normalizeNif(value) {
   return String(value || '').replace(/\s/g, '').trim() || null;
 }
 
-function nextEntityAccountCode(parentCode, existingCodes) {
-  const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length;
+function nextEntityAccountCode(parentCode, existingCodes, nestedHeaderCodes) {
+  const headers = (nestedHeaderCodes || []).filter(
+    (h) => h && h !== parentCode && String(h).startsWith(parentCode) && String(h).length > parentCode.length,
+  );
+  const suffixLen = Math.max(1, ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length);
   const maxSeq = existingCodes.reduce((max, code) => {
-    if (!code || !code.startsWith(parentCode) || code.length <= parentCode.length) return max;
+    if (!code || !code.startsWith(parentCode) || code.length !== ENTITY_ACCOUNT_CODE_LENGTH) return max;
+    if (headers.some((h) => code.startsWith(h))) return max;
     const parsed = Number(code.slice(parentCode.length));
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 0);
   return `${parentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
+}
+
+/** 321 itself or a compact header under it (3211, 32111). Not an 8-digit supplier leaf. */
+function isSupplierCategoryParent(code) {
+  const c = String(code || '').trim();
+  return c === SUPPLIER_PARENT_CODE
+    || (c.startsWith(SUPPLIER_PARENT_CODE) && c.length > SUPPLIER_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
 }
 
 function normalizeEntityName(value) {
@@ -189,8 +200,8 @@ async function createEntityLeaf(client, opts) {
   const parentId = parent.rows[0].id;
   const childLevel = (parseInt(parent.rows[0].level, 10) || 2) + 1;
   const seqResult = await client.query(
-    `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false`,
-    [`${resolvedParentCode}%`],
+    `SELECT code FROM chart_of_accounts WHERE parent_id = $1 AND is_header IS NOT TRUE`,
+    [parentId],
   );
   const code = nextEntityAccountCode(resolvedParentCode, seqResult.rows.map((r) => r.code));
 
@@ -412,6 +423,113 @@ async function deleteLinkedEntityFromCoa(dbOrClient, opts) {
   return { table: found.table, updated: result.rowCount || result.rows?.length || 1 };
 }
 
+async function refreshChildrenCount(client, parentId) {
+  if (!parentId) return;
+  await runOptionalInSavepoint(client, 'coa_children_count', async () => {
+    await client.query(
+      `UPDATE chart_of_accounts SET children_count = (
+         SELECT COUNT(*) FROM chart_of_accounts WHERE parent_id = $1 AND is_active IS NOT FALSE
+       ) WHERE id = $1`,
+      [parentId],
+    );
+  }, () => {});
+}
+
+async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
+  if (!oldCode || !newCode || oldCode === newCode) return;
+  await client.query(
+    `UPDATE journal_entry_lines
+        SET account_id = $1
+      WHERE CAST(account_id AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  ).catch(() => {});
+  await client.query(
+    `UPDATE purchase_invoices
+        SET supplier_account_code = $1
+      WHERE CAST(supplier_account_code AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  ).catch(() => {});
+}
+
+/**
+ * Move a supplier leaf (8-digit 32x) under a category parent (321 / 3211 / …).
+ * Keeps the same COA id so journal lines stored by UUID stay valid; recodes the
+ * leaf and rewrites rows that stored the old PGC code.
+ */
+async function moveEntityLeafToParent(client, opts) {
+  const parentCode = cleanText(opts?.parentCode) || SUPPLIER_PARENT_CODE;
+  if (!isSupplierCategoryParent(parentCode)) {
+    throw new Error(`Parent ${parentCode} is not a supplier category under 321`);
+  }
+
+  const parent = await client.query(
+    `SELECT id, code, level FROM chart_of_accounts
+      WHERE code = $1 AND is_active IS NOT FALSE
+      LIMIT 1`,
+    [parentCode],
+  );
+  if (!parent.rows?.[0]) {
+    throw new Error(`Category ${parentCode} not found`);
+  }
+
+  let leaf = null;
+  if (opts?.accountId) {
+    const r = await client.query(
+      `SELECT id, code, name, description, parent_id, is_header
+         FROM chart_of_accounts WHERE id = $1 LIMIT 1`,
+      [opts.accountId],
+    );
+    leaf = r.rows?.[0] || null;
+  }
+  if (!leaf && (opts?.name || opts?.nif)) {
+    const code = await findEntityLeafCode(
+      client,
+      SUPPLIER_GROUP_CODE,
+      SUPPLIER_PARENT_CODE,
+      opts.name,
+      opts.nif,
+    );
+    if (code) {
+      const r = await client.query(
+        `SELECT id, code, name, description, parent_id, is_header
+           FROM chart_of_accounts WHERE code = $1 LIMIT 1`,
+        [code],
+      );
+      leaf = r.rows?.[0] || null;
+    }
+  }
+  if (!leaf) throw new Error('Supplier account not found');
+  if (leaf.is_header === true || leaf.is_header === 1) {
+    throw new Error('Cannot move a category header — pick a supplier account');
+  }
+  if (!isEntityLedgerCode(leaf.code, SUPPLIER_GROUP_CODE)) {
+    throw new Error('Only supplier ledger accounts can be moved');
+  }
+  if (String(leaf.parent_id || '') === String(parent.rows[0].id)) {
+    return { id: leaf.id, oldCode: leaf.code, newCode: leaf.code, parentCode, moved: false };
+  }
+
+  const siblings = await client.query(
+    `SELECT code FROM chart_of_accounts WHERE parent_id = $1 AND is_header IS NOT TRUE`,
+    [parent.rows[0].id],
+  );
+  const newCode = nextEntityAccountCode(parentCode, (siblings.rows || []).map((r) => r.code));
+  const newLevel = (parseInt(parent.rows[0].level, 10) || 2) + 1;
+  const oldParentId = leaf.parent_id;
+
+  await client.query(
+    `UPDATE chart_of_accounts
+        SET parent_id = $1, code = $2, level = $3, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $4`,
+    [parent.rows[0].id, newCode, newLevel, leaf.id],
+  );
+  await rewriteStoredSupplierAccountCode(client, leaf.code, newCode);
+  await refreshChildrenCount(client, oldParentId);
+  await refreshChildrenCount(client, parent.rows[0].id);
+
+  return { id: leaf.id, oldCode: leaf.code, newCode, parentCode, moved: true };
+}
+
 /** Hide an unused 32x/31x leaf after the master row is deleted. Keep it if it has journals. */
 async function deactivateUnusedEntityLeaf(dbOrClient, opts) {
   const groupCode = opts?.groupCode || SUPPLIER_GROUP_CODE;
@@ -446,6 +564,9 @@ module.exports = {
   CLIENT_PARENT_CODE,
   SUPPLIER_GROUP_CODE,
   SUPPLIER_PARENT_CODE,
+  ENTITY_ACCOUNT_CODE_LENGTH,
+  nextEntityAccountCode,
+  isSupplierCategoryParent,
   ensureSupplierSubAccount,
   ensureClientSubAccount,
   resolveEntityAccountCode,
@@ -456,4 +577,5 @@ module.exports = {
   syncLinkedEntityNameFromCoa,
   deleteLinkedEntityFromCoa,
   deactivateUnusedEntityLeaf,
+  moveEntityLeafToParent,
 };

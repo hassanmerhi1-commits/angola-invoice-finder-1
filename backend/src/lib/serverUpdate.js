@@ -225,6 +225,34 @@ function readStatus() {
   return readJsonIfExists(statusFilePath());
 }
 
+function jobUpdatedAtMs(job) {
+  if (!job) return 0;
+  const raw = job.updatedAt || job.finishedAt || job.at;
+  const ms = raw ? new Date(raw).getTime() : 0;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function isBusyPhase(phase) {
+  return ['checking', 'downloading', 'verifying', 'applying', 'restarting'].includes(String(phase || ''));
+}
+
+/** A hung apply (service did not come back) used to leave phase=restarting forever and lock the button. */
+function expireStaleUpdateJob() {
+  const job = readStatus();
+  if (!job || !isBusyPhase(job.phase)) return job;
+  const age = Date.now() - jobUpdatedAtMs(job);
+  if (age < LOCK_STALE_MS) return job;
+  releaseLock();
+  return writeStatus({
+    phase: 'failed',
+    message: 'The previous update stopped before it finished. Check updates\\apply.log, then try Update NEXOR again.',
+    ok: false,
+    error: 'Update timed out',
+    stale: true,
+    finishedAt: new Date().toISOString(),
+  });
+}
+
 function writeStatus(patch) {
   const prev = readStatus() || {};
   const next = {
@@ -584,7 +612,7 @@ async function buildUpdateStatus(db, { refreshLatest = true } = {}) {
   const pre = applyPreconditions(db);
   const stamp = typeof readBuildStamp === 'function' ? readBuildStamp() : readBuildStampFiles();
   const currentBuildId = stamp?.commit || GIT_COMMIT || null;
-  const job = readStatus();
+  const job = expireStaleUpdateJob();
   let latest = null;
   let latestError = null;
   if (refreshLatest && pre.ok) {

@@ -7,6 +7,7 @@ const { requirePermission } = require('../middleware/requirePermission');
 const {
   ensureSupplierSubAccount,
   deactivateUnusedEntityLeaf,
+  moveEntityLeafToParent,
 } = require('../lib/entityCoaAccounts');
 
 function cleanText(value) {
@@ -212,7 +213,7 @@ module.exports = function(broadcastTable) {
   router.put('/:id', requirePermission('purchase_create', 'admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, isActive } = req.body;
+      const { name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, isActive, accountParentCode } = req.body;
       const result = await db.query(
         `UPDATE suppliers 
          SET name = $1, nif = $2, email = $3, phone = $4, address = $5, city = $6, 
@@ -220,6 +221,20 @@ module.exports = function(broadcastTable) {
          WHERE id = $12 RETURNING *`,
         [name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, isActive, id]
       );
+      let movedAccount = null;
+      const parentCode = String(accountParentCode || '').trim();
+      if (parentCode) {
+        try {
+          movedAccount = await moveEntityLeafToParent(db, {
+            name,
+            nif,
+            parentCode,
+          });
+          if (movedAccount?.moved) await broadcastTable('chart_of_accounts');
+        } catch (moveErr) {
+          console.warn('[SUPPLIERS] Category move skipped:', moveErr.message);
+        }
+      }
       await broadcastTable('suppliers');
       auditErpSafe(req, {
         table: 'suppliers',
@@ -228,7 +243,9 @@ module.exports = function(broadcastTable) {
         description: `Fornecedor actualizado: ${name || id}`,
         newValues: { name, nif, isActive },
       });
-      res.json(result.rows[0]);
+      const row = result.rows[0];
+      if (movedAccount) row._movedAccount = movedAccount;
+      res.json(row);
     } catch (error) {
       console.error('[SUPPLIERS ERROR]', error);
       res.status(500).json({ error: 'Failed to update supplier' });

@@ -135,7 +135,21 @@ export function ServerUpdateCard() {
   }
 
   const job = status?.job;
-  const busy = applying || restarting || (job?.phase ? BUSY_PHASES.has(job.phase) : false);
+  const jobAgeMs = (() => {
+    const raw = job?.updatedAt || job?.finishedAt;
+    if (!raw) return Number.POSITIVE_INFINITY;
+    const ms = Date.now() - new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+  })();
+  const jobLooksStuck = !!(job?.phase && BUSY_PHASES.has(job.phase) && jobAgeMs > 20 * 60 * 1000);
+  const busy = !jobLooksStuck && (applying || restarting || (job?.phase ? BUSY_PHASES.has(job.phase) : false));
+
+  useEffect(() => {
+    if (jobLooksStuck && (applying || restarting)) {
+      setApplying(false);
+      setRestarting(false);
+    }
+  }, [jobLooksStuck, applying, restarting]);
   const latestLabel = status?.latest?.buildIdShort || status?.latest?.buildId?.slice(0, 7);
   const currentLabel = status?.current?.buildIdShort || '—';
   const latestWhen = formatWhen(status?.latest?.builtAt || null);
