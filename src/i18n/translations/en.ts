@@ -5315,6 +5315,7 @@ export const en = {
     labelWhPct: "W/H %:",
     labelStampPct: "Stamp %:",
     labelOrderNo: "Order:",
+    labelAllowNewReceipt: "New stock receipt (not the existing PO receive)",
     labelFreight: "Freight:",
     labelOtherCosts: "Other:",
     labelSourceOut: "Out:",

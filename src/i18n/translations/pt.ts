@@ -5317,6 +5317,7 @@ export const pt: TranslationKeys = {
     labelWhPct: "Ret%:",
     labelStampPct: "IS%:",
     labelOrderNo: "Ordem:",
+    labelAllowNewReceipt: "Nova entrada de stock (não é a recepção da OC já existente)",
     labelFreight: "Frete:",
     labelOtherCosts: "Outras:",
     labelSourceOut: "Saída:",

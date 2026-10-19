@@ -1831,6 +1831,7 @@ export default function PurchaseInvoices() {
       contact: undefined,
       department: undefined,
       orderNo: undefined,
+      allowNewReceipt: false,
       extraNote: undefined,
     });
     setLines([]);
@@ -1957,6 +1958,7 @@ export default function PurchaseInvoices() {
       contact: full.contact,
       department: full.department,
       orderNo: full.orderNo,
+      allowNewReceipt: full.allowNewReceipt === true,
       extraNote: full.extraNote,
       address: full.address,
       project: full.project,
@@ -2900,6 +2902,7 @@ export default function PurchaseInvoices() {
         currencyRate: form.currencyRate || 1,
         taxRate2: Number(form.taxRate2 || 0),
         orderNo: form.orderNo,
+        allowNewReceipt: form.allowNewReceipt === true,
         surchargePercent: Number(form.surchargePercent || 0),
         changePrice: form.changePrice || false,
         isPending: form.isPending || false,
@@ -3024,6 +3027,7 @@ export default function PurchaseInvoices() {
       // Angola: Retenção na Fonte (%)
       taxRate2: Number(form.taxRate2 || 0),
       orderNo: form.orderNo,
+      allowNewReceipt: form.allowNewReceipt === true,
       // Angola: Imposto de Selo (%)
       surchargePercent: Number(form.surchargePercent || 0),
       changePrice: form.changePrice || false,
@@ -4195,6 +4199,17 @@ export default function PurchaseInvoices() {
         <Input type="number" value={form.surchargePercent || 0} onChange={e => setForm(p => ({ ...p, surchargePercent: parseFloat(e.target.value) || 0 }))} className="h-6 w-16 text-[10px] font-mono px-1" />
         <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelOrderNo}</span>
         <Input value={form.orderNo || ''} onChange={e => setForm(p => ({ ...p, orderNo: e.target.value }))} className="h-6 w-20 text-[10px] font-mono px-1" />
+        <div className="flex items-center gap-1">
+          <Checkbox
+            id="allowNewReceipt"
+            checked={form.allowNewReceipt === true}
+            onCheckedChange={v => setForm(p => ({ ...p, allowNewReceipt: !!v }))}
+            className="h-3.5 w-3.5"
+          />
+          <label htmlFor="allowNewReceipt" className="text-[10px] leading-tight max-w-[220px]">
+            {t.purchaseInvoicesUi.labelAllowNewReceipt}
+          </label>
+        </div>
         {/* Freight inline */}
         <div className="ml-auto flex items-center gap-2 border-l border-border pl-3">
           <span className="text-amber-600 dark:text-amber-400 font-semibold">🚚 {t.purchaseInvoicesUi.labelFreight}</span>

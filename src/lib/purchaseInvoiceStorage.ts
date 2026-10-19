@@ -113,6 +113,8 @@ export interface PurchaseInvoice {
   currencyRate: number;
   taxRate2: number;
   orderNo?: string;
+  /** Explicit second stock receipt when an uninvoiced PO receive already exists. */
+  allowNewReceipt?: boolean;
   surchargePercent: number;
   changePrice: boolean;
   isPending: boolean;
@@ -861,6 +863,10 @@ function mapPIFromDb(row: any): PurchaseInvoice {
     currencyRate: Number(row.currency_rate || 1),
     taxRate2: Number(row.tax_rate_2 || 0),
     orderNo: row.order_no,
+    allowNewReceipt: row.allow_new_receipt === true
+      || row.allow_new_receipt === 1
+      || row.allow_new_receipt === '1'
+      || row.allowNewReceipt === true,
     surchargePercent: Number(row.surcharge_percent || 0),
     changePrice: !!row.change_price,
     isPending: !!row.is_pending,
@@ -983,6 +989,7 @@ function mapPIFromDocumentDb(row: any): PurchaseInvoice {
     currencyRate: 1,
     taxRate2: 0,
     orderNo: '',
+    allowNewReceipt: false,
     surchargePercent: 0,
     changePrice: true,
     isPending: false,

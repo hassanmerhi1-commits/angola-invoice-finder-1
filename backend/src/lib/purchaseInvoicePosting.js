@@ -1,7 +1,13 @@
 /**
- * Reliable purchase-invoice posting: stock + payable first, journal last.
- * Each phase uses a SAVEPOINT so a payable/journal SQL error cannot abort
- * the transaction and silently roll back stock that already posted.
+ * Purchase-invoice posting: stock, payable, and journal are one accounting unit.
+ *
+ * Contract: required stock + AP + GL either all persist or none do. They run
+ * inside a single SAVEPOINT (`pi_accounting`) so a journal failure rolls back
+ * stock and AP without a nested COMMIT. The invoice header (outer transaction)
+ * is left to the caller. success=false and errors[] are returned; the function
+ * does not throw on a posting failure.
+ *
+ * Optional supplier-product / filial repairs stay outside that savepoint.
  */
 const { fromRow } = require('../purchaseInvoiceMappers');
 const {
@@ -314,43 +320,185 @@ async function ensureSupplierJournalAccounts(client, journalLines, inv) {
   }
 }
 
-async function resolveLinkedPurchaseOrderStock(client, inv) {
-  const orderNo = String(inv.orderNo || inv.order_no || '').trim();
-  if (!orderNo) return { skipStock: false, skipPurchaseJournal: false, warning: null };
-  const poRes = await client.query(
-    `SELECT id, order_number, status FROM purchase_orders
-     WHERE LOWER(TRIM(COALESCE(order_number, ''))) = LOWER($1)
-     LIMIT 1`,
-    [orderNo],
-  );
-  const po = poRes.rows[0];
-  if (!po) return { skipStock: false, skipPurchaseJournal: false, warning: null };
+function truthyReceiptFlag(value) {
+  return value === true || value === 1 || value === '1';
+}
 
+function requestedExplicitNewReceipt(inv, opts = {}) {
+  return truthyReceiptFlag(inv?.allowNewReceipt)
+    || truthyReceiptFlag(inv?.forceNewReceipt)
+    || truthyReceiptFlag(inv?.allow_new_receipt)
+    || truthyReceiptFlag(opts?.allowNewReceipt)
+    || truthyReceiptFlag(opts?.forceNewReceipt);
+}
+
+/** Server-side gate: a client boolean alone is never enough. */
+function canHonorExplicitNewReceipt(inv, lines = [], opts = {}) {
+  if (!requestedExplicitNewReceipt(inv, opts)) {
+    return { ok: false, reason: 'not_requested' };
+  }
+  if (opts.canAuthorizeNewReceipt !== true) {
+    return { ok: false, reason: 'not_authorized' };
+  }
+  const supplierId = String(inv?.supplierId || inv?.supplier_id || '').trim();
+  if (!supplierId) return { ok: false, reason: 'no_supplier' };
+  const warehouseId = String(inv?.warehouseId || inv?.branchId || inv?.branch_id || '').trim();
+  if (!warehouseId) return { ok: false, reason: 'no_branch' };
+  if (invoiceProductIds(lines).length === 0) return { ok: false, reason: 'no_products' };
+  const hasQty = (lines || []).some((l) => Number(l.totalQty || l.quantity || 0) > 0);
+  if (!hasQty) return { ok: false, reason: 'no_qty' };
+  return { ok: true };
+}
+
+function invoiceProductIds(lines) {
+  return [...new Set((lines || []).map((l) => String(l.productId || l.product_id || '').trim()).filter(Boolean))];
+}
+
+function branchKeysEqual(a, b) {
+  const left = String(a || '').replace(/-/g, '').toLowerCase();
+  const right = String(b || '').replace(/-/g, '').toLowerCase();
+  return Boolean(left && right && left === right);
+}
+
+async function purchaseOrderHasReceiveStock(client, orderId) {
   const mov = await client.query(
     `SELECT id FROM stock_movements
      WHERE reference_type = 'purchase'
        AND CAST(reference_id AS TEXT) = CAST($1 AS TEXT)
      LIMIT 1`,
-    [po.id],
+    [orderId],
   );
-  if (!mov.rows.length) {
-    return { skipStock: false, skipPurchaseJournal: false, warning: null, poId: po.id };
-  }
+  return mov.rows.length > 0;
+}
 
+async function purchaseOrderHasPurchaseJournal(client, orderId) {
   const je = await client.query(
     `SELECT id FROM journal_entries
      WHERE reference_type = 'purchase'
        AND CAST(reference_id AS TEXT) = CAST($1 AS TEXT)
      LIMIT 1`,
-    [po.id],
+    [orderId],
   );
+  return je.rows.length > 0;
+}
 
+async function purchaseOrderAlreadyInvoiced(client, orderNumber, currentInvoiceId) {
+  const no = String(orderNumber || '').trim();
+  if (!no) return false;
+  const linked = await client.query(
+    `SELECT id FROM purchase_invoices
+     WHERE LOWER(TRIM(COALESCE(order_no, ''))) = LOWER($1)
+       AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('cancelled', 'voided', 'draft')
+       AND CAST(id AS TEXT) <> CAST($2 AS TEXT)
+     LIMIT 1`,
+    [no, String(currentInvoiceId || '')],
+  );
+  return linked.rows.length > 0;
+}
+
+async function linkReceivedOrder(client, po) {
+  const hasJournal = await purchaseOrderHasPurchaseJournal(client, po.id);
   return {
     skipStock: true,
-    skipPurchaseJournal: je.rows.length > 0,
+    skipPurchaseJournal: hasJournal,
     poId: po.id,
     warning:
       `Stock/GL já lançados na recepção da OC ${po.order_number}. FC cria apenas conta a pagar (sem novo stock).`,
+  };
+}
+
+async function findCandidateReceivedOrders(client, inv, lines) {
+  const supplierId = String(inv.supplierId || inv.supplier_id || '').trim();
+  if (!supplierId) return [];
+  const productIds = invoiceProductIds(lines);
+  if (productIds.length === 0) return [];
+  const warehouseId = String(inv.warehouseId || inv.branchId || inv.branch_id || '').trim();
+
+  const pos = await client.query(
+    `SELECT id, order_number, supplier_id, branch_id, status
+     FROM purchase_orders
+     WHERE CAST(supplier_id AS TEXT) = CAST($1 AS TEXT)
+       AND LOWER(TRIM(COALESCE(status, ''))) NOT IN ('cancelled', 'voided', 'draft')
+     ORDER BY created_at ASC`,
+    [supplierId],
+  );
+
+  const candidates = [];
+  for (const po of pos.rows || []) {
+    if (warehouseId && po.branch_id && !branchKeysEqual(po.branch_id, warehouseId)) {
+      continue;
+    }
+    if (await purchaseOrderAlreadyInvoiced(client, po.order_number, inv.id)) {
+      continue;
+    }
+    if (!(await purchaseOrderHasReceiveStock(client, po.id))) {
+      continue;
+    }
+    const items = await client.query(
+      `SELECT product_id FROM purchase_order_items WHERE order_id = $1`,
+      [po.id],
+    );
+    const overlap = (items.rows || []).some((row) => (
+      productIds.includes(String(row.product_id || '').trim())
+    ));
+    if (!overlap) continue;
+    candidates.push(po);
+  }
+  return candidates;
+}
+
+/**
+ * Decide whether this FC should add stock / a purchase journal.
+ * Exact order_no is preferred. If it is blank or unknown, an uninvoiced
+ * received PO for the same supplier + product is linked instead of posting
+ * a second receipt. Ambiguous matches are rejected unless allowNewReceipt.
+ */
+async function resolveLinkedPurchaseOrderStock(client, inv, lines = [], opts = {}) {
+  const orderNo = String(inv.orderNo || inv.order_no || '').trim();
+  if (orderNo) {
+    const poRes = await client.query(
+      `SELECT id, order_number, status FROM purchase_orders
+       WHERE LOWER(TRIM(COALESCE(order_number, ''))) = LOWER($1)
+       LIMIT 1`,
+      [orderNo],
+    );
+    const po = poRes.rows[0];
+    if (po) {
+      if (!(await purchaseOrderHasReceiveStock(client, po.id))) {
+        return { skipStock: false, skipPurchaseJournal: false, warning: null, poId: po.id };
+      }
+      return linkReceivedOrder(client, po);
+    }
+  }
+
+  const candidates = await findCandidateReceivedOrders(client, inv, lines);
+  const honor = canHonorExplicitNewReceipt(inv, lines, opts);
+  if (honor.ok && candidates.length >= 1) {
+    return {
+      skipStock: false,
+      skipPurchaseJournal: false,
+      warning: 'Nova entrada de stock pedida explicitamente (allowNewReceipt).',
+    };
+  }
+
+  if (candidates.length === 0) {
+    return { skipStock: false, skipPurchaseJournal: false, warning: null };
+  }
+  if (candidates.length === 1) {
+    const linked = await linkReceivedOrder(client, candidates[0]);
+    linked.warning =
+      `Stock/GL já lançados na recepção da OC ${candidates[0].order_number} `
+      + '(associada por fornecedor/produto). FC cria apenas conta a pagar.';
+    return linked;
+  }
+
+  const numbers = candidates.map((po) => po.order_number).filter(Boolean).join(', ');
+  return {
+    skipStock: true,
+    skipPurchaseJournal: true,
+    error:
+      `Várias OC já recebidas para este fornecedor/produto (${numbers}). `
+      + 'Indique o número da OC na fatura ou confirme allowNewReceipt para uma nova entrada.',
   };
 }
 
@@ -390,14 +538,27 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
     return result;
   }
 
+  if (inv.id) {
+    await client.query(
+      'SELECT id FROM purchase_invoices WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) FOR UPDATE',
+      [inv.id],
+    );
+  }
+
   const existing = await queryPostingStatus(client, inv.id);
   result.stockMovementIds = [...existing.stockMovementIds];
   result.openItemId = existing.openItemId;
   result.journalEntryId = existing.journalEntryId;
 
-  const linkedPo = await resolveLinkedPurchaseOrderStock(client, inv);
+  const linkedPo = await resolveLinkedPurchaseOrderStock(client, inv, lines, opts);
   if (linkedPo.warning) result.warnings.push(linkedPo.warning);
+  if (linkedPo.error) {
+    result.errors.push(linkedPo.error);
+    result.success = false;
+    return result;
+  }
 
+  const accountingSp = await withSavepoint(client, 'pi_accounting', async () => {
   if (!result.stockMovementIds.length && !linkedPo.skipStock) {
     const landing = landingCostsFromInvoice(inv);
     const landedByProduct = buildLandedUnitCosts(lines, landing);
@@ -472,7 +633,7 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
       if (stockSp.ok && stockSp.value?.id) {
         result.stockMovementIds.push(stockSp.value.id);
       } else {
-        result.errors.push(
+        throw new Error(
           `Stock ${line.productCode || line.productId}: ${stockSp.error?.message || String(stockSp.error)}`,
         );
       }
@@ -513,7 +674,7 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
     if (payableSp.ok && payableSp.value) {
       result.openItemId = payableSp.value;
     } else {
-      result.errors.push(`Payable: ${payableSp.error?.message || String(payableSp.error)}`);
+      throw new Error(`Payable: ${payableSp.error?.message || String(payableSp.error)}`);
     }
   }
 
@@ -580,14 +741,14 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
       });
       result.warnings.push('Journal: built server-side from invoice totals');
     } catch (autoErr) {
-      result.warnings.push(`Journal auto-build failed: ${autoErr.message}`);
+      throw new Error(`Journal auto-build failed: ${autoErr.message}`);
     }
   }
 
   if (journalLines.length === 0 && landing > 0 && !linkedPo.skipPurchaseJournal) {
-    result.errors.push('Journal: freight entered but invoice has no journal lines');
+    throw new Error('Journal: freight entered but invoice has no journal lines');
   } else if (journalLines.length === 0 && !result.journalEntryId && Number(inv.total || 0) > 0 && !linkedPo.skipPurchaseJournal) {
-    result.warnings.push('Journal: invoice has no journal lines — nothing posted to chart of accounts');
+    throw new Error('Journal: invoice has no journal lines — nothing posted to chart of accounts');
   } else if (journalLines.length > 0) {
     const treasury = await resolveFreightTreasuryGl(client, inv);
     journalLines = applyFreightTreasuryToJournalLines(journalLines, treasury);
@@ -633,12 +794,31 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
       if (journalSp.ok && journalSp.value) {
         result.journalEntryId = journalSp.value;
       } else {
-        result.errors.push(`Journal: ${journalSp.error?.message || String(journalSp.error)}`);
+        throw new Error(`Journal: ${journalSp.error?.message || String(journalSp.error)}`);
       }
     }
   }
 
   const journalRequired = landing > 0 || journalLines.length > 0;
+  if (journalRequired && !result.journalEntryId && !linkedPo.skipPurchaseJournal) {
+    throw new Error('Journal posting failed');
+  }
+  return { journalRequired };
+  });
+
+  if (!accountingSp.ok) {
+    result.errors.push(accountingSp.error?.message || String(accountingSp.error));
+    result.stockMovementIds = [];
+    result.openItemId = null;
+    result.journalEntryId = null;
+    result.success = false;
+    const rolledBack = await queryPostingStatus(client, inv.id);
+    result.stockMovementIds = rolledBack.stockMovementIds;
+    result.openItemId = rolledBack.openItemId;
+    result.journalEntryId = rolledBack.journalEntryId;
+    result.success = false;
+    return result;
+  }
 
   if (result.stockMovementIds.length > 0) {
     const linkSp = await withSavepoint(client, 'pi_supplier_link', async () => {
@@ -670,8 +850,11 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
   result.stockMovementIds = confirmed.stockMovementIds;
   result.openItemId = confirmed.openItemId;
   result.journalEntryId = confirmed.journalEntryId || result.journalEntryId;
-  if (journalRequired && !result.journalEntryId) {
+  const journalRequired = Boolean(accountingSp.value?.journalRequired);
+  if (journalRequired && !result.journalEntryId && !linkedPo.skipPurchaseJournal) {
     result.success = false;
+  } else if (linkedPo.skipStock) {
+    result.success = Boolean(result.openItemId);
   } else {
     result.success = result.stockMovementIds.length > 0 && !!result.openItemId;
   }
@@ -708,5 +891,8 @@ module.exports = {
   queryPostingStatus,
   reverseJournalEntry,
   postPurchaseInvoiceAccountingPhased,
+  resolveLinkedPurchaseOrderStock,
+  requestedExplicitNewReceipt,
+  canHonorExplicitNewReceipt,
   withSavepoint,
 };

@@ -19,13 +19,24 @@ function clearBackendModuleCache() {
 /**
  * @returns {{ db: import('../../src/db'), testDbPath: string, withClient: Function, dispose: Function }}
  */
+const FORBIDDEN_SQLITE = path.resolve('C:\\nexor\\erp.db');
+
 function createSqliteHarness() {
   const testDbPath = path.join(os.tmpdir(), `nexor-erp-test-${randomUUID()}.db`);
+
+  if (path.resolve(testDbPath).toLowerCase() === FORBIDDEN_SQLITE.toLowerCase()) {
+    throw new Error('Refusing to run tests against C:\\nexor\\erp.db');
+  }
 
   process.env.DB_ENGINE = 'sqlite';
   process.env.SQLITE_PATH = testDbPath;
   process.env.DATABASE_URL = '';
   delete process.env.USE_POSTGRES;
+  delete process.env.NEXOR_TEST_DATABASE_URL;
+
+  if (process.env.DATABASE_URL) {
+    throw new Error('Refusing to run tests with DATABASE_URL set');
+  }
 
   clearBackendModuleCache();
 

@@ -584,6 +584,7 @@ function ensureAppTablesAndColumns() {
   tryAlterAdd('purchase_invoices', "freight_payment_source TEXT DEFAULT 'caixa'");
   tryAlterAdd('purchase_invoices', 'freight_caixa_id TEXT DEFAULT ""');
   tryAlterAdd('purchase_invoices', 'freight_bank_account_id TEXT DEFAULT ""');
+  tryAlterAdd('purchase_invoices', 'allow_new_receipt INTEGER NOT NULL DEFAULT 0');
   tryAlterAdd('suppliers', 'balance REAL NOT NULL DEFAULT 0');
   // Legacy databases can have a minimal products table; ensure import/API columns exist.
   tryAlterAdd('products', 'barcode TEXT');
@@ -1658,7 +1659,8 @@ function bootstrapSchemaAndSeed() {
       created_by TEXT DEFAULT '',
       created_by_name TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      allow_new_receipt INTEGER NOT NULL DEFAULT 0
     );
   `);
 

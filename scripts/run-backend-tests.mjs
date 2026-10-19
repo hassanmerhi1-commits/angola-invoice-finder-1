@@ -4,7 +4,9 @@
  */
 import { spawnSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 
@@ -36,6 +38,9 @@ const testFiles = [
   'test/incomeStatement.test.js',
   'test/purchaseReceiveGl.test.js',
   'test/trialBalanceDateFilter.test.js',
+  'test/erpAuditHighRisk.test.js',
+  'test/purchaseInvoiceEntryPoints.test.js',
+  'test/purchaseInvoicePgIntegrity.test.js',
   'test/restoreStockCost.test.js',
   'test/stockBySku.test.js',
   'test/inventoryGridBranch.test.js',
@@ -80,14 +85,23 @@ if (!fs.existsSync(sqliteNode)) {
 
 const electron = resolveElectronBinary();
 const nodeArgs = ['--test', ...testFiles];
+const isolatedSqlitePath = path.join(os.tmpdir(), `nexor-erp-test-runner-${randomUUID()}.db`);
+const isolatedEnv = {
+  ...process.env,
+  DB_ENGINE: 'sqlite',
+  DATABASE_URL: '',
+  SQLITE_PATH: isolatedSqlitePath,
+  USE_POSTGRES: '',
+};
 
 if (electron) {
   console.log('[test] Running with Electron Node (ELECTRON_RUN_AS_NODE)…');
+  console.log('[test] Isolated SQLITE_PATH=', isolatedSqlitePath);
   const result = spawnSync(electron, nodeArgs, {
     cwd: backendRoot,
     stdio: 'inherit',
     env: {
-      ...process.env,
+      ...isolatedEnv,
       ELECTRON_RUN_AS_NODE: '1',
       ELECTRON_NO_ATTACH_CONSOLE: '1',
     },
@@ -96,10 +110,11 @@ if (electron) {
 }
 
 console.log('[test] Electron not found — falling back to system Node…');
+console.log('[test] Isolated SQLITE_PATH=', isolatedSqlitePath);
 console.log('[test] If this fails, run: npm run rebuild:backend && use Electron from repo root.');
 const result = spawnSync(process.execPath, nodeArgs, {
   cwd: backendRoot,
   stdio: 'inherit',
-  env: process.env,
+  env: isolatedEnv,
 });
 process.exit(result.status ?? 1);

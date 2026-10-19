@@ -1,3 +1,5 @@
+require('./helpers/pinIsolatedSqliteEnv');
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resolveListBranchId, resolveWriteBranchId, applyWriteBranchOverride, applyTransactionBodyScope, isForeignBranch } = require('../src/middleware/branchScope');

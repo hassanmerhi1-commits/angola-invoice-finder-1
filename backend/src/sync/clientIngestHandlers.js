@@ -10,7 +10,8 @@ const {
 const { enqueueSaleCreated, enqueuePaymentCreated, enqueueStockMovementCreated, enqueuePurchaseInvoiceCreated } = require('./outbox');
 const { upsertPurchaseInvoice } = require('./purchaseInvoiceUpsert');
 const { applyCaixaClose } = require('./caixaIngest');
-const { processTransactionBody } = require('../transactionProcessor');
+const { fromRow } = require('../purchaseInvoiceMappers');
+const { postPurchaseInvoiceAccountingPhased } = require('../lib/purchaseInvoicePosting');
 
 async function ingestLogTableExists() {
   try {
@@ -213,35 +214,37 @@ async function handlePurchaseInvoiceCreated(poolClient, idempotencyKey, payload)
   }
 
   const invoiceData = payload?.invoiceData || payload?.invoice;
-  const transactionData = payload?.transactionData || payload?.transaction;
   if (!invoiceData?.id) throw new Error('purchase_invoice.id obrigatório');
-  if (!transactionData) throw new Error('purchase_invoice.transactionData obrigatório');
 
-  const branchId = invoiceData.branchId || invoiceData.branch_id || transactionData.branchId;
+  const branchId = invoiceData.branchId || invoiceData.branch_id
+    || payload?.transactionData?.branchId
+    || payload?.transaction?.branchId;
 
   let txResult;
   try {
     await poolClient.query('BEGIN');
     await upsertPurchaseInvoice(poolClient, invoiceData);
-    txResult = await processTransactionBody(poolClient, transactionData);
+    const saved = await poolClient.query(
+      'SELECT * FROM purchase_invoices WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) LIMIT 1',
+      [invoiceData.id],
+    );
+    const inv = fromRow(saved.rows[0]);
+    txResult = await postPurchaseInvoiceAccountingPhased(poolClient, inv, {
+      allowNewReceipt: inv?.allowNewReceipt === true,
+      canAuthorizeNewReceipt: payload?.canAuthorizeNewReceipt === true,
+    });
     await poolClient.query('COMMIT');
   } catch (e) {
     await poolClient.query('ROLLBACK').catch(() => {});
     throw e;
   }
 
-  if (txResult.alreadyProcessed) {
-    await writeIngestReceipt(
-      poolClient,
-      idempotencyKey,
-      'purchase_invoice.created',
-      invoiceData.id,
-      branchId
-    );
+  if (!txResult?.success) {
     return {
       ok: true,
-      duplicate: true,
+      posted: false,
       purchaseInvoiceId: invoiceData.id,
+      errors: txResult?.errors || [],
       eventType: 'purchase_invoice.created',
     };
   }

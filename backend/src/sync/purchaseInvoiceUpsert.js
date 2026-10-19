@@ -13,11 +13,12 @@ const UPSERT_SQL = `
     tax_rate_2, order_no, surcharge_percent, change_price, is_pending, extra_note,
     lines_json, journal_lines_json, subtotal, iva_total, total, status,
     purchase_returns_status, purchase_returns_closed_at,
-    branch_id, branch_name, created_by, created_by_name, created_at, updated_at
+    branch_id, branch_name, created_by, created_by_name, created_at, updated_at,
+    allow_new_receipt
   ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
     $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
-    $40,$41,$42,$43,$44,$45
+    $40,$41,$42,$43,$44,$45,$46
   )
   ON CONFLICT(id) DO UPDATE SET
     invoice_number = excluded.invoice_number,
@@ -62,7 +63,8 @@ const UPSERT_SQL = `
     branch_name = excluded.branch_name,
     created_by = excluded.created_by,
     created_by_name = excluded.created_by_name,
-    updated_at = excluded.updated_at
+    updated_at = excluded.updated_at,
+    allow_new_receipt = excluded.allow_new_receipt
 `;
 
 function rowParams(r) {
@@ -76,6 +78,7 @@ function rowParams(r) {
     r.lines_json, r.journal_lines_json, r.subtotal, r.iva_total, r.total, r.status,
     r.purchase_returns_status, r.purchase_returns_closed_at,
     r.branch_id, r.branch_name, r.created_by, r.created_by_name, r.created_at, r.updated_at,
+    r.allow_new_receipt ? 1 : 0,
   ];
 }
 

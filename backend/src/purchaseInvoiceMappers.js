@@ -47,6 +47,10 @@ function fromRow(row) {
     surchargePercent: Number(row.surcharge_percent || 0),
     changePrice: !!row.change_price,
     isPending: !!row.is_pending,
+    allowNewReceipt: row.allow_new_receipt === true
+      || row.allow_new_receipt === 1
+      || row.allow_new_receipt === '1'
+      || row.allowNewReceipt === true,
     extraNote: row.extra_note || '',
     freightCost: Number(row.freight_cost ?? row.freightCost ?? 0),
     freightOtherCosts: Number(row.freight_other_costs ?? row.freightOtherCosts ?? 0),
@@ -107,6 +111,7 @@ function toRow(invoice) {
     change_price: inv.changePrice || inv.change_price ? 1 : 0,
     is_pending: inv.isPending || inv.is_pending ? 1 : 0,
     extra_note: inv.extraNote || inv.extra_note || '',
+    allow_new_receipt: inv.allowNewReceipt || inv.allow_new_receipt ? 1 : 0,
     freight_cost: Number(inv.freightCost ?? inv.freight_cost ?? 0),
     freight_other_costs: Number(inv.freightOtherCosts ?? inv.freight_other_costs ?? 0),
     freight_source_account: inv.freightSourceAccount || inv.freight_source_account || '',

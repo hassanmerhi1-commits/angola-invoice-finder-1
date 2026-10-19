@@ -3,6 +3,7 @@ const express = require('express');
 const db = require('../db');
 const { toRow, fromRow } = require('../purchaseInvoiceMappers');
 const { requirePermission } = require('../middleware/requirePermission');
+const { userHasPermission } = require('../lib/rolePermissions');
 const { buildPurchaseInvoiceBranchFilter } = require('../lib/branchIdMatch');
 const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 const { auditErpSafe } = require('../lib/erpAudit');
@@ -20,11 +21,12 @@ const UPSERT_SQL = `
     freight_payment_source, freight_caixa_id, freight_bank_account_id,
     lines_json, journal_lines_json, subtotal, iva_total, total, status,
     purchase_returns_status, purchase_returns_closed_at,
-    branch_id, branch_name, created_by, created_by_name, created_at, updated_at
+    branch_id, branch_name, created_by, created_by_name, created_at, updated_at,
+    allow_new_receipt
   ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
     $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
-    $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52
+    $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53
   )
   ON CONFLICT(id) DO UPDATE SET
     invoice_number = excluded.invoice_number,
@@ -76,7 +78,8 @@ const UPSERT_SQL = `
     branch_name = excluded.branch_name,
     created_by = excluded.created_by,
     created_by_name = excluded.created_by_name,
-    updated_at = excluded.updated_at
+    updated_at = excluded.updated_at,
+    allow_new_receipt = excluded.allow_new_receipt
 `;
 
 async function findDuplicateSupplierInvoice(supplierId, supplierInvoiceNo, excludeId) {
@@ -205,6 +208,7 @@ function rowParams(r) {
     r.lines_json, r.journal_lines_json, r.subtotal, r.iva_total, r.total, r.status,
     r.purchase_returns_status, r.purchase_returns_closed_at,
     r.branch_id, r.branch_name, r.created_by, r.created_by_name, r.created_at, r.updated_at,
+    r.allow_new_receipt ? 1 : 0,
   ];
 }
 
@@ -338,6 +342,21 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
     }
   });
 
+  function postingOptsFromRequest(req, inv, extra = {}) {
+    const bodyFlag = req?.body?.allowNewReceipt === true
+      || req?.body?.allow_new_receipt === true
+      || req?.body?.forceNewReceipt === true;
+    return {
+      ...extra,
+      allowNewReceipt: inv?.allowNewReceipt === true || bodyFlag,
+      canAuthorizeNewReceipt: userHasPermission(
+        req?.user?.role,
+        req?.user?.permissionOverrides,
+        'purchase_receive',
+      ),
+    };
+  }
+
   async function postPurchaseAccountingIfNeeded(client, inv, opts = {}) {
     const { postPurchaseInvoiceAccountingPhased } = require('../lib/purchaseInvoicePosting');
     return postPurchaseInvoiceAccountingPhased(client, inv, opts);
@@ -436,7 +455,11 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       if (!skipAccounting) {
         try {
           await client.query('BEGIN');
-          txResult = await postPurchaseAccountingIfNeeded(client, inv, { priorFreightState });
+          txResult = await postPurchaseAccountingIfNeeded(
+            client,
+            inv,
+            postingOptsFromRequest(req, inv, { priorFreightState }),
+          );
           await client.query('COMMIT');
         } catch (accErr) {
           try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
@@ -572,7 +595,11 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
             continue;
           }
           const inv = fromRow(saved.rows[0]);
-          const txResult = await postPurchaseAccountingIfNeeded(client, inv);
+          const txResult = await postPurchaseAccountingIfNeeded(
+            client,
+            inv,
+            postingOptsFromRequest(req, inv),
+          );
           await client.query('COMMIT');
           if (txResult?.stockMovementIds?.length) posted += 1;
         } catch (err) {
@@ -718,7 +745,11 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       let txResult = null;
       try {
         await client.query('BEGIN');
-        txResult = await postPurchaseAccountingIfNeeded(client, inv);
+        txResult = await postPurchaseAccountingIfNeeded(
+          client,
+          inv,
+          postingOptsFromRequest(req, inv),
+        );
         await client.query('COMMIT');
       } catch (err) {
         try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }

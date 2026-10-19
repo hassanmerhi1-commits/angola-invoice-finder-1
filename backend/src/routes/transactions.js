@@ -24,6 +24,7 @@ const { attachUserBranchScope, resolveWarehouseId, applyWriteBranchOverride, app
 const { requirePermission } = require('../middleware/requirePermission');
 const { isUniqueSkuBranchError } = require('../lib/productSkuResolve');
 const { processTransactionBody } = require('../transactionProcessor');
+const { userHasPermission } = require('../lib/rolePermissions');
 const { assertCanUsePostingDate, toISODateOnly } = require('../lib/workingDayAccess');
 const {
   createJournalEntry,
@@ -616,7 +617,13 @@ module.exports = function(broadcastTable) {
       }
 
       await client.query('BEGIN');
-      const result = await processTransactionBody(client, req.body);
+      const body = { ...(req.body || {}) };
+      body.canAuthorizeNewReceipt = userHasPermission(
+        req.user?.role,
+        req.user?.permissionOverrides,
+        'purchase_receive',
+      );
+      const result = await processTransactionBody(client, body);
       await client.query('COMMIT');
 
       if (result.alreadyProcessed) {

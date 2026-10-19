@@ -166,6 +166,10 @@ async function processTransactionBody(client, body) {
       // Validate period
       await validatePeriod(client, date || new Date().toISOString());
 
+      if (String(transactionType).toLowerCase() === 'purchase_invoice') {
+        return processPurchaseInvoiceThroughPostingService(client, body, result);
+      }
+
       // Idempotency: safe to retry save when stock was already posted for this document.
       if (documentId) {
         const existingStock = await client.query(
@@ -609,6 +613,127 @@ async function processTransactionBody(client, body) {
         `journal=${!!result.journalEntryId}, openItem=${!!result.openItemId} ✓`
       );
       return result;
+}
+
+async function applyTaxLinesAndDocumentLinks(client, body, result) {
+  const {
+    transactionType, documentId, documentNumber, date, documentLinks, taxLines,
+  } = body;
+
+  if (Array.isArray(taxLines) && taxLines.length > 0) {
+    const d = new Date(date || new Date().toISOString());
+    const periodYear = d.getFullYear();
+    const periodMonth = d.getMonth() + 1;
+    await client.query('DELETE FROM tax_lines WHERE document_type = $1 AND document_id = $2', [transactionType, documentId]);
+    await client.query('DELETE FROM tax_summaries WHERE document_type = $1 AND document_id = $2', [transactionType, documentId]);
+
+    for (const tl of taxLines) {
+      const taxCode = String(tl.taxCode || '').trim();
+      const taxRate = Number(tl.taxRate || 0);
+      const baseAmount = Number(tl.baseAmount || 0);
+      const taxAmount = Number(tl.taxAmount || 0);
+      const lineNumber = Number(tl.lineNumber || 1);
+      const isInclusive = !!tl.isInclusive;
+      if (!taxCode || !isFinite(baseAmount) || !isFinite(taxAmount)) continue;
+
+      let taxCodeId = null;
+      try {
+        const tc = await client.query('SELECT id FROM tax_codes WHERE code = $1 LIMIT 1', [taxCode]);
+        taxCodeId = tc.rows[0]?.id || null;
+      } catch {
+        taxCodeId = null;
+      }
+
+      await client.query(
+        `INSERT INTO tax_lines
+         (document_type, document_id, line_number, tax_code_id, tax_code, tax_rate, base_amount, tax_amount, is_inclusive)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [transactionType, documentId, lineNumber, taxCodeId, taxCode, taxRate, baseAmount, taxAmount, isInclusive]
+      );
+    }
+
+    const summaryRows = await client.query(
+      `SELECT tax_code, tax_rate,
+              SUM(base_amount) AS total_base,
+              SUM(tax_amount) AS total_tax
+       FROM tax_lines
+       WHERE document_type = $1 AND document_id = $2
+       GROUP BY tax_code, tax_rate`,
+      [transactionType, documentId]
+    );
+    const direction = transactionType === 'sale' ? 'output' : 'input';
+    for (const row of summaryRows.rows) {
+      await client.query(
+        `INSERT INTO tax_summaries
+         (document_type, document_id, tax_code, tax_rate, total_base, total_tax, direction, period_year, period_month)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          transactionType,
+          documentId,
+          row.tax_code,
+          Number(row.tax_rate || 0),
+          Number(row.total_base || 0),
+          Number(row.total_tax || 0),
+          direction,
+          periodYear,
+          periodMonth,
+        ]
+      );
+    }
+  }
+
+  if (documentLinks && documentLinks.length > 0) {
+    for (const dl of documentLinks) {
+      const linkId = await linkDocuments(client, dl.sourceType, dl.sourceId, dl.sourceNumber, dl.targetType, dl.targetId, dl.targetNumber);
+      result.documentLinkIds.push(linkId);
+    }
+  }
+}
+
+async function processPurchaseInvoiceThroughPostingService(client, body, result) {
+  const documentId = String(body.documentId || '').trim();
+  if (!documentId) {
+    throw new Error('purchase_invoice requer documentId da fatura gravada');
+  }
+
+  const invRes = await client.query(
+    'SELECT * FROM purchase_invoices WHERE CAST(id AS TEXT) = CAST($1 AS TEXT) LIMIT 1',
+    [documentId],
+  );
+  if (!invRes.rows[0]) {
+    throw new Error(
+      'Fatura de compra não encontrada — grave o cabeçalho antes de lançar stock/GL',
+    );
+  }
+
+  const { fromRow } = require('./purchaseInvoiceMappers');
+  const { postPurchaseInvoiceAccountingPhased } = require('./lib/purchaseInvoicePosting');
+  const inv = fromRow(invRes.rows[0]);
+  const posted = await postPurchaseInvoiceAccountingPhased(client, inv, {
+    allowNewReceipt: inv.allowNewReceipt === true || body.allowNewReceipt === true,
+    canAuthorizeNewReceipt: body.canAuthorizeNewReceipt === true,
+    priorFreightState: body.priorFreightState,
+  });
+
+  result.success = !!posted.success;
+  result.stockMovementIds = posted.stockMovementIds || [];
+  result.journalEntryId = posted.journalEntryId || null;
+  result.openItemId = posted.openItemId || null;
+  result.errors = posted.errors || [];
+  result.warnings = posted.warnings || [];
+  if (!posted.success) {
+    console.warn(
+      `[TX API] purchase_invoice ${body.documentNumber || documentId}: posting service refused — ${(posted.errors || []).join('; ')}`,
+    );
+    return result;
+  }
+
+  await applyTaxLinesAndDocumentLinks(client, body, result);
+  console.log(
+    `[TX] purchase_invoice ${body.documentNumber || documentId}: stock=${result.stockMovementIds.length}, ` +
+    `journal=${!!result.journalEntryId}, openItem=${!!result.openItemId} (posting service) ✓`
+  );
+  return result;
 }
 
 module.exports = { processTransactionBody, isUniqueSkuBranchError };

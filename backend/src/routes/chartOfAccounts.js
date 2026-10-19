@@ -6,7 +6,7 @@ const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
-const { journalFilteredSumSql } = require('../lib/journalPeriodSums');
+const { journalFilteredSumSql, journalThroughEndJoinSql } = require('../lib/journalPeriodSums');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -217,22 +217,43 @@ module.exports = function(broadcastTable) {
       let dateFilter = '';
       const params = [];
       let paramIndex = 1;
+      let closeJoin = '';
+      const hasPeriod = Boolean(start_date && end_date);
 
-      if (start_date && end_date) {
+      if (hasPeriod) {
         dateFilter = `AND je.entry_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
         params.push(start_date, end_date);
       }
 
       let branchFilter = '';
+      let closeBranchFilter = '';
       if (scopedBranchId) {
         const branchClause = await buildJournalBranchFilter(db, scopedBranchId, paramIndex);
         if (branchClause.sql) {
           branchFilter = branchClause.sql;
           params.push(...branchClause.params);
+          paramIndex += branchClause.params.length;
         }
       }
 
-      const sums = journalFilteredSumSql();
+      let sums = journalFilteredSumSql();
+      if (hasPeriod) {
+        const endParam = '$2';
+        if (scopedBranchId) {
+          const closeBranch = await buildJournalBranchFilter(db, scopedBranchId, paramIndex);
+          if (closeBranch.sql) {
+            closeBranchFilter = closeBranch.sql.replace(/\bje\./g, 'je_close.');
+            params.push(...closeBranch.params);
+          }
+        }
+        closeJoin = journalThroughEndJoinSql({
+          alias: 'je_close',
+          endDateParam: endParam,
+          extraAnd: closeBranchFilter,
+        });
+        sums = journalFilteredSumSql({ periodAlias: 'je', closeAlias: 'je_close' });
+      }
+
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -249,6 +270,7 @@ module.exports = function(broadcastTable) {
         FROM chart_of_accounts coa
         LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
         LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter} ${branchFilter}
+        ${closeJoin}
         WHERE coa.is_active = true
         GROUP BY coa.id
         ORDER BY coa.code
@@ -602,14 +624,24 @@ module.exports = function(broadcastTable) {
       const { start_date, end_date } = req.query;
 
       let dateFilter = '';
+      let closeJoin = '';
       const params = [id];
+      const hasPeriod = Boolean(start_date && end_date);
 
-      if (start_date && end_date) {
+      if (hasPeriod) {
         dateFilter = 'AND je.entry_date BETWEEN $2 AND $3';
         params.push(start_date, end_date);
       }
 
-      const sums = journalFilteredSumSql();
+      let sums = journalFilteredSumSql();
+      if (hasPeriod) {
+        closeJoin = journalThroughEndJoinSql({
+          alias: 'je_close',
+          endDateParam: '$3',
+        });
+        sums = journalFilteredSumSql({ periodAlias: 'je', closeAlias: 'je_close' });
+      }
+
       const result = await db.query(`
         SELECT 
           coa.id,
@@ -624,6 +656,7 @@ module.exports = function(broadcastTable) {
         FROM chart_of_accounts coa
         LEFT JOIN journal_entry_lines jel ON jel.account_id = coa.id
         LEFT JOIN journal_entries je ON je.id = jel.journal_entry_id AND je.is_posted = true ${dateFilter}
+        ${closeJoin}
         WHERE coa.id = $1
         GROUP BY coa.id
       `, params);
