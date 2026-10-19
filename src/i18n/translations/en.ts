@@ -5615,11 +5615,11 @@ export const en = {
     createSupplier: "Create supplier",
     contactPersonPlaceholder: "e.g. John Smith",
     notesPlaceholder: "Additional notes...",
-    deleteConfirm: "Deactivate this supplier? Their purchases stay in history.",
-    deleteDialogTitle: "Deactivate supplier",
+    deleteConfirm: "Delete this supplier? Their purchases stay in history.",
+    deleteDialogTitle: "Delete supplier",
     deleteDialogDescription:
-      '"{name}" will stay on the list as inactive. Purchases and balances are kept. You can reactivate later.',
-    deleteDialogConfirm: "Deactivate",
+      '"{name}" will be removed from the suppliers list. Purchases already recorded stay in history.',
+    deleteDialogConfirm: "Delete",
     reactivate: "Reactivate",
 
     // Toasts
@@ -5627,8 +5627,8 @@ export const en = {
     supplierUpdatedDesc: "{name} was updated successfully",
     supplierCreatedTitle: "Supplier created",
     supplierCreatedDesc: "{name} was created successfully",
-    supplierDeletedTitle: "Supplier deactivated",
-    supplierDeletedDesc: "{name} is now inactive and still on the list",
+    supplierDeletedTitle: "Supplier deleted",
+    supplierDeletedDesc: "{name} was removed from the list",
     supplierReactivatedTitle: "Supplier reactivated",
     supplierReactivatedDesc: "{name} is active again",
 
@@ -6226,9 +6226,12 @@ export const en = {
     openingBalanceLabel: "Opening balance",
     headerAccountLabel: "Header account (group)",
 
+    parentSearchPlaceholder: "Search parent account...",
     deleteConfirm: 'Delete account "{name}"?',
     deleted: "Account deleted",
     deleteError: "Failed to delete",
+    deleteHasChildren: "This account still has sub-accounts. Delete or move the children first.",
+    deleteHasTransactions: "This account has journal entries, so it cannot be deleted.",
     codeAndNameRequired: "Code and Name are required",
     updated: "Account updated",
     created: "Account created",

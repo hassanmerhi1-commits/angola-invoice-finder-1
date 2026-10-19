@@ -1518,7 +1518,7 @@ export const api = {
         const apiResult = await apiFetch<any>(`/suppliers/${id}`, { method: 'DELETE' });
         if (apiResult.data) return apiResult;
         if (!shouldTrySupplierIpcAfterApiFailure(apiResult)) return apiResult;
-        return ipcUpdate('suppliers', id, { is_active: false, updated_at: new Date().toISOString() });
+        return ipcDelete('suppliers', id);
       }
       return apiFetch<any>(`/suppliers/${id}`, { method: 'DELETE' });
     },

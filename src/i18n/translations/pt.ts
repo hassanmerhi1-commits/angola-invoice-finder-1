@@ -5617,11 +5617,11 @@ export const pt: TranslationKeys = {
     createSupplier: "Criar Fornecedor",
     contactPersonPlaceholder: "Ex: João Silva",
     notesPlaceholder: "Observações adicionais...",
-    deleteConfirm: "Desactivar este fornecedor? As compras dele ficam no histórico.",
-    deleteDialogTitle: "Desactivar fornecedor",
+    deleteConfirm: "Eliminar este fornecedor? As compras dele ficam no histórico.",
+    deleteDialogTitle: "Eliminar fornecedor",
     deleteDialogDescription:
-      '"{name}" fica inactivo na lista. As compras e dívidas não são apagadas. Pode reactivar depois.',
-    deleteDialogConfirm: "Desactivar",
+      '"{name}" sai da lista de fornecedores. As compras já lançadas ficam no histórico.',
+    deleteDialogConfirm: "Eliminar",
     reactivate: "Reactivar",
 
     // Toasts
@@ -5629,8 +5629,8 @@ export const pt: TranslationKeys = {
     supplierUpdatedDesc: "{name} foi actualizado com sucesso",
     supplierCreatedTitle: "Fornecedor criado",
     supplierCreatedDesc: "{name} foi criado com sucesso",
-    supplierDeletedTitle: "Fornecedor desactivado",
-    supplierDeletedDesc: "{name} ficou inactivo e continua na lista",
+    supplierDeletedTitle: "Fornecedor eliminado",
+    supplierDeletedDesc: "{name} foi removido da lista",
     supplierReactivatedTitle: "Fornecedor reactivado",
     supplierReactivatedDesc: "{name} voltou a estar activo",
 
@@ -6228,9 +6228,12 @@ export const pt: TranslationKeys = {
     openingBalanceLabel: "Saldo Inicial",
     headerAccountLabel: "Conta Cabeçalho (grupo)",
 
+    parentSearchPlaceholder: "Pesquisar conta-pai...",
     deleteConfirm: 'Eliminar conta "{name}"?',
     deleted: "Conta eliminada",
     deleteError: "Erro ao eliminar",
+    deleteHasChildren: "Esta conta ainda tem subcontas. Elimine ou mova as filhas primeiro.",
+    deleteHasTransactions: "Esta conta tem lançamentos no diário, por isso não pode ser eliminada.",
     codeAndNameRequired: "Código e Nome são obrigatórios",
     updated: "Conta actualizada",
     created: "Conta criada",

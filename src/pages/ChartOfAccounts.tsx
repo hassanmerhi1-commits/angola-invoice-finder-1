@@ -18,11 +18,13 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
+import { CLIENTS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import {
   Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
@@ -60,8 +62,6 @@ const CATEGORY_TABS = [
   { key: 'capital', labelKey: 'tabEquity', filter: (a: Account) => a.account_type === 'equity' },
   { key: 'todos', labelKey: 'tabAll', filter: () => true },
 ] as const;
-
-const ROOT_ACCOUNT_VALUE = '__root__';
 
 const TAB_ACCOUNT_DEFAULTS: Record<string, { accountType: AccountType; preferredParentCodes: string[] }> = {
   clientes: { accountType: 'asset', preferredParentCodes: ['311', '31'] },
@@ -558,9 +558,27 @@ export default function ChartOfAccounts() {
     if (!confirm(t.chartOfAccountsUi.deleteConfirm.replace('{name}', resolveAccountDisplayName(account, language, t)))) return;
     try {
       await deleteAccount(account.id);
+      const code = String(account.code || '');
+      if (code.length >= ENTITY_ACCOUNT_CODE_LENGTH) {
+        if (code.startsWith('32')) {
+          window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+        } else if (code.startsWith('31')) {
+          window.dispatchEvent(new CustomEvent(CLIENTS_CHANGED_EVENT, { detail: {} }));
+        }
+      }
       toast.success(t.chartOfAccountsUi.deleted);
+      if (selectedAccountId === account.id) setSelectedAccountId(null);
     } catch (error: any) {
-      toast.error(error.message || t.chartOfAccountsUi.deleteError);
+      const raw = String(error?.message || '');
+      if (/child accounts/i.test(raw) || /HAS_CHILDREN/.test(raw)) {
+        toast.error(t.chartOfAccountsUi.deleteHasChildren);
+        return;
+      }
+      if (/transactions/i.test(raw) || /HAS_TRANSACTIONS/.test(raw)) {
+        toast.error(t.chartOfAccountsUi.deleteHasTransactions);
+        return;
+      }
+      toast.error(raw || t.chartOfAccountsUi.deleteError);
     }
   };
 
@@ -588,6 +606,14 @@ export default function ChartOfAccounts() {
     try {
       if (editingAccount) {
         await updateAccount(editingAccount.id, payload);
+        const code = String(payload.code || editingAccount.code || '');
+        if (code.length >= ENTITY_ACCOUNT_CODE_LENGTH) {
+          if (code.startsWith('32')) {
+            window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+          } else if (code.startsWith('31')) {
+            window.dispatchEvent(new CustomEvent(CLIENTS_CHANGED_EVENT, { detail: {} }));
+          }
+        }
         toast.success(t.chartOfAccountsUi.updated);
       } else {
         await createAccount(payload);
@@ -807,7 +833,7 @@ export default function ChartOfAccounts() {
                   isSelected={selectedAccountId === account.id}
                   onToggle={handleToggle}
                   onSelect={handleSelectAccount}
-                  onViewLedger={openLedger}
+                  onEdit={openEditDialog}
                   childrenByParent={childrenByParent}
                   rolledBalanceById={rolledBalanceById}
                   expandedIds={expandedIds}
@@ -940,44 +966,36 @@ export default function ChartOfAccounts() {
               ) : (
                 <div className="flex items-center gap-2">
                   <div className="flex-1">
-                    <Select value={formData.parent_id || ROOT_ACCOUNT_VALUE} onValueChange={v => {
-                      const parentId = v === ROOT_ACCOUNT_VALUE ? '' : v;
-                      const parent = accounts.find(a => a.id === parentId);
-                      setFormData(prev => {
-                        if (!parent) {
-                          const rootCodes = accounts.filter(a => !a.parent_id).map(a => a.code);
+                    <AccountParentPicker
+                      value={formData.parent_id}
+                      accounts={accounts}
+                      excludeId={editingAccount?.id}
+                      language={language}
+                      t={t}
+                      onChange={(parentId) => {
+                        const parent = accounts.find(a => a.id === parentId);
+                        setFormData(prev => {
+                          if (!parent) {
+                            const rootCodes = accounts.filter(a => !a.parent_id).map(a => a.code);
+                            return {
+                              ...prev,
+                              parent_id: '',
+                              level: 1,
+                              code: editingAccount ? prev.code : buildSuggestedRootCode(rootCodes),
+                            };
+                          }
+                          const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
                           return {
                             ...prev,
-                            parent_id: '',
-                            level: 1,
-                            code: editingAccount ? prev.code : buildSuggestedRootCode(rootCodes),
+                            parent_id: parentId,
+                            level: parent.level + 1,
+                            code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header),
+                            account_type: parent.account_type,
+                            account_nature: parent.account_nature,
                           };
-                        }
-                        const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
-                        return {
-                          ...prev,
-                          parent_id: parentId,
-                          level: parent.level + 1,
-                          code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header),
-                          account_type: parent.account_type,
-                          account_nature: parent.account_nature,
-                        };
-                      });
-                    }}>
-                      <SelectTrigger><SelectValue placeholder={t.chartOfAccountsUi.rootPlaceholder} /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={ROOT_ACCOUNT_VALUE}>{t.chartOfAccountsUi.rootOption}</SelectItem>
-                        {accounts
-                          .filter(a => a.is_active !== false && (!editingAccount || a.id !== editingAccount.id))
-                          .sort((a, b) => a.code.localeCompare(b.code))
-                          .map(a => (
-                            <SelectItem key={a.id} value={a.id}>
-                              <span className="font-mono text-muted-foreground mr-2">{a.code}</span>
-                              {resolveAccountDisplayName(a, language, t)}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                        });
+                      }}
+                    />
                   </div>
                   {!editingAccount && (
                     <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" title={t.chartOfAccountsUi.newParentAccount}
@@ -1035,6 +1053,88 @@ export default function ChartOfAccounts() {
   );
 }
 
+function AccountParentPicker({
+  value,
+  accounts,
+  excludeId,
+  language,
+  t,
+  onChange,
+}: {
+  value: string;
+  accounts: Account[];
+  excludeId?: string;
+  language: 'en' | 'pt';
+  t: TranslationKeys;
+  onChange: (parentId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const selected = accounts.find((a) => a.id === value);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return accounts
+      .filter((a) => a.is_active !== false && a.id !== excludeId)
+      .filter((a) => {
+        if (!q) return true;
+        return String(a.code || '').toLowerCase().includes(q)
+          || resolveAccountDisplayName(a, language, t).toLowerCase().includes(q);
+      })
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .slice(0, 80);
+  }, [accounts, excludeId, language, query, t]);
+
+  return (
+    <Popover modal={false} open={open} onOpenChange={(next) => {
+      setOpen(next);
+      if (!next) setQuery('');
+    }}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" className="h-10 w-full justify-between font-normal">
+          <span className="truncate">
+            {selected
+              ? `${selected.code} — ${resolveAccountDisplayName(selected, language, t)}`
+              : t.chartOfAccountsUi.rootOption}
+          </span>
+          <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
+        <Input
+          autoFocus
+          value={query}
+          placeholder={t.chartOfAccountsUi.parentSearchPlaceholder}
+          onChange={(e) => setQuery(e.target.value)}
+          className="h-8 text-xs"
+        />
+        <div className="mt-2 max-h-56 overflow-auto">
+          <button
+            type="button"
+            className="flex w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+            onClick={() => { onChange(''); setOpen(false); }}
+          >
+            {t.chartOfAccountsUi.rootOption}
+          </button>
+          {filtered.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className={cn(
+                'flex w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent',
+                a.id === value && 'bg-accent',
+              )}
+              onClick={() => { onChange(a.id); setOpen(false); }}
+            >
+              <span className="mr-2 font-mono text-muted-foreground">{a.code}</span>
+              <span className="truncate">{resolveAccountDisplayName(a, language, t)}</span>
+            </button>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Tree row component — balances/children are precomputed; row is memoized so
 // selecting one leaf does not recompute the whole tree.
 interface AccountTreeRowProps {
@@ -1044,7 +1144,7 @@ interface AccountTreeRowProps {
   isSelected: boolean;
   onToggle: (id: string) => void;
   onSelect: (account: Account) => void;
-  onViewLedger: (account: Account) => void;
+  onEdit: (account: Account) => void;
   childrenByParent: Map<string, Account[]>;
   rolledBalanceById: Map<string, number>;
   expandedIds: Set<string>;
@@ -1060,7 +1160,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
   isSelected,
   onToggle,
   onSelect,
-  onViewLedger,
+  onEdit,
   childrenByParent,
   rolledBalanceById,
   expandedIds,
@@ -1105,7 +1205,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
         onClick={() => onSelect(account)}
         onDoubleClick={(e) => {
           e.preventDefault();
-          onViewLedger(account);
+          onEdit(account);
         }}
       >
         <td className="px-3 py-1.5">
@@ -1146,7 +1246,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
           isSelected={selectedAccountId === child.id}
           onToggle={onToggle}
           onSelect={onSelect}
-          onViewLedger={onViewLedger}
+          onEdit={onEdit}
           childrenByParent={childrenByParent}
           rolledBalanceById={rolledBalanceById}
           expandedIds={expandedIds}

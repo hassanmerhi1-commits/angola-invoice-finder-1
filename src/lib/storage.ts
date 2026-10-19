@@ -718,16 +718,16 @@ export async function deleteSupplier(supplierId: string): Promise<void> {
   if (isElectronMode()) {
     const existing = await window.electronAPI!.db.getById('suppliers', supplierId);
     if (existing?.data) {
-      await dbUpdate('suppliers', supplierId, { is_active: false, updated_at: new Date().toISOString() });
+      await dbDelete('suppliers', supplierId);
     }
   } else {
     const suppliers = lsGet<Supplier[]>(STORAGE_KEYS.suppliers, []);
     lsSet(
       STORAGE_KEYS.suppliers,
-      suppliers.map((s) => (s.id === supplierId ? { ...s, isActive: false, updatedAt: new Date().toISOString() } : s)),
+      suppliers.filter((s) => s.id !== supplierId),
     );
   }
-  auditLog('delete', 'suppliers', `Fornecedor ${supplierId} desactivado`, 'Sistema');
+  auditLog('delete', 'suppliers', `Fornecedor ${supplierId} eliminado`, 'Sistema');
   emitSuppliersChanged();
 }
 

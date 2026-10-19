@@ -7,6 +7,7 @@ const { attachUserBranchScope, resolveListBranchId } = require('../middleware/br
 const { auditErpSafe } = require('../lib/erpAudit');
 const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
 const { journalFilteredSumSql, journalThroughEndJoinSql } = require('../lib/journalPeriodSums');
+const { syncLinkedEntityNameFromCoa, deleteLinkedEntityFromCoa } = require('../lib/entityCoaAccounts');
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -471,6 +472,7 @@ module.exports = function(broadcastTable) {
         code, name, description, account_type, account_nature,
         parent_id, level, is_header, is_active, opening_balance 
       } = req.body;
+      const parentId = parent_id === '' || parent_id === undefined ? null : parent_id;
 
       // Check for duplicate code (excluding current account)
       if (code) {
@@ -478,6 +480,14 @@ module.exports = function(broadcastTable) {
         if (existing.rows.length > 0) {
           return res.status(400).json({ error: 'Account code already exists' });
         }
+      }
+
+      const before = await db.query(
+        'SELECT id, code, name, description FROM chart_of_accounts WHERE id = $1',
+        [id],
+      );
+      if (before.rows.length === 0) {
+        return res.status(404).json({ error: 'Account not found' });
       }
 
       const result = await db.query(`
@@ -495,10 +505,25 @@ module.exports = function(broadcastTable) {
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $11
         RETURNING *
-      `, [code, name, description, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, id]);
+      `, [code, name, description, account_type, account_nature, parentId, level, is_header, is_active, opening_balance, id]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Account not found' });
+      }
+
+      const updated = result.rows[0];
+      try {
+        const linked = await syncLinkedEntityNameFromCoa(db, {
+          code: updated.code,
+          oldName: before.rows[0].name,
+          newName: updated.name,
+          description: updated.description,
+        });
+        if (linked.table && linked.updated > 0) {
+          await broadcastTable(linked.table);
+        }
+      } catch (syncErr) {
+        console.warn('[CHART OF ACCOUNTS] Entity name sync skipped:', syncErr.message);
       }
 
       await broadcastTable('chart_of_accounts');
@@ -506,10 +531,10 @@ module.exports = function(broadcastTable) {
         table: 'chart_of_accounts',
         id,
         action: 'update',
-        description: `Conta actualizada: ${result.rows[0]?.code || id} — ${result.rows[0]?.name || ''}`,
+        description: `Conta actualizada: ${updated.code || id} — ${updated.name || ''}`,
         newValues: { code, name, is_active, opening_balance },
       });
-      res.json(result.rows[0]);
+      res.json(updated);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: 'Failed to update account' });
@@ -517,29 +542,67 @@ module.exports = function(broadcastTable) {
   });
 
   // Delete (soft) account
-  router.delete('/:id', requirePermission('admin_settings'), async (req, res) => {
+  router.delete('/:id', requirePermission('admin_settings', 'accounting_create'), async (req, res) => {
     try {
       const { id } = req.params;
-      
-      // Check if account has children
-      const children = await db.query('SELECT id FROM chart_of_accounts WHERE parent_id = $1', [id]);
+
+      const existing = await db.query(
+        'SELECT id, code, name, description FROM chart_of_accounts WHERE id = $1',
+        [id],
+      );
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Account not found' });
+      }
+      const account = existing.rows[0];
+
+      // Inactive children no longer block — they are already gone from the chart.
+      const children = await db.query(
+        `SELECT id FROM chart_of_accounts
+          WHERE parent_id = $1 AND ${activeClauseSql('chart_of_accounts')}
+          LIMIT 1`,
+        [id],
+      );
       if (children.rows.length > 0) {
-        return res.status(400).json({ error: 'Cannot delete account with child accounts' });
+        return res.status(400).json({
+          error: 'Cannot delete account with child accounts',
+          code: 'HAS_CHILDREN',
+        });
       }
 
-      // Check if account has journal entries
-      const entries = await db.query('SELECT id FROM journal_entry_lines WHERE account_id = $1 LIMIT 1', [id]);
+      // Journals may store account UUID or the PGC/leaf code.
+      const entries = await db.query(
+        `SELECT id FROM journal_entry_lines
+          WHERE ${idText('account_id')} = ${idText('$1')}
+             OR ${idText('account_id')} = ${idText('$2')}
+          LIMIT 1`,
+        [id, account.code],
+      );
       if (entries.rows.length > 0) {
-        return res.status(400).json({ error: 'Cannot delete account with transactions' });
+        return res.status(400).json({
+          error: 'Cannot delete account with transactions',
+          code: 'HAS_TRANSACTIONS',
+        });
       }
 
       await db.query('UPDATE chart_of_accounts SET is_active = false WHERE id = $1', [id]);
+      try {
+        const linked = await deleteLinkedEntityFromCoa(db, {
+          code: account.code,
+          name: account.name,
+          description: account.description,
+        });
+        if (linked.table && linked.updated > 0) {
+          await broadcastTable(linked.table);
+        }
+      } catch (syncErr) {
+        console.warn('[CHART OF ACCOUNTS] Entity deactivate skipped:', syncErr.message);
+      }
       await broadcastTable('chart_of_accounts');
       auditErpSafe(req, {
         table: 'chart_of_accounts',
         id,
         action: 'delete',
-        description: `Conta desactivada: ${id}`,
+        description: `Conta desactivada: ${account.code || id}`,
       });
       res.json({ success: true });
     } catch (error) {

@@ -6,6 +6,7 @@ const { auditErpSafe } = require('../lib/erpAudit');
 const { requirePermission } = require('../middleware/requirePermission');
 const {
   ensureSupplierSubAccount,
+  deactivateUnusedEntityLeaf,
 } = require('../lib/entityCoaAccounts');
 
 function cleanText(value) {
@@ -251,18 +252,35 @@ module.exports = function(broadcastTable) {
   router.delete('/:id', requirePermission('admin_settings', 'purchase_create'), async (req, res) => {
     try {
       const { id } = req.params;
-      const result = await db.query(
-        'UPDATE suppliers SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+      const existing = await db.query(
+        'SELECT id, name, nif FROM suppliers WHERE id = $1',
         [id],
       );
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: 'Supplier not found' });
+      }
+      const supplier = existing.rows[0];
+
+      await db.query('DELETE FROM suppliers WHERE id = $1', [id]);
+
+      try {
+        const leaf = await deactivateUnusedEntityLeaf(db, {
+          name: supplier.name,
+          nif: supplier.nif,
+        });
+        if (leaf.deactivated) await broadcastTable('chart_of_accounts');
+      } catch (leafErr) {
+        console.warn('[SUPPLIERS] COA leaf cleanup skipped:', leafErr.message);
+      }
+
       await broadcastTable('suppliers');
       auditErpSafe(req, {
         table: 'suppliers',
         id,
         action: 'delete',
-        description: `Fornecedor desactivado: ${id}`,
+        description: `Fornecedor eliminado: ${supplier.name || id}`,
       });
-      res.json(result.rows[0] || { success: true, id, is_active: false });
+      res.json({ success: true, id, deleted: true });
     } catch (error) {
       console.error('[SUPPLIERS ERROR]', error);
       res.status(500).json({ error: 'Failed to delete supplier' });

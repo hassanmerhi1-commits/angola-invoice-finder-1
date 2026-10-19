@@ -2003,12 +2003,10 @@ export function useSuppliers(deferInitialLoad = false) {
 
   const deleteSupplier = useCallback(async (supplierId: string) => {
     const result = await api.suppliers.delete(supplierId);
+    if (!result.data && result.error) throw new Error(result.error);
     if (!result.data) await storage.deleteSupplier(supplierId);
     setSuppliers((prev) => {
-      const next = prev.map((s) => {
-        if (s.id !== supplierId) return s;
-        return result.data ? mapSupplier(result.data) : { ...s, isActive: false };
-      });
+      const next = prev.filter((s) => s.id !== supplierId);
       setCachedList(suppliersCacheKey, next);
       return next;
     });

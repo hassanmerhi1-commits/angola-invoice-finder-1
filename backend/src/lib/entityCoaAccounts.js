@@ -305,6 +305,142 @@ async function resolveEntityAccountCode(client, entityType, entityId, entityName
   return parentCode;
 }
 
+function extractNifFromDescription(description) {
+  const match = cleanText(description).match(/NIF:\s*([^\s]+)/i);
+  return normalizeNif(match ? match[1] : '');
+}
+
+function isEntityLedgerCode(code, groupCode) {
+  const c = String(code || '').trim();
+  return c.startsWith(groupCode) && c.length >= ENTITY_ACCOUNT_CODE_LENGTH;
+}
+
+/**
+ * When a customer (31x) / supplier (32x) leaf is renamed in the chart, keep the
+ * matching row on clients / suppliers in lockstep. Prefer NIF, then a unique
+ * exact old-name match — never rename two masters from one ambiguous name.
+ */
+async function syncLinkedEntityNameFromCoa(dbOrClient, opts) {
+  const code = String(opts?.code || '').trim();
+  const isSupplier = isEntityLedgerCode(code, SUPPLIER_GROUP_CODE);
+  const isClient = isEntityLedgerCode(code, CLIENT_GROUP_CODE);
+  if (!isSupplier && !isClient) return { table: null, updated: 0 };
+
+  const table = isSupplier ? 'suppliers' : 'clients';
+  const newName = cleanText(opts?.newName);
+  const oldName = cleanText(opts?.oldName);
+  const nif = normalizeNif(opts?.nif) || extractNifFromDescription(opts?.description);
+  if (!newName || (oldName && newName.toLowerCase() === oldName.toLowerCase())) {
+    return { table, updated: 0 };
+  }
+
+  const run = (sql, params) => dbOrClient.query(sql, params);
+
+  if (nif) {
+    const byNif = await run(
+      `UPDATE ${table}
+          SET name = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE REPLACE(REPLACE(COALESCE(nif, ''), ' ', ''), '-', '') = $2
+        RETURNING id`,
+      [newName, nif],
+    );
+    if ((byNif.rowCount || byNif.rows?.length || 0) > 0) {
+      return { table, updated: byNif.rowCount || byNif.rows.length };
+    }
+  }
+
+  if (!oldName) return { table, updated: 0 };
+
+  const matches = await run(
+    `SELECT id FROM ${table} WHERE LOWER(TRIM(name)) = LOWER($1)`,
+    [oldName],
+  );
+  if ((matches.rows || []).length !== 1) return { table, updated: 0 };
+
+  await run(
+    `UPDATE ${table}
+        SET name = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2`,
+    [newName, matches.rows[0].id],
+  );
+  return { table, updated: 1 };
+}
+
+async function findLinkedEntityRow(dbOrClient, opts) {
+  const code = String(opts?.code || '').trim();
+  const isSupplier = isEntityLedgerCode(code, SUPPLIER_GROUP_CODE);
+  const isClient = isEntityLedgerCode(code, CLIENT_GROUP_CODE);
+  if (!isSupplier && !isClient) return { table: null, id: null };
+
+  const table = isSupplier ? 'suppliers' : 'clients';
+  const name = cleanText(opts?.name);
+  const nif = normalizeNif(opts?.nif) || extractNifFromDescription(opts?.description);
+  const run = (sql, params) => dbOrClient.query(sql, params);
+
+  if (nif) {
+    const byNif = await run(
+      `SELECT id FROM ${table}
+        WHERE REPLACE(REPLACE(COALESCE(nif, ''), ' ', ''), '-', '') = $1
+        LIMIT 1`,
+      [nif],
+    );
+    if (byNif.rows?.[0]?.id) return { table, id: byNif.rows[0].id };
+  }
+
+  if (!name) return { table, id: null };
+  const matches = await run(
+    `SELECT id FROM ${table} WHERE LOWER(TRIM(name)) = LOWER($1)`,
+    [name],
+  );
+  if ((matches.rows || []).length !== 1) return { table, id: null };
+  return { table, id: matches.rows[0].id };
+}
+
+/**
+ * Remove the matching supplier / client row when its chart leaf is deleted.
+ * Same match rules as rename: NIF first, then a unique exact name.
+ * Purchase documents keep their stored supplier_name.
+ */
+async function deleteLinkedEntityFromCoa(dbOrClient, opts) {
+  const found = await findLinkedEntityRow(dbOrClient, opts);
+  if (!found.table || !found.id) return { table: found.table, updated: 0 };
+
+  const result = await dbOrClient.query(
+    `DELETE FROM ${found.table} WHERE id = $1`,
+    [found.id],
+  );
+  return { table: found.table, updated: result.rowCount || result.rows?.length || 1 };
+}
+
+/** Hide an unused 32x/31x leaf after the master row is deleted. Keep it if it has journals. */
+async function deactivateUnusedEntityLeaf(dbOrClient, opts) {
+  const groupCode = opts?.groupCode || SUPPLIER_GROUP_CODE;
+  const parentCode = opts?.parentCode || SUPPLIER_PARENT_CODE;
+  const code = await findEntityLeafCode(dbOrClient, groupCode, parentCode, opts?.name, opts?.nif);
+  if (!code) return { code: null, deactivated: false };
+
+  const acc = await dbOrClient.query(
+    'SELECT id, code FROM chart_of_accounts WHERE code = $1 LIMIT 1',
+    [code],
+  );
+  if (!acc.rows?.[0]) return { code, deactivated: false };
+
+  const entries = await dbOrClient.query(
+    `SELECT id FROM journal_entry_lines
+      WHERE CAST(account_id AS TEXT) = CAST($1 AS TEXT)
+         OR CAST(account_id AS TEXT) = CAST($2 AS TEXT)
+      LIMIT 1`,
+    [acc.rows[0].id, code],
+  );
+  if ((entries.rows || []).length > 0) return { code, deactivated: false };
+
+  await dbOrClient.query(
+    'UPDATE chart_of_accounts SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+    [acc.rows[0].id],
+  );
+  return { code, deactivated: true };
+}
+
 module.exports = {
   CLIENT_GROUP_CODE,
   CLIENT_PARENT_CODE,
@@ -316,4 +452,8 @@ module.exports = {
   findEntityLeafCode,
   normalizeEntityName,
   namesRelated,
+  extractNifFromDescription,
+  syncLinkedEntityNameFromCoa,
+  deleteLinkedEntityFromCoa,
+  deactivateUnusedEntityLeaf,
 };
