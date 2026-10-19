@@ -3,9 +3,19 @@
  * Reset a user password in PostgreSQL (server admin CLI).
  * Usage: node scripts/reset-user-password.cjs <email-or-username> <new-password>
  */
+const path = require('path');
+const fs = require('fs');
+
+const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
+const installEnv = path.join(installDir, 'database.env');
+if (fs.existsSync(installEnv)) {
+  require('dotenv').config({ path: installEnv });
+}
+
 const { hashPassword } = require('../src/lib/passwordAuth');
 const db = require('../src/db');
 const { findUserForLogin } = require('../src/lib/loginUserLookup');
+const { ensureAuthUsersReady } = require('../src/lib/ensureAuthUsersReady');
 
 async function main() {
   const identifier = process.argv[2];
@@ -19,7 +29,11 @@ async function main() {
     process.exit(1);
   }
 
-  const user = await findUserForLogin(db, identifier);
+  let user = await findUserForLogin(db, identifier);
+  if (!user) {
+    await ensureAuthUsersReady();
+    user = await findUserForLogin(db, identifier);
+  }
   if (!user) {
     console.error(`User not found: ${identifier}`);
     process.exit(1);

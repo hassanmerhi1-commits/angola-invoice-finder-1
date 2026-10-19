@@ -417,6 +417,12 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     console.warn('[SCHEMA] app_meta:', e.message);
   }
 
+  try {
+    await upgradeLegacyPasswordHashesOnStartup();
+  } catch (e) {
+    console.warn('[AUTH] ensureAuthUsersReady:', e.message);
+  }
+
   server.listen(PORT, '0.0.0.0', () => {
     const nets = os.networkInterfaces();
     const ips = [];
@@ -439,7 +445,6 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     discoveryBroadcaster.start().catch((e) => console.warn('[Discovery]', e.message));
 
     ensureDefaultInstallation().catch((e) => console.warn('[INSTALL]', e.message));
-    upgradeLegacyPasswordHashesOnStartup().catch((e) => console.warn('[AUTH]', e.message));
     const { migrateInventoryVatTo5 } = require('./migrateInventoryVat5');
     migrateInventoryVatTo5(db).catch((e) => console.warn('[DB] Inventory VAT 5% patch:', e.message));
     try {

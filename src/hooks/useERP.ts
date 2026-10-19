@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore, useMemo } from 'react';
 import { Branch, Product, Sale, User, CartItem, SaleItem, DailySummary, Client, StockTransfer, Supplier, PurchaseOrder, PurchaseOrderItem, Category } from '@/types/erp';
-import { api, clearAuthSessionCache, ensureBackendAuthToken, isJwtAuthToken, setAuthToken } from '@/lib/api/client';
+import { api, clearAuthSessionCache, ensureBackendAuthToken, isAuthFailureMessage, isJwtAuthToken, setAuthToken } from '@/lib/api/client';
 import { isDemoMode, isThinClientMode } from '@/lib/api/config';
 import { isOfflineModeActive } from '@/lib/offlineAuth';
 import { lanCatalogScopeKey, readLanProducts, readLanSuppliers, saveLanProducts, saveLanSuppliers } from '@/lib/lanCatalogCache';
@@ -1139,6 +1139,8 @@ function clearElectronSessionAuthenticated() {
 type AuthState = { user: User | null; isLoading: boolean };
 let authState: AuthState = { user: null, isLoading: true };
 let authInitialized = false;
+/** First-paint Electron restore only — must not block initAuthStateOnce JWT validation. */
+let electronAuthHydrated = false;
 const authListeners = new Set<() => void>();
 
 function setAuthState(patch: Partial<AuthState>) {
@@ -1171,8 +1173,8 @@ initWindowSession();
  */
 function hydrateElectronAuthBeforeFirstPaint() {
   if (!storage.isElectronMode()) return;
-  if (authInitialized) return;
-  authInitialized = true;
+  if (electronAuthHydrated) return;
+  electronAuthHydrated = true;
   let sessionOk = false;
   try {
     sessionOk = sessionStorage.getItem(ELECTRON_SESSION_AUTH_KEY) === '1';
@@ -1226,6 +1228,22 @@ async function initAuthStateOnce() {
           setAuthState({ user: fresh, isLoading: false });
           return;
         }
+        const err = String(meResult.error || '');
+        const backendDown =
+          !err
+          || /failed to fetch|network|timeout|abort|econnrefused/i.test(err);
+        // Offline tills may have no JWT. The server desktop app must not keep a
+        // zombie admin session that can browse cached CoA then 401 on Save.
+        if (isOfflineModeActive() || (backendDown && !isAuthFailureMessage(err))) {
+          setAuthState({ user: currentUser, isLoading: false });
+          return;
+        }
+        clearElectronSessionAuthenticated();
+        storage.setCurrentUser(null);
+        setAuthToken(null);
+        clearAuthSessionCache();
+        setAuthState({ user: null, isLoading: false });
+        return;
       } catch {
         /* API not available */
       }

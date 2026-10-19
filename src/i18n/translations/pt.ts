@@ -255,6 +255,7 @@ export const pt: TranslationKeys = {
     authErrorTitle: "Erro de Autenticação",
     authErrorDesc: "Utilizador ou senha inválidos.",
     authErrorHint: "Verifique o utilizador e a palavra-passe. Se for uma conta nova, peça a um administrador para a repor. Reinicie a aplicação após actualizar e confirme que o servidor da base de dados está online (DB Online no topo).",
+    sessionExpired: "A sessão expirou. Saia e entre novamente, depois tente outra vez.",
     connectionErrorTitle: "Erro",
     connectionErrorDesc: "Falha na conexão ao servidor.",
     retryServerConnection: "Iniciar / voltar a ligar ao servidor",

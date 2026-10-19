@@ -253,6 +253,7 @@ export const en = {
     authErrorTitle: "Authentication error",
     authErrorDesc: "Invalid username or password.",
     authErrorHint: "Check your username and password. If this is a new account, ask an admin to reset it. Restart the app after an update, and confirm the database server is online (DB Online in the header).",
+    sessionExpired: "Your login expired. Sign out and sign in again, then retry.",
     connectionErrorTitle: "Error",
     connectionErrorDesc: "Failed to connect to the server.",
     retryServerConnection: "Start / reconnect server",

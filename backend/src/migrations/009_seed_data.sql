@@ -12,24 +12,24 @@ VALUES (
   true
 ) ON CONFLICT (code) DO NOTHING;
 
--- Default admin user (email: admin@kwanzaerp.ao)
+-- Default admin user (email: admin@kwanzaerp.ao, password: changeme)
 INSERT INTO users (id, email, password_hash, name, role, branch_id, is_active)
 VALUES (
   'a0000000-0000-0000-0000-000000000001',
   'admin@kwanzaerp.ao',
-  '$2a$12$eMqfxQm/5MvHdBkKV4vSj.aX3PxAyFYn08TQ25LGXFtQHL2vxBQwa',
+  '$2a$12$b2O7uSmkdR5JljEgu.lQCeHGhRrgh5LO7v2yfML7QNOz808XjWo.y',
   'Administrador',
   'admin',
   'b0000000-0000-0000-0000-000000000001',
   true
 ) ON CONFLICT (email) DO NOTHING;
 
--- Default cashier user (email: caixa1@kwanzaerp.ao)
+-- Default cashier user (email: caixa1@kwanzaerp.ao, password: caixa1)
 INSERT INTO users (id, email, password_hash, name, role, branch_id, is_active)
 VALUES (
   'a0000000-0000-0000-0000-000000000002',
   'caixa1@kwanzaerp.ao',
-  '$2a$12$6EUte9gkI6Rhiiq6d8C.qe.xOHVQKwz6y/PfVs/yZuft4CshAlAhi',
+  '$2a$12$DngiIU14Vp/RPbPbBTmQEuDjyi8kDStP2.UGjK/02jqzeXNGetOFu',
   'Caixa 1',
   'cashier',
   'b0000000-0000-0000-0000-000000000001',

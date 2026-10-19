@@ -20,7 +20,8 @@ Do this on THIS PC only. Do not copy database.env or passwords from another city
    Right-click preparar-servidor-cidade.cmd
    -> Run as administrator.
    When it asks for a password, use the one from step 2.
-   At the end, open the NEXOR icon and create the administrator.
+   At the end, open the NEXOR icon and sign in as admin / changeme.
+   Change the password immediately in Settings.
    Write down the Tailscale IP the script shows — that is what the tills use.
 
 After this: updates = the "Update NEXOR" button in Settings.

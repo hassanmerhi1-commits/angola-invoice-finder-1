@@ -1,4 +1,13 @@
 #!/usr/bin/env node
+const path = require('path');
+const fs = require('fs');
+
+const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
+const installEnv = path.join(installDir, 'database.env');
+if (fs.existsSync(installEnv)) {
+  require('dotenv').config({ path: installEnv });
+}
+
 const bcrypt = require('bcryptjs');
 const db = require('../src/db');
 

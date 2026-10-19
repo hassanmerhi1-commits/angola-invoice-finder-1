@@ -135,13 +135,17 @@ if ((Test-Path -LiteralPath $envFile) -and -not $Force) {
     Sort-Object FullName -Descending | Select-Object -First 1
   $dumpLine = ''
   if ($dump) { $dumpLine = "PG_DUMP_PATH=$($dump.FullName)`r`n" }
+  $jwtBytes = New-Object byte[] 32
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($jwtBytes)
+  $jwtSecret = -join ($jwtBytes | ForEach-Object { $_.ToString('x2') })
   $envText = @"
 DB_ENGINE=postgres
 DATABASE_URL=postgres://${PgUser}:${safePass}@${PgHost}:${PgPort}/${DatabaseName}
+JWT_SECRET=$jwtSecret
 ${dumpLine}
 "@
   Set-Content -LiteralPath $envFile -Value $envText.TrimEnd() -Encoding ASCII
-  Write-Ok 'database.env criado (so neste PC)'
+  Write-Ok 'database.env criado (so neste PC, com JWT_SECRET)'
 }
 
 $ipFile = Join-Path $InstallDir 'IP'
@@ -326,7 +330,8 @@ if (-not $tailscaleIp) {
 Write-Host ''
 Write-Host '=== Servidor da cidade pronto ===' -ForegroundColor Green
 Write-Host ''
-Write-Host '1. Abra o icone NEXOR neste PC e crie o administrador.'
+Write-Host '1. Abra o icone NEXOR neste PC e entre com admin / changeme.'
+Write-Host '   Depois altere a senha em Definicoes.'
 Write-Host '2. Nas caixas desta cidade, C:\NEXOR ERP\IP deve ter SO este IP:'
 if ($tailscaleIp) {
   Write-Host ("     " + $tailscaleIp) -ForegroundColor Yellow

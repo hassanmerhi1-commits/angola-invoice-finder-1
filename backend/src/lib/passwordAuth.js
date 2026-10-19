@@ -3,13 +3,22 @@ const bcrypt = require('bcryptjs');
 
 const BCRYPT_ROUNDS = 12;
 
-/** Used when the user does not exist — still run bcrypt to reduce timing leaks. */
+/** Used when the user does not exist — still run bcrypt to reduce timing leaks.
+ *  Same hash as the historical 009 admin seed (plaintext changeme). */
 const DUMMY_BCRYPT_HASH =
   '$2a$12$eMqfxQm/5MvHdBkKV4vSj.aX3PxAyFYn08TQ25LGXFtQHL2vxBQwa';
 
 function isBcryptHash(value) {
   const h = String(value || '');
   return /^\$2[aby]\$\d{2}\$/.test(h);
+}
+
+function isBrokenBcryptHash(storedHash) {
+  const h = String(storedHash || '');
+  if (!isBcryptHash(h)) return false;
+  if (h.includes('xxxxxxxx')) return true;
+  if (h.length < 50) return true;
+  return false;
 }
 
 function timingSafeEqualString(a, b) {
@@ -67,6 +76,7 @@ module.exports = {
   BCRYPT_ROUNDS,
   DUMMY_BCRYPT_HASH,
   isBcryptHash,
+  isBrokenBcryptHash,
   verifyPassword,
   verifyPasswordWithDummyFallback,
   hashPassword,

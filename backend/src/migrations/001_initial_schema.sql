@@ -231,7 +231,8 @@ INSERT INTO branches (id, name, code, address, phone, is_main) VALUES
     ('33333333-3333-3333-3333-333333333333', 'Filial Benguela', 'BGL', 'Rua 4 de Fevereiro, Benguela', '+244 923 456 791', false)
 ON CONFLICT DO NOTHING;
 
--- Insert default admin user (password: admin123)
+-- Insert default admin user (password: changeme). Real bcrypt — not the old
+-- $2a$10$xxxx placeholder that bcrypt.compare rejects.
 INSERT INTO users (id, email, password_hash, name, role, branch_id, is_active) VALUES 
-    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'admin@kwanzaerp.ao', '$2a$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'Administrador', 'admin', '11111111-1111-1111-1111-111111111111', true)
+    ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'admin@kwanzaerp.ao', '$2a$12$b2O7uSmkdR5JljEgu.lQCeHGhRrgh5LO7v2yfML7QNOz808XjWo.y', 'Administrador', 'admin', '11111111-1111-1111-1111-111111111111', true)
 ON CONFLICT DO NOTHING;

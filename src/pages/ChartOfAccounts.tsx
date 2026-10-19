@@ -23,7 +23,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { api } from '@/lib/api/client';
+import { api, isAuthFailureMessage } from '@/lib/api/client';
 import { CLIENTS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import {
   Search, Edit2, Trash2, RefreshCw,
@@ -578,7 +578,7 @@ export default function ChartOfAccounts() {
         toast.error(t.chartOfAccountsUi.deleteHasTransactions);
         return;
       }
-      toast.error(raw || t.chartOfAccountsUi.deleteError);
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.deleteError));
     }
   };
 
@@ -621,7 +621,8 @@ export default function ChartOfAccounts() {
       }
       setIsDialogOpen(false);
     } catch (error: any) {
-      toast.error(error.message || t.chartOfAccountsUi.saveError);
+      const raw = String(error?.message || '');
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.saveError));
     } finally {
       setIsSubmitting(false);
     }
@@ -683,7 +684,8 @@ export default function ChartOfAccounts() {
       setIsAddingInlineParent(false);
       toast.success(`${code} — ${name}`);
     } catch (error: any) {
-      toast.error(error?.message || t.chartOfAccountsUi.saveError);
+      const raw = String(error?.message || '');
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.saveError));
     } finally {
       setCreatingInlineParent(false);
     }

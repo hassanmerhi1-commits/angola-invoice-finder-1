@@ -63,20 +63,27 @@ async function isSessionRevoked(jti) {
 async function startSession(req, { userId, userName, branchId, tokenJti }) {
   if (!(await tableExists())) return null;
   const id = crypto.randomUUID();
-  await db.query(
-    `INSERT INTO user_sessions (
-      id, user_id, token_jti, ip_address, workstation_id, user_agent, started_at, last_seen_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
-    [
-      id,
-      userId,
-      tokenJti,
-      ipFromReq(req),
-      workstationFromReq(req),
-      String(req.headers['user-agent'] || '').slice(0, 500) || null,
-    ],
-  );
-  return id;
+  try {
+    await db.query(
+      `INSERT INTO user_sessions (
+        id, user_id, token_jti, ip_address, workstation_id, user_agent, started_at, last_seen_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+      [
+        id,
+        userId,
+        tokenJti,
+        ipFromReq(req),
+        workstationFromReq(req),
+        String(req.headers['user-agent'] || '').slice(0, 500) || null,
+      ],
+    );
+    return id;
+  } catch (err) {
+    // Login must still return a JWT if the audit row cannot be stored
+    // (UUID FK mismatch, missing column, ip longer than VARCHAR(64)).
+    console.warn('[AUTH] startSession skipped:', err.message);
+    return null;
+  }
 }
 
 async function touchSession(tokenJti) {

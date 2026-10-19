@@ -89,6 +89,25 @@ export function isJwtAuthToken(token: string | null | undefined): boolean {
   return token.split('.').length === 3;
 }
 
+/** Backend/client messages that mean the JWT is missing, expired, or revoked — not "server unreachable". */
+export function isAuthFailureMessage(error: string | null | undefined): boolean {
+  const m = String(error || '').toLowerCase();
+  if (!m) return false;
+  return (
+    m.includes('401')
+    || m.includes('authentication required')
+    || m.includes('not authenticated')
+    || m.includes('unauthorized')
+    || m.includes('invalid or expired')
+    || m.includes('invalid token')
+    || m.includes('expired token')
+    || m.includes('user not found')
+    || m.includes('session ended')
+    || m.includes('please sign in')
+    || m.includes('não autenticad')
+  );
+}
+
 function readStoredUserId(): string | null {
   try {
     const raw = localStorage.getItem('kwanzaerp_current_user');
@@ -123,12 +142,7 @@ async function checkJwtAgainstStoredUser(): Promise<JwtCheckResult> {
     result = String(me.data.id) === storedId ? 'valid' : 'invalid';
   } else {
     const err = String(me.error || '').toLowerCase();
-    if (
-      err.includes('401')
-      || err.includes('invalid token')
-      || err.includes('not authenticated')
-      || err.includes('user not found')
-    ) {
+    if (me.status === 401 || isAuthFailureMessage(err)) {
       result = 'invalid';
     } else {
       result = 'unreachable';
@@ -358,7 +372,7 @@ async function apiFetch<T>(
       // dead, stop attaching it so the very next call falls back to "not authenticated"
       // (which every screen already knows how to prompt a clean re-login for) instead of
       // repeating a confusing raw "Invalid or expired token" on every subsequent request.
-      if (response.status === 401 && /invalid|expired/i.test(errorMessage)) {
+      if (response.status === 401 && isAuthFailureMessage(errorMessage)) {
         setAuthToken(null);
         clearAuthSessionCache();
       }

@@ -103,6 +103,21 @@ async function bootstrapLedgerIfNeeded(db, logPrefix) {
 
   if (!hasData) return false;
 
+  // A fresh city DB can have CoA/product rows (PGC ensure / 003) before 001/009
+  // ever inserted login accounts. Marking every file applied here would skip the
+  // user seed forever and leave POST /api/auth/login returning 401 for everyone.
+  let hasUsers = false;
+  try {
+    const users = await db.query('SELECT 1 AS ok FROM users LIMIT 1');
+    hasUsers = (users.rows || []).length > 0;
+  } catch (_) {
+    hasUsers = false;
+  }
+  if (!hasUsers) {
+    console.log(`${logPrefix} schema_migrations empty and users table is empty — running SQL files so login accounts are seeded`);
+    return false;
+  }
+
   for (const file of MIGRATION_FILES) {
     await markApplied(db, file);
   }

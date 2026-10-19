@@ -149,7 +149,7 @@ export default function Login() {
       } else {
         toast({
           title: t.auth.authErrorTitle,
-          description: t.auth.authErrorHint,
+          description: result.message || t.auth.authErrorHint,
           variant: 'destructive',
         });
       }
@@ -318,6 +318,9 @@ export default function Login() {
                 </>
               )}
             </Button>
+            {!mfaToken && (
+              <p className="text-xs text-muted-foreground text-center">{t.auth.defaultAdminHint}</p>
+            )}
           </form>
         </div>
       </div>

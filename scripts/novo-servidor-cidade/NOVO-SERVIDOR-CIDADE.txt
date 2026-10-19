@@ -20,7 +20,8 @@ Faca isto NESTE PC so. Nao copia database.env nem senhas de outra cidade.
    Clique com o botao direito em preparar-servidor-cidade.cmd
    -> Executar como administrador.
    Quando pedir a senha, use a do passo 2.
-   No fim, abra o icone NEXOR e crie o administrador.
+   No fim, abra o icone NEXOR e entre com admin / changeme.
+   Altere a senha de imediato em Definicoes.
    Anote o IP Tailscale que o script mostrar — e o que vai para as caixas.
 
 Depois disto: actualizacoes = botao "Actualizar NEXOR" nas Definicoes.
