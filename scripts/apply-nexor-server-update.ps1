@@ -167,6 +167,14 @@ function Prune-OldBackups([string]$updatesRoot) {
 }
 
 # -----------------------------------------------------------------------------
+Write-Status @{
+  phase = 'applying'
+  message = 'Updater is running.'
+  percent = 52
+  applyAlive = $true
+  buildId = $BuildId
+}
+
 if (-not $env:NEXOR_APPLY_INDEPENDENT) {
   Write-Log 'Re-launching apply outside NexorBackend so Stop-Service cannot kill it'
   if (-not (Test-Path -LiteralPath $StatusFile)) {
@@ -196,20 +204,50 @@ if (-not $env:NEXOR_APPLY_INDEPENDENT) {
     'set NEXOR_APPLY_INDEPENDENT=1',
     $ps
   ) | Set-Content -LiteralPath $cmdPath -Encoding ASCII
-  $launched = $false
+  $stableDir = 'C:\ProgramData\NEXOR'
+  $stableCmd = Join-Path $stableDir 'run-apply.cmd'
   try {
-    & schtasks.exe /Create /F /TN 'NexorApplyUpdate' /SC ONCE /ST 23:59 /RU SYSTEM /RL HIGHEST /TR $cmdPath | Out-Null
-    & schtasks.exe /Run /TN 'NexorApplyUpdate' | Out-Null
-    $launched = $true
-    Write-Log 'Apply re-launched via scheduled task NexorApplyUpdate'
+    if (-not (Test-Path -LiteralPath $stableDir)) {
+      New-Item -ItemType Directory -Force -Path $stableDir | Out-Null
+    }
+    Copy-Item -LiteralPath $cmdPath -Destination $stableCmd -Force
+    @(
+      '@echo off',
+      'REM NEXOR-APPLY-SHIM',
+      'if exist "C:\ProgramData\NEXOR\run-apply.cmd" call "C:\ProgramData\NEXOR\run-apply.cmd" & goto :eof',
+      'if exist "C:\NEXOR ERP\updates\run-apply.cmd" call "C:\NEXOR ERP\updates\run-apply.cmd"'
+    ) | Set-Content -LiteralPath 'C:\NEXOR.cmd' -Encoding ASCII
   } catch {
-    Write-Log ('schtasks re-launch failed: ' + $_.Exception.Message)
+    Write-Log ('stable launcher copy failed: ' + $_.Exception.Message)
+    $stableCmd = $cmdPath
   }
+  $tr = 'cmd.exe /c "{0}"' -f $stableCmd
+  $launched = $false
+  $ErrorActionPreference = 'Continue'
+  & schtasks.exe /Create /F /TN 'NexorApplyUpdate' /SC ONCE /ST 23:59 /RU SYSTEM /RL HIGHEST /TR $tr | Out-Null
+  $createCode = $LASTEXITCODE
+  if ($createCode -eq 0) {
+    & schtasks.exe /Run /TN 'NexorApplyUpdate' | Out-Null
+    $runCode = $LASTEXITCODE
+    if ($runCode -eq 0) {
+      $launched = $true
+      Write-Log ('Apply re-launched via scheduled task NexorApplyUpdate TR=' + $tr)
+    } else {
+      Write-Log ('schtasks /Run failed with exit ' + $runCode)
+    }
+  } else {
+    Write-Log ('schtasks /Create failed with exit ' + $createCode)
+  }
+  $ErrorActionPreference = 'Stop'
   if (-not $launched) {
     try {
-      & wmic.exe process call create $cmdPath | Out-Null
-      $launched = $true
-      Write-Log 'Apply re-launched via wmic'
+      & wmic.exe process call create $stableCmd | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        $launched = $true
+        Write-Log 'Apply re-launched via wmic'
+      } else {
+        Write-Log ('wmic re-launch failed with exit ' + $LASTEXITCODE)
+      }
     } catch {
       Write-Log ('wmic re-launch failed: ' + $_.Exception.Message)
     }

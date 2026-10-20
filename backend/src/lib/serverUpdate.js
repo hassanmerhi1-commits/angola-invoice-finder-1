@@ -210,7 +210,6 @@ function readBuildStampFiles() {
   const candidates = [
     path.join(backendRootFromLib(), 'BUILD_STAMP.json'),
     path.join(backendRootFromLib(), 'webapp', 'build.json'),
-    currentStampPath(),
   ];
   for (const filePath of candidates) {
     const json = readJsonIfExists(filePath);
@@ -276,16 +275,27 @@ function phasePercent(phase, extra) {
   }
 }
 
+function isLaunchStuckJob(job) {
+  if (!job) return false;
+  const msg = String(job.message || '');
+  const pct = Number(job.percent);
+  return (job.phase === 'restarting' && /reconnect in about a minute/i.test(msg))
+    || (job.phase === 'applying' && /Starting the updater/i.test(msg) && (!Number.isFinite(pct) || pct <= 58));
+}
+
 /** A hung apply (service did not come back) used to leave phase=restarting forever and lock the button. */
 function expireStaleUpdateJob() {
   const job = readStatus();
   if (!job || !isBusyPhase(job.phase)) return job;
   const age = Date.now() - jobUpdatedAtMs(job);
-  if (age < LOCK_STALE_MS) return job;
+  const staleMs = isLaunchStuckJob(job) ? 90 * 1000 : LOCK_STALE_MS;
+  if (age < staleMs) return job;
   releaseLock();
   return writeStatus({
     phase: 'failed',
-    message: 'Previous update was interrupted while restarting. Check for update, then try Update NEXOR again.',
+    message: isLaunchStuckJob(job)
+      ? 'The updater did not start. Click Update NEXOR again.'
+      : 'Previous update was interrupted while restarting. Check for update, then try Update NEXOR again.',
     ok: false,
     error: 'Update timed out',
     stale: true,
@@ -653,7 +663,7 @@ function applyPreconditions(db) {
   if (process.platform === 'win32' && !serviceExists(serviceName)) {
     reasons.push(`Windows service ${serviceName} is not installed on this PC`);
   }
-  const backendDir = backendRootFromLib();
+  const backendDir = resolveLiveBackendDir();
   if (!fs.existsSync(path.join(backendDir, 'src', 'server.js'))) {
     reasons.push('Cannot find backend/src/server.js');
   }
@@ -712,8 +722,113 @@ function winQuote(value) {
   return `"${String(value).replace(/"/g, '')}"`;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function applyLaunchCmdPath() {
   return path.join(updatesDir(), 'run-apply.cmd');
+}
+
+/** No spaces — schtasks /TR does not need quotes and cannot split on "NEXOR ERP". */
+function stableApplyLaunchCmdPath() {
+  return 'C:\\ProgramData\\NEXOR\\run-apply.cmd';
+}
+
+function legacyUnquotedApplyShimPath() {
+  return 'C:\\NEXOR.cmd';
+}
+
+function buildSchtasksTr(cmdPath) {
+  const stable = String(cmdPath || stableApplyLaunchCmdPath());
+  return `cmd.exe /c ${winQuote(stable)}`;
+}
+
+function writeCompatibilityApplyShim(cmdPath) {
+  const source = String(cmdPath || applyLaunchCmdPath());
+  const stable = stableApplyLaunchCmdPath();
+  try {
+    fs.mkdirSync(path.dirname(stable), { recursive: true });
+    if (source && fs.existsSync(source) && path.resolve(source) !== path.resolve(stable)) {
+      fs.copyFileSync(source, stable);
+    }
+  } catch (err) {
+    appendApplyLog(`ProgramData apply launcher copy failed: ${err.message || err}`);
+  }
+  const shim = [
+    '@echo off',
+    'REM NEXOR-APPLY-SHIM',
+    `if exist ${winQuote(stable)} call ${winQuote(stable)} & goto :eof`,
+    `if exist ${winQuote(applyLaunchCmdPath())} call ${winQuote(applyLaunchCmdPath())}`,
+    '',
+  ].join('\r\n');
+  try {
+    fs.writeFileSync(legacyUnquotedApplyShimPath(), shim, 'utf8');
+  } catch (err) {
+    appendApplyLog(`C:\\NEXOR.cmd shim failed: ${err.message || err}`);
+  }
+  return fs.existsSync(stable) ? stable : source;
+}
+
+function ensureApplyLaunchShim() {
+  try {
+    return writeCompatibilityApplyShim(applyLaunchCmdPath());
+  } catch (_) {
+    return null;
+  }
+}
+
+function readNssmAppDirectory() {
+  if (process.platform !== 'win32') return null;
+  const serviceName = process.env.NEXOR_SERVICE_NAME || 'NexorBackend';
+  const candidates = [
+    path.join(installDir(), 'tools', 'nssm.exe'),
+    'C:\\Program Files\\nssm\\nssm.exe',
+  ];
+  for (const nssm of candidates) {
+    if (!nssm || !fs.existsSync(nssm)) continue;
+    try {
+      const out = execFileSync(nssm, ['get', serviceName, 'AppDirectory'], {
+        windowsHide: true,
+        timeout: 8000,
+        encoding: 'utf8',
+      });
+      const dir = String(out || '').replace(/\0/g, '').trim();
+      if (dir && fs.existsSync(path.join(dir, 'src', 'server.js'))) return dir;
+    } catch (_) { /* next */ }
+  }
+  return null;
+}
+
+function resolveLiveBackendDir() {
+  const nssmDir = readNssmAppDirectory();
+  if (nssmDir) return nssmDir;
+  const running = backendRootFromLib();
+  if (fs.existsSync(path.join(running, 'src', 'server.js'))) return running;
+  const installed = path.join(installDir(), 'backend');
+  if (fs.existsSync(path.join(installed, 'src', 'server.js'))) return installed;
+  return running;
+}
+
+function applyHasTakenOver(job) {
+  if (!job) return false;
+  if (job.applyAlive === true) return true;
+  const msg = String(job.message || '');
+  if (/Updater is running|Backing up|Stopping NexorBackend|Files copied|Apply continues|Starting NexorBackend|Updating the database/i.test(msg)) {
+    return true;
+  }
+  if (job.phase === 'success' || job.phase === 'failed') return true;
+  return job.phase === 'applying' && Number(job.percent) >= 55 && !!job.backupDir;
+}
+
+async function waitForApplyTakeover(timeoutMs = 45000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(1000);
+    const job = readStatus();
+    if (applyHasTakenOver(job)) return job;
+  }
+  return null;
 }
 
 function buildApplyLaunchCmdText(opts) {
@@ -768,7 +883,7 @@ function writeApplyLaunchCmd(opts) {
     needNpmCi: opts.needNpmCi,
     updatesDir: updatesDir(),
   }), 'utf8');
-  return cmdPath;
+  return writeCompatibilityApplyShim(cmdPath);
 }
 
 function appendApplyLog(text) {
@@ -790,6 +905,8 @@ function schtasksOnceTime() {
 }
 
 function launchApplyOutsideService(cmdPath) {
+  const launchPath = writeCompatibilityApplyShim(cmdPath);
+  const tr = buildSchtasksTr(launchPath);
   try {
     execFileSync('schtasks.exe', [
       '/Create', '/F',
@@ -798,20 +915,20 @@ function launchApplyOutsideService(cmdPath) {
       '/ST', schtasksOnceTime(),
       '/RU', 'SYSTEM',
       '/RL', 'HIGHEST',
-      '/TR', cmdPath,
+      '/TR', tr,
     ], { windowsHide: true, timeout: 20000, encoding: 'utf8' });
     execFileSync('schtasks.exe', ['/Run', '/TN', APPLY_TASK_NAME], {
       windowsHide: true,
       timeout: 15000,
       encoding: 'utf8',
     });
-    appendApplyLog(`Apply launched via scheduled task ${APPLY_TASK_NAME}`);
-    return { method: 'schtasks', pid: 0 };
+    appendApplyLog(`Apply launched via scheduled task ${APPLY_TASK_NAME} TR=${tr}`);
+    return { method: 'schtasks', pid: 0, tr };
   } catch (taskErr) {
     appendApplyLog(`schtasks launch failed: ${taskErr.message || taskErr}`);
   }
   try {
-    const out = execFileSync('wmic.exe', ['process', 'call', 'create', cmdPath], {
+    const out = execFileSync('wmic.exe', ['process', 'call', 'create', launchPath], {
       windowsHide: true,
       timeout: 15000,
       encoding: 'utf8',
@@ -821,7 +938,7 @@ function launchApplyOutsideService(cmdPath) {
   } catch (wmicErr) {
     appendApplyLog(`wmic launch failed: ${wmicErr.message || wmicErr}`);
   }
-  const child = spawn('cmd.exe', ['/c', 'start', '/min', '', cmdPath], {
+  const child = spawn('cmd.exe', ['/c', 'start', '/min', '', launchPath], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -879,9 +996,9 @@ async function runApplyJob(pre) {
 
   writeStatus({
     phase: 'applying',
-    message: 'Applying files and restarting the NEXOR service…',
+    message: 'Starting the updater…',
     needNpmCi,
-    percent: 55,
+    percent: 52,
   });
 
   const pid = spawnApplyScript({
@@ -893,13 +1010,16 @@ async function runApplyJob(pre) {
     healthUrl,
   });
 
-  writeStatus({
-    phase: 'restarting',
-    message: 'Service is restarting. The screen will reconnect in about a minute.',
-    applyPid: pid,
-    buildId: latest.buildId,
-    percent: 88,
-  });
+  const taken = await waitForApplyTakeover(45000);
+  if (!taken) {
+    throw new Error('The updater did not start. Click Update NEXOR again.');
+  }
+  if (taken.phase === 'failed') {
+    throw new Error(taken.message || taken.error || 'The updater failed');
+  }
+  if (taken.applyPid == null && pid) {
+    writeStatus({ applyPid: pid });
+  }
 }
 
 function startServerUpdate(db, { confirm, user } = {}) {
@@ -970,4 +1090,10 @@ module.exports = {
   APPLY_TASK_NAME,
   winQuote,
   buildApplyLaunchCmdText,
+  buildSchtasksTr,
+  stableApplyLaunchCmdPath,
+  applyHasTakenOver,
+  isLaunchStuckJob,
+  resolveLiveBackendDir,
+  ensureApplyLaunchShim,
 };

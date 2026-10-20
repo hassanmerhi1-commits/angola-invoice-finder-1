@@ -1185,6 +1185,27 @@ if (!fs.existsSync(DATA_DIR)) {
   }
 }
 
+/** Old Update NEXOR launched `C:\NEXOR` because of the space in `C:\NEXOR ERP`. */
+function ensureNexorApplyShim() {
+  try {
+    const updatesCmd = path.join(INSTALL_DIR, 'updates', 'run-apply.cmd');
+    const stableDir = 'C:\\ProgramData\\NEXOR';
+    const stableCmd = path.join(stableDir, 'run-apply.cmd');
+    if (fs.existsSync(updatesCmd)) {
+      fs.mkdirSync(stableDir, { recursive: true });
+      fs.copyFileSync(updatesCmd, stableCmd);
+    }
+    fs.writeFileSync('C:\\NEXOR.cmd', [
+      '@echo off',
+      'REM NEXOR-APPLY-SHIM',
+      'if exist "C:\\ProgramData\\NEXOR\\run-apply.cmd" call "C:\\ProgramData\\NEXOR\\run-apply.cmd" & goto :eof',
+      'if exist "C:\\NEXOR ERP\\updates\\run-apply.cmd" call "C:\\NEXOR ERP\\updates\\run-apply.cmd"',
+      '',
+    ].join('\r\n'), 'utf8');
+  } catch (_) { /* needs write access to C:\\ — backend service also writes this */ }
+}
+ensureNexorApplyShim();
+
 function ensureSqliteFileReady(dbFilePath) {
   const p = String(dbFilePath || '').trim();
   if (!p || !/\.db$/i.test(p)) return p;

@@ -11,6 +11,10 @@ const {
   APPLY_TASK_NAME,
   winQuote,
   buildApplyLaunchCmdText,
+  buildSchtasksTr,
+  stableApplyLaunchCmdPath,
+  applyHasTakenOver,
+  isLaunchStuckJob,
 } = require('../src/lib/serverUpdate');
 
 test('AGT version stays locked at 1.3.8', () => {
@@ -116,6 +120,27 @@ test('apply launcher quotes spaced paths and can run outside the service', () =>
   assert.match(text, /-File "C:\\NEXOR ERP\\updates\\apply-nexor-server-update.ps1"/);
   assert.match(text, /-NeedNpmCi/);
   assert.match(text, /powershell\.exe/);
+  const tr = buildSchtasksTr(stableApplyLaunchCmdPath());
+  assert.equal(tr, 'cmd.exe /c "C:\\ProgramData\\NEXOR\\run-apply.cmd"');
+  assert.doesNotMatch(tr, /NEXOR ERP/);
+  assert.equal(applyHasTakenOver({ applyAlive: true, phase: 'applying' }), true);
+  assert.equal(applyHasTakenOver({ phase: 'applying', message: 'Starting the updater…', percent: 52 }), false);
+  assert.equal(applyHasTakenOver({ phase: 'applying', message: 'Backing up the current server files...', percent: 55 }), true);
+  assert.equal(isLaunchStuckJob({
+    phase: 'restarting',
+    message: 'Service is restarting. The screen will reconnect in about a minute.',
+    percent: 88,
+  }), true);
+  assert.equal(isLaunchStuckJob({
+    phase: 'applying',
+    message: 'Starting the updater…',
+    percent: 52,
+  }), true);
+  assert.equal(isLaunchStuckJob({
+    phase: 'applying',
+    message: 'Backing up the current server files...',
+    percent: 55,
+  }), false);
 });
 
 test('phasePercent maps update steps and download bytes', () => {

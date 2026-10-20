@@ -159,7 +159,11 @@ export function ServerUpdateCard() {
     const ms = Date.now() - new Date(jobUpdatedRaw).getTime();
     return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
   })();
-  const jobLooksStuck = !!(jobPhase && BUSY_PHASES.has(jobPhase) && jobAgeMs > 20 * 60 * 1000);
+  const launchStuck = !!(
+    (jobPhase === 'restarting' && /reconnect in about a minute/i.test(String(status?.job?.message || '')))
+    || (jobPhase === 'applying' && /Starting the updater/i.test(String(status?.job?.message || '')))
+  );
+  const jobLooksStuck = !!(jobPhase && BUSY_PHASES.has(jobPhase) && jobAgeMs > (launchStuck ? 90 * 1000 : 20 * 60 * 1000));
 
   useEffect(() => {
     if (jobLooksStuck && (applying || restarting)) {

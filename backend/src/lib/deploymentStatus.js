@@ -72,7 +72,6 @@ function readBuildStamp() {
   const candidates = [
     path.resolve(__dirname, '../../BUILD_STAMP.json'),
     path.resolve(__dirname, '../../webapp/build.json'),
-    path.join(installDir, 'updates', 'current.json'),
   ];
   let best = null;
   for (const filePath of candidates) {

@@ -453,6 +453,11 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     } catch (e) {
       console.warn('[filialStockRepair] startup heal:', e.message);
     }
+    try {
+      if (db?.engine === 'postgres' && process.platform === 'win32') {
+        require('./lib/serverUpdate').ensureApplyLaunchShim();
+      }
+    } catch (_) { /* optional city-server apply shim */ }
     startReplicatorWorker(4000);
     startAgtWorker(5000);
     const { startAutoBackupWorker } = require('./jobs/autoBackup');
