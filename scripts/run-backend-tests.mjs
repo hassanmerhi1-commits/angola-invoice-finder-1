@@ -43,6 +43,7 @@ const testFiles = [
   'test/purchaseInvoicePgIntegrity.test.js',
   'test/coaEntityNameSync.test.js',
   'test/entityCoaMoveCategory.test.js',
+  'test/entityCoaClaimCode.test.js',
   'test/ensureAuthUsersReady.test.js',
   'test/passwordAuth.test.js',
   'test/restoreStockCost.test.js',

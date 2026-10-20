@@ -43,6 +43,17 @@ export function nextEntityAccountCode(parentCode: string, accounts: CodeLike[]):
   return `${parent}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
 }
 
+/** Next compact header under a parent (321 → 3211) that is not already used. */
+export function nextCompactChildCode(parentCode: string, usedCodes: Array<string | { code?: string | null }>): string {
+  const parent = String(parentCode || '').trim();
+  const used = new Set(
+    (usedCodes || []).map((item) => (typeof item === 'string' ? item : String(item?.code || '')).trim()),
+  );
+  let n = 1;
+  while (used.has(`${parent}${n}`)) n += 1;
+  return `${parent}${n}`;
+}
+
 export function isSupplierCategoryParent(code: string): boolean {
   const c = String(code || '').trim();
   return c === SUPPLIER_PARENT_CODE
@@ -58,7 +69,9 @@ export function findSupplierLeafAccount<T extends CodeLike>(
   const wantNif = String(nif || '').replace(/\s/g, '').toLowerCase();
   const leaves = (accounts || []).filter((a) => {
     const code = String(a.code || '');
-    return code.startsWith('32') && code.length >= ENTITY_ACCOUNT_CODE_LENGTH && !a.is_header;
+    return code.startsWith(SUPPLIER_PARENT_CODE)
+      && code.length > SUPPLIER_PARENT_CODE.length
+      && !a.is_header;
   });
   if (wantNif) {
     const byNif = leaves.find((a) => String(a.description || '').toLowerCase().includes(wantNif));

@@ -22,7 +22,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
-import { findSupplierLeafAccount, isSupplierCategoryParent, nextEntityAccountCode } from '@/lib/entityAccounts';
+import { findSupplierLeafAccount, isSupplierCategoryParent, nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
 import { api } from '@/lib/api/client';
 import { Plus } from 'lucide-react';
 
@@ -94,12 +94,10 @@ export function SupplierFormDialog({
   // Next compact code under the chosen base (group 32 -> 323 = new top parent; 321 -> 3211).
   const newSubBaseCode = newSubParentCode?.trim() || DEFAULT_SUPPLIER_PARENT_CODE;
 
-  const nextSubAccountCode = useMemo(() => {
-    const used = new Set(accounts.map((a) => a.code));
-    let n = 1;
-    while (used.has(`${newSubBaseCode}${n}`)) n += 1;
-    return `${newSubBaseCode}${n}`;
-  }, [accounts, newSubBaseCode]);
+  const nextSubAccountCode = useMemo(
+    () => nextCompactChildCode(newSubBaseCode, accounts.map((a) => a.code)),
+    [accounts, newSubBaseCode],
+  );
 
   // The 8-digit account number that will be assigned on save, under the chosen parent.
   const previewAccountNumber = useMemo(

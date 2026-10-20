@@ -23,6 +23,7 @@ import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
 import { isNetworkErrorMessage } from '@/lib/networkErrors';
 import { isCreditPaymentMethod } from '@/lib/saleOfflineGuard';
 import { timestampLocalDate } from '@/lib/workingDayAccess';
+import { nextEntityAccountCode } from '@/lib/entityAccounts';
 
 export type LoginErrorKind = 'credentials' | 'connection';
 
@@ -498,7 +499,6 @@ async function ensureSupplierSubAccountElectron(
 ): Promise<string | null> {
   if (!isElectronMode() || !supplierName) return null;
 
-  const ENTITY_ACCOUNT_CODE_LENGTH = 8;
   const SUPPLIER_GROUP_CODE = '32';
   const DEFAULT_SUPPLIER_PARENT_CODE = '321';
 
@@ -539,17 +539,10 @@ async function ensureSupplierSubAccountElectron(
     const childLevel = (Number(parent.data?.[0]?.level) || 2) + 1;
 
     const siblings = await ipcQuery<any>(
-      `SELECT code FROM chart_of_accounts WHERE code LIKE $1 AND is_header = false`,
+      `SELECT code, is_header FROM chart_of_accounts WHERE code LIKE $1`,
       [`${resolvedParentCode}%`]
     );
-    const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - resolvedParentCode.length;
-    const maxSeq = (siblings.data || []).reduce((max: number, row: any) => {
-      const c = String(row.code || '');
-      if (!c.startsWith(resolvedParentCode) || c.length <= resolvedParentCode.length) return max;
-      const parsed = Number(c.slice(resolvedParentCode.length));
-      return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
-    }, 0);
-    const code = `${resolvedParentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
+    const code = nextEntityAccountCode(resolvedParentCode, siblings.data || []);
 
     const insertResult = await ipcInsert('chart_of_accounts', {
       id: generateId(),

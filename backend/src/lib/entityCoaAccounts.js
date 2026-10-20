@@ -34,6 +34,34 @@ function nextEntityAccountCode(parentCode, existingCodes, nestedHeaderCodes) {
   return `${parentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
 }
 
+function isTruthyFlag(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function isActiveFlag(value) {
+  return value !== false && value !== 0 && value !== '0' && value !== 'false';
+}
+
+/** Compact 3211 / 3112 slot — used by old supplier leaves and new category headers. */
+function isCompactEntityCode(code) {
+  const c = String(code || '').trim();
+  if (c.startsWith(SUPPLIER_PARENT_CODE) && c.length > SUPPLIER_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH) {
+    return true;
+  }
+  if (c.startsWith(CLIENT_PARENT_CODE) && c.length > CLIENT_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH) {
+    return true;
+  }
+  return false;
+}
+
+function nextCompactChildCode(parentCode, existingCodes) {
+  const parent = String(parentCode || '').trim();
+  const used = new Set((existingCodes || []).map((c) => String(c || '').trim()));
+  let n = 1;
+  while (used.has(`${parent}${n}`)) n += 1;
+  return `${parent}${n}`;
+}
+
 /** 321 itself or a compact header under it (3211, 32111). Not an 8-digit supplier leaf. */
 function isSupplierCategoryParent(code) {
   const c = String(code || '').trim();
@@ -86,7 +114,6 @@ async function findEntityLeafCode(client, groupCode, parentCode, name, nif) {
      WHERE code LIKE $1
        AND code <> $2
        AND LENGTH(CAST(code AS TEXT)) > LENGTH($2)
-       AND LENGTH(CAST(code AS TEXT)) >= 8
        AND is_header IS NOT TRUE
        AND is_active IS NOT FALSE
      ORDER BY LENGTH(CAST(code AS TEXT)) DESC, code`,
@@ -137,7 +164,7 @@ async function reactivateEntityLeaf(client, groupCode, name) {
   const r = await client.query(
     `SELECT id, code, name FROM chart_of_accounts
      WHERE CAST(code AS TEXT) LIKE $1
-       AND LENGTH(CAST(code AS TEXT)) >= 8
+       AND LENGTH(CAST(code AS TEXT)) > 3
        AND is_header IS NOT TRUE
        AND is_active = false`,
     [`${groupCode}%`],
@@ -199,28 +226,42 @@ async function createEntityLeaf(client, opts) {
 
   const parentId = parent.rows[0].id;
   const childLevel = (parseInt(parent.rows[0].level, 10) || 2) + 1;
-  const seqResult = await client.query(
-    `SELECT code FROM chart_of_accounts WHERE parent_id = $1 AND is_header IS NOT TRUE`,
-    [parentId],
+  const usedRows = await client.query(
+    `SELECT code, is_header FROM chart_of_accounts WHERE CAST(code AS TEXT) LIKE $1`,
+    [`${resolvedParentCode}%`],
   );
-  const code = nextEntityAccountCode(resolvedParentCode, seqResult.rows.map((r) => r.code));
-
-  await client.query(
-    `INSERT INTO chart_of_accounts
-     (id, code, name, description, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, true, 0, 0)
-     ON CONFLICT (code) DO NOTHING`,
-    [
-      randomUUID(),
-      code,
-      normalizedName,
-      normalizedNif ? `NIF: ${normalizedNif}` : '',
-      accountType,
-      accountNature,
-      parentId,
-      childLevel,
-    ],
-  );
+  const existingCodes = (usedRows.rows || []).map((r) => String(r.code || ''));
+  const headerCodes = (usedRows.rows || [])
+    .filter((r) => isTruthyFlag(r.is_header))
+    .map((r) => String(r.code || ''));
+  let code = nextEntityAccountCode(resolvedParentCode, existingCodes, headerCodes);
+  let inserted = false;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await client.query(
+      `INSERT INTO chart_of_accounts
+       (id, code, name, description, account_type, account_nature, parent_id, level, is_header, is_active, opening_balance, current_balance)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, true, 0, 0)
+       ON CONFLICT (code) DO NOTHING`,
+      [
+        randomUUID(),
+        code,
+        normalizedName,
+        normalizedNif ? `NIF: ${normalizedNif}` : '',
+        accountType,
+        accountNature,
+        parentId,
+        childLevel,
+      ],
+    );
+    const mine = await findEntityLeafCode(client, groupCode, defaultParentCode, normalizedName, normalizedNif);
+    if (mine) {
+      inserted = true;
+      code = mine;
+      break;
+    }
+    existingCodes.push(code);
+    code = nextEntityAccountCode(resolvedParentCode, existingCodes, headerCodes);
+  }
 
   await runOptionalInSavepoint(client, 'coa_children_count', async () => {
     await client.query(
@@ -233,9 +274,12 @@ async function createEntityLeaf(client, opts) {
     console.warn(`[${logTag}] children_count update skipped:`, e.message);
   });
 
-  // Re-read in case ON CONFLICT skipped insert
   const created = await findEntityLeafCode(client, groupCode, defaultParentCode, normalizedName, normalizedNif);
-  const resolved = created || code;
+  const resolved = created || (inserted ? code : null);
+  if (!resolved) {
+    console.warn(`[${logTag}] Could not allocate a free leaf under ${resolvedParentCode} for ${normalizedName}`);
+    return null;
+  }
   console.log(`[${logTag}] Ensured sub-account ${resolved} — ${normalizedName}`);
   return resolved;
 }
@@ -323,6 +367,12 @@ function extractNifFromDescription(description) {
 
 function isEntityLedgerCode(code, groupCode) {
   const c = String(code || '').trim();
+  if (groupCode === SUPPLIER_GROUP_CODE) {
+    return c.startsWith(SUPPLIER_PARENT_CODE) && c.length > SUPPLIER_PARENT_CODE.length;
+  }
+  if (groupCode === CLIENT_GROUP_CODE) {
+    return c.startsWith(CLIENT_PARENT_CODE) && c.length > CLIENT_PARENT_CODE.length;
+  }
   return c.startsWith(groupCode) && c.length >= ENTITY_ACCOUNT_CODE_LENGTH;
 }
 
@@ -433,6 +483,111 @@ async function refreshChildrenCount(client, parentId) {
       [parentId],
     );
   }, () => {});
+}
+
+async function accountHasJournalLines(client, row) {
+  const entries = await client.query(
+    `SELECT id FROM journal_entry_lines
+      WHERE CAST(account_id AS TEXT) = CAST($1 AS TEXT)
+         OR CAST(account_id AS TEXT) = CAST($2 AS TEXT)
+      LIMIT 1`,
+    [row.id, row.code],
+  );
+  return (entries.rows || []).length > 0;
+}
+
+/**
+ * Move a compact 3211-style supplier/client leaf to an 8-digit code so 3211 can
+ * become a category header. Journals that stored the old PGC code are rewritten.
+ */
+async function recodeOccupyingLeaf(client, row) {
+  const code = String(row.code || '').trim();
+  const defaultParent = code.startsWith(CLIENT_PARENT_CODE) ? CLIENT_PARENT_CODE : SUPPLIER_PARENT_CODE;
+  const group = code.startsWith(CLIENT_PARENT_CODE) ? CLIENT_GROUP_CODE : SUPPLIER_GROUP_CODE;
+  let parentCode = defaultParent;
+  if (row.parent_id) {
+    const parent = await client.query(
+      'SELECT code FROM chart_of_accounts WHERE id = $1 LIMIT 1',
+      [row.parent_id],
+    );
+    const got = String(parent.rows?.[0]?.code || '').trim();
+    if (got && got.startsWith(group) && got !== group) parentCode = got;
+  }
+
+  const usedRows = await client.query(
+    `SELECT code, is_header FROM chart_of_accounts WHERE CAST(code AS TEXT) LIKE $1`,
+    [`${parentCode}%`],
+  );
+  const existingCodes = (usedRows.rows || [])
+    .map((r) => String(r.code || ''))
+    .filter((c) => c && c !== code);
+  const headerCodes = (usedRows.rows || [])
+    .filter((r) => isTruthyFlag(r.is_header))
+    .map((r) => String(r.code || ''));
+  const newCode = nextEntityAccountCode(parentCode, existingCodes, headerCodes);
+  const parent = await client.query(
+    'SELECT id FROM chart_of_accounts WHERE code = $1 LIMIT 1',
+    [parentCode],
+  );
+  await client.query(
+    `UPDATE chart_of_accounts
+        SET code = $1,
+            parent_id = COALESCE($2, parent_id),
+            is_header = false,
+            is_active = true,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = $3`,
+    [newCode, parent.rows?.[0]?.id || null, row.id],
+  );
+  await rewriteStoredSupplierAccountCode(client, code, newCode);
+  return { oldCode: code, newCode, id: row.id };
+}
+
+/**
+ * Decide how to take a COA code: insert, reactivate an unused row, or move an
+ * old compact supplier leaf (3211) to 32100001 so the number can be a category.
+ */
+async function claimChartAccountCode(client, opts) {
+  const code = String(opts?.code || '').trim();
+  const wantHeader = !!opts?.isHeader;
+  if (!code) throw new Error('Account code is required');
+
+  const existing = await client.query(
+    `SELECT id, code, name, description, is_active, is_header, parent_id
+       FROM chart_of_accounts WHERE code = $1 LIMIT 1`,
+    [code],
+  );
+  const row = existing.rows?.[0];
+  if (!row) return { action: 'insert' };
+
+  const header = isTruthyFlag(row.is_header);
+  const active = isActiveFlag(row.is_active);
+  const compactLeaf = isCompactEntityCode(row.code) && !header;
+
+  if (wantHeader && compactLeaf) {
+    const recoded = await recodeOccupyingLeaf(client, row);
+    return { action: 'insert', recoded };
+  }
+
+  if (!active) {
+    const busy = await accountHasJournalLines(client, row);
+    if (!busy) return { action: 'reuse', row };
+    if (compactLeaf) {
+      const recoded = await recodeOccupyingLeaf(client, row);
+      return { action: 'insert', recoded };
+    }
+  }
+
+  const used = await client.query('SELECT code FROM chart_of_accounts');
+  const parent = code.startsWith(SUPPLIER_PARENT_CODE) ? SUPPLIER_PARENT_CODE
+    : code.startsWith(CLIENT_PARENT_CODE) ? CLIENT_PARENT_CODE
+      : code.slice(0, Math.max(1, code.length - 1));
+  const suggestion = nextCompactChildCode(parent, (used.rows || []).map((r) => r.code));
+  const err = new Error(`A conta ${code} já existe (${row.name}). Tente ${suggestion}.`);
+  err.code = 'CODE_EXISTS';
+  err.existing = { code: row.code, name: row.name };
+  err.suggestion = suggestion;
+  throw err;
 }
 
 async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
@@ -566,6 +721,8 @@ module.exports = {
   SUPPLIER_PARENT_CODE,
   ENTITY_ACCOUNT_CODE_LENGTH,
   nextEntityAccountCode,
+  nextCompactChildCode,
+  isCompactEntityCode,
   isSupplierCategoryParent,
   ensureSupplierSubAccount,
   ensureClientSubAccount,
@@ -578,4 +735,6 @@ module.exports = {
   deleteLinkedEntityFromCoa,
   deactivateUnusedEntityLeaf,
   moveEntityLeafToParent,
+  recodeOccupyingLeaf,
+  claimChartAccountCode,
 };

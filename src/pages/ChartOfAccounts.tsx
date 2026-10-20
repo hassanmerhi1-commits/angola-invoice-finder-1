@@ -85,8 +85,21 @@ const isEntityRegistryParent = (code: string) =>
 
 // No-dot child codes: a child of "31" becomes "311", "312", … (next free numeric suffix).
 // Leaf entries under an entity registry are zero-padded to an 8-digit code; headers stay compact.
-const buildSuggestedChildCode = (parentCode: string, siblingCodes: string[], isHeader = false) => {
+const buildSuggestedChildCode = (
+  parentCode: string,
+  siblingCodes: string[],
+  isHeader = false,
+  allCodes?: string[],
+) => {
   const entityParent = isEntityRegistryParent(parentCode);
+  const used = new Set((allCodes && allCodes.length ? allCodes : siblingCodes).map(String));
+  // Compact category slots (3211) must skip ANY existing code — including old 4-digit
+  // supplier leaves that used to occupy 3211 / 3212.
+  if (isHeader && entityParent) {
+    let n = 1;
+    while (used.has(`${parentCode}${n}`)) n += 1;
+    return `${parentCode}${n}`;
+  }
   const nextIndex = siblingCodes.reduce((max, code) => {
     if (!code.startsWith(parentCode) || code.length <= parentCode.length) return max;
     // Under a customer/supplier registry parent, header sub-accounts (compact, e.g. 3211) and
@@ -425,7 +438,7 @@ export default function ChartOfAccounts() {
         ...nextForm,
         parent_id: parent.id,
         level: parent.level + 1,
-        code: buildSuggestedChildCode(parent.code, children.map(c => c.code), nextForm.is_header),
+        code: buildSuggestedChildCode(parent.code, children.map(c => c.code), nextForm.is_header, accounts.map((a) => a.code)),
         account_type: parent.account_type,
         account_nature: parent.account_nature,
       };
@@ -493,7 +506,7 @@ export default function ChartOfAccounts() {
       ? accounts.filter((a) => a.parent_id === parent.id && a.is_active !== false)
       : [];
     setFormData({
-      code: parent ? buildSuggestedChildCode(parent.code, children.map((c) => c.code), true) : '3211',
+      code: parent ? buildSuggestedChildCode(parent.code, children.map((c) => c.code), true, accounts.map((a) => a.code)) : '3211',
       name: '',
       description: '',
       nif: '',
@@ -686,7 +699,7 @@ export default function ChartOfAccounts() {
     const parent = accounts.find(a => a.id === formData.parent_id);
     if (!parent) return buildSuggestedRootCode(accounts.filter(a => !a.parent_id).map(a => a.code));
     const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
-    return buildSuggestedChildCode(parent.code, children.map(c => c.code), true);
+    return buildSuggestedChildCode(parent.code, children.map(c => c.code), true, accounts.map((a) => a.code));
   })();
 
   // Open the inline "+" form pre-filled with the suggested compact header code (editable).
@@ -724,7 +737,7 @@ export default function ChartOfAccounts() {
         ...prev,
         parent_id: created.id,
         level: (created.level ?? 1) + 1,
-        code: buildSuggestedChildCode(created.code, [], prev.is_header),
+        code: buildSuggestedChildCode(created.code, [], prev.is_header, accounts.map((a) => a.code).concat(created.code)),
         account_type: created.account_type,
         account_nature: created.account_nature,
       }));
@@ -1085,7 +1098,7 @@ export default function ChartOfAccounts() {
                             ...prev,
                             parent_id: parentId,
                             level: parent.level + 1,
-                            code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header),
+                            code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header, accounts.map((a) => a.code)),
                             account_type: parent.account_type,
                             account_nature: parent.account_nature,
                           };
@@ -1118,7 +1131,7 @@ export default function ChartOfAccounts() {
                   return {
                     ...prev,
                     is_header: isHeader,
-                    code: buildSuggestedChildCode(parent.code, children.map(c => c.code), isHeader),
+                    code: buildSuggestedChildCode(parent.code, children.map(c => c.code), isHeader, accounts.map((a) => a.code)),
                   };
                 })} />
                 <Label htmlFor="is_header" className="text-sm">{t.chartOfAccountsUi.headerAccountLabel}</Label>

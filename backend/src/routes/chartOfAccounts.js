@@ -459,19 +459,86 @@ module.exports = function(broadcastTable) {
   router.post('/', requirePermission('accounting_create'), async (req, res) => {
     try {
       const { 
-        code, name, description, account_type, account_nature,
+        name, description, account_type, account_nature,
         parent_id, level, is_header, opening_balance, branch_id 
       } = req.body;
+      let { code } = req.body;
+      const wantHeader = is_header === true || is_header === 1 || is_header === 'true';
 
       // Validate required fields
       if (!code || !name || !account_type || !account_nature) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      // Check for duplicate code
-      const existing = await db.query('SELECT id FROM chart_of_accounts WHERE code = $1', [code]);
-      if (existing.rows.length > 0) {
-        return res.status(400).json({ error: 'Account code already exists' });
+      const {
+        claimChartAccountCode,
+        isCompactEntityCode,
+        nextEntityAccountCode,
+        isSupplierCategoryParent,
+        SUPPLIER_PARENT_CODE,
+        CLIENT_PARENT_CODE,
+      } = require('../lib/entityCoaAccounts');
+
+      // A typed 3211 on a supplier/client leaf is the old compact number. New leaves
+      // are 8 digits (32100001). Categories keep the compact code.
+      if (!wantHeader && isCompactEntityCode(String(code))) {
+        let parentCode = '';
+        if (parent_id) {
+          const parentRow = await db.query(
+            'SELECT code FROM chart_of_accounts WHERE id = $1 LIMIT 1',
+            [parent_id],
+          );
+          parentCode = String(parentRow.rows[0]?.code || '').trim();
+        }
+        let resolvedParent = '';
+        if (parentCode === '32') resolvedParent = SUPPLIER_PARENT_CODE;
+        else if (parentCode === '31') resolvedParent = CLIENT_PARENT_CODE;
+        else if (isSupplierCategoryParent(parentCode) || parentCode === CLIENT_PARENT_CODE || parentCode.startsWith('311')) {
+          resolvedParent = parentCode;
+        } else if (String(code).startsWith('311')) {
+          resolvedParent = CLIENT_PARENT_CODE;
+        } else if (String(code).startsWith('321')) {
+          resolvedParent = SUPPLIER_PARENT_CODE;
+        }
+        if (resolvedParent) {
+          const used = await db.query(
+            'SELECT code, is_header FROM chart_of_accounts WHERE CAST(code AS TEXT) LIKE $1',
+            [`${resolvedParent}%`],
+          );
+          code = nextEntityAccountCode(
+            resolvedParent,
+            (used.rows || []).map((r) => r.code),
+            (used.rows || []).filter((r) => r.is_header === true || r.is_header === 1).map((r) => r.code),
+          );
+        }
+      }
+
+      const claim = await claimChartAccountCode(db, { code, isHeader: wantHeader });
+      if (claim.action === 'reuse' && claim.row?.id) {
+        const reused = await db.query(`
+          UPDATE chart_of_accounts SET
+            name = $1,
+            description = COALESCE($2, description),
+            account_type = $3,
+            account_nature = $4,
+            parent_id = $5,
+            level = COALESCE($6, level),
+            is_header = $7,
+            is_active = true,
+            opening_balance = COALESCE($8, opening_balance),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $9
+          RETURNING *
+        `, [name, description, account_type, account_nature, parent_id || null, level || 1, wantHeader, opening_balance || 0, claim.row.id]);
+        await broadcastTable('chart_of_accounts');
+        auditErpSafe(req, {
+          table: 'chart_of_accounts',
+          id: reused.rows[0]?.id,
+          action: 'create',
+          description: `Conta reactivada: ${code} — ${name}`,
+          newValues: { code, name, account_type, account_nature },
+        });
+        return res.status(201).json(reused.rows[0]);
       }
 
       const result = await db.query(`
@@ -479,7 +546,7 @@ module.exports = function(broadcastTable) {
         (code, name, description, account_type, account_nature, parent_id, level, is_header, opening_balance, current_balance, branch_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
         RETURNING *
-      `, [code, name, description, account_type, account_nature, parent_id, level || 1, is_header || false, opening_balance || 0, branch_id]);
+      `, [code, name, description, account_type, account_nature, parent_id, level || 1, wantHeader, opening_balance || 0, branch_id]);
 
       await broadcastTable('chart_of_accounts');
       auditErpSafe(req, {
@@ -492,6 +559,12 @@ module.exports = function(broadcastTable) {
       res.status(201).json(result.rows[0]);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
+      if (error.code === 'CODE_EXISTS' || /já existe|already exists/i.test(String(error.message || ''))) {
+        return res.status(400).json({ error: error.message || 'Account code already exists' });
+      }
+      if (error.code === '23505' || error.code === 'SQLITE_CONSTRAINT') {
+        return res.status(400).json({ error: 'Account code already exists' });
+      }
       res.status(500).json({ error: 'Failed to create account' });
     }
   });
