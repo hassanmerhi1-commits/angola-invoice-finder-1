@@ -54,6 +54,14 @@
       "to": "repair-server-schema-now.ps1"
     },
     {
+      "from": "scripts/nexor-apply-shim.cmd",
+      "to": "nexor-apply-shim.cmd"
+    },
+    {
+      "from": "scripts/plant-nexor-update-hook.cmd",
+      "to": "plant-nexor-update-hook.cmd"
+    },
+    {
       "from": "public/splash.png",
       "to": "splash.png"
     },

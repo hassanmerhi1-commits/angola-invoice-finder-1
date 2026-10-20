@@ -211,6 +211,7 @@ function isViableBackendEntry(entryPath) {
     const required = [
       path.join(cwd, 'node_modules', 'dotenv'),
       path.join(cwd, 'src', 'lib', 'sqlDialect.js'),
+      path.join(cwd, 'src', 'routes', 'consistency.js'),
       path.join(cwd, 'scripts', 'lib', 'integrityRunner.js'),
     ];
     return required.every((p) => fs.existsSync(p));

@@ -332,8 +332,20 @@ try {
 
   $srcLive = Join-Path $BackendDir 'src'
   $webLive = Join-Path $BackendDir 'webapp'
-  if (Test-Path -LiteralPath $srcLive) { Remove-Item -LiteralPath $srcLive -Recurse -Force }
-  Copy-Tree $srcFrom $srcLive
+  $srcStaging = Join-Path $BackendDir 'src.nexor-new'
+  $srcOld = Join-Path $BackendDir 'src.nexor-old'
+  if (Test-Path -LiteralPath $srcStaging) { Remove-Item -LiteralPath $srcStaging -Recurse -Force }
+  Copy-Tree $srcFrom $srcStaging
+  $consistency = Join-Path $srcStaging 'routes\consistency.js'
+  $stagedServer = Join-Path $srcStaging 'server.js'
+  if (-not (Test-Path -LiteralPath $stagedServer)) { throw 'Pack copy is missing backend/src/server.js' }
+  if (-not (Test-Path -LiteralPath $consistency)) { throw 'Pack copy is missing backend/src/routes/consistency.js' }
+  if (Test-Path -LiteralPath $srcOld) { Remove-Item -LiteralPath $srcOld -Recurse -Force }
+  if (Test-Path -LiteralPath $srcLive) { Rename-Item -LiteralPath $srcLive -NewName 'src.nexor-old' }
+  Rename-Item -LiteralPath $srcStaging -NewName 'src'
+  if (Test-Path -LiteralPath $srcOld) {
+    try { Remove-Item -LiteralPath $srcOld -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+  }
 
   if (Test-Path -LiteralPath $webLive) { Remove-Item -LiteralPath $webLive -Recurse -Force }
   Copy-Tree $webFrom $webLive

@@ -92,6 +92,10 @@ const ensure = path.join(root, 'backend', 'scripts', 'ensure-server-schema.js');
 if (fs.existsSync(ensure)) {
   fs.copyFileSync(ensure, path.join(staging, 'backend', 'scripts', 'ensure-server-schema.js'));
 }
+const scriptsLib = path.join(root, 'backend', 'scripts', 'lib');
+if (fs.existsSync(path.join(scriptsLib, 'integrityRunner.js'))) {
+  copyFiltered(scriptsLib, path.join(staging, 'backend', 'scripts', 'lib'));
+}
 const applyScript = path.join(root, 'scripts', 'apply-nexor-server-update.ps1');
 if (fs.existsSync(applyScript)) {
   fs.copyFileSync(applyScript, path.join(staging, 'scripts', 'apply-nexor-server-update.ps1'));

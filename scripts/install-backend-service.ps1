@@ -106,12 +106,37 @@ Right-click PowerShell and choose "Run as administrator", then re-run.
 }
 Write-Ok 'Running elevated'
 
+function Test-CompleteBackend([string]$dir) {
+  if (-not $dir) { return $false }
+  foreach ($rel in @(
+      'src\server.js',
+      'src\routes\consistency.js',
+      'src\lib\sqlDialect.js',
+      'scripts\lib\integrityRunner.js',
+      'node_modules\dotenv'
+    )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $dir $rel))) { return $false }
+  }
+  return $true
+}
+
 if ($BackendDir) {
   $backendDir = [System.IO.Path]::GetFullPath($BackendDir)
 } else {
   $installBackend = Join-Path $InstallDir 'backend'
-  if (Test-Path -LiteralPath (Join-Path $installBackend 'src\server.js')) {
+  $packagedBackend = 'C:\Program Files\NEXOR ERP\resources\backend'
+  if ($env:ProgramFiles) {
+    $packagedBackend = Join-Path $env:ProgramFiles 'NEXOR ERP\resources\backend'
+  }
+  if (Test-CompleteBackend $installBackend) {
     $backendDir = [System.IO.Path]::GetFullPath($installBackend)
+  } elseif (Test-CompleteBackend $packagedBackend) {
+    $backendDir = [System.IO.Path]::GetFullPath($packagedBackend)
+    Write-Warn2 "C:\NEXOR ERP\backend is missing files (for example routes\consistency.js)."
+    Write-Warn2 "Using the complete installer backend: $backendDir"
+  } elseif (Test-Path -LiteralPath (Join-Path $installBackend 'src\server.js')) {
+    $backendDir = [System.IO.Path]::GetFullPath($installBackend)
+    Write-Warn2 "Backend at $backendDir looks incomplete — NexorBackend may fail to start."
   } else {
     $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
     $backendDir = Join-Path $repoRoot 'backend'

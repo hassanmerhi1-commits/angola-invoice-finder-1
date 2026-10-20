@@ -60,6 +60,21 @@ module.exports = async function afterPack(context) {
 
   console.log('[after-pack-rebuild-backend] OK');
 
+  try {
+    const stamp = {
+      product: 'nexor-erp',
+      appVersion: '1.3.8',
+      commit: String(process.env.GITHUB_SHA || '').trim(),
+      buildId: String(process.env.GITHUB_SHA || '').trim(),
+      builtAt: new Date().toISOString(),
+    };
+    if (stamp.commit) {
+      fs.writeFileSync(path.join(backendRoot, 'BUILD_STAMP.json'), `${JSON.stringify(stamp, null, 2)}\n`);
+    }
+  } catch (e) {
+    console.warn('[after-pack-rebuild-backend] BUILD_STAMP skipped:', e.message);
+  }
+
   const ensureUpdaterDeps = require('./after-pack-ensure-updater-deps.cjs');
   await ensureUpdaterDeps(context);
 };

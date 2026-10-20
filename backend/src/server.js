@@ -4,6 +4,58 @@
 const path = require('path');
 const fs = require('fs');
 
+/**
+ * NSSM often starts C:\NEXOR ERP\backend. A half-copied overlay can have a new
+ * server.js that requires files (e.g. routes/consistency.js) the copy never
+ * finished. Prefer the complete installer tree instead of crashing.
+ * Keep this list in sync with src/lib/completeBackend.js (inline so this file
+ * can redirect even when lib/ is missing from the overlay).
+ */
+function backendTreeComplete(backendDir) {
+  const rels = [
+    'src/server.js',
+    'src/routes/consistency.js',
+    'src/lib/sqlDialect.js',
+    'scripts/lib/integrityRunner.js',
+    'node_modules/dotenv',
+  ];
+  return rels.every((rel) => fs.existsSync(path.join(backendDir, rel)));
+}
+
+function findPackagedCompleteBackend() {
+  const pf = process.env.ProgramFiles || 'C:\\Program Files';
+  const dirs = [
+    path.join(pf, 'NEXOR ERP', 'resources', 'backend'),
+    'C:\\Program Files\\NEXOR ERP\\resources\\backend',
+    'C:\\Program Files (x86)\\NEXOR ERP\\resources\\backend',
+  ];
+  const seen = new Set();
+  for (const dir of dirs) {
+    const resolved = path.resolve(dir);
+    const key = resolved.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (backendTreeComplete(resolved)) return resolved;
+  }
+  return null;
+}
+
+if (process.env.NEXOR_BACKEND_REDIRECTED !== '1') {
+  const selfBackend = path.resolve(__dirname, '..');
+  if (!backendTreeComplete(selfBackend)) {
+    const packaged = findPackagedCompleteBackend();
+    if (packaged && path.resolve(packaged) !== selfBackend) {
+      const entry = path.join(packaged, 'src', 'server.js');
+      console.warn(`[NEXOR] Incomplete backend at ${selfBackend} — starting ${entry}`);
+      process.env.NEXOR_BACKEND_REDIRECTED = '1';
+      process.env.NEXOR_BACKEND_ENTRY = entry;
+      try { process.chdir(packaged); } catch (_) { /* still require by absolute path */ }
+      require(entry);
+      return;
+    }
+  }
+}
+
 /** Load C:\NEXOR ERP\database.env before db.js reads DATABASE_URL / DB_ENGINE. */
 function loadInstallDatabaseEnv() {
   const installDir = process.env.NEXOR_INSTALL_DIR || 'C:\\NEXOR ERP';
@@ -455,7 +507,9 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
     }
     try {
       if (db?.engine === 'postgres' && process.platform === 'win32') {
-        require('./lib/serverUpdate').ensureApplyLaunchShim();
+        const update = require('./lib/serverUpdate');
+        update.finalizeCopiedUpdateOnBoot();
+        update.ensureApplyLaunchShim();
       }
     } catch (_) { /* optional city-server apply shim */ }
     startReplicatorWorker(4000);

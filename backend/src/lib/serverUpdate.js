@@ -14,6 +14,12 @@ const https = require('https');
 const path = require('path');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { promisify } = require('util');
+const {
+  backendLooksComplete,
+  findPackagedCompleteBackend,
+  assertCopiedSrcComplete,
+  missingCopiedSrcFiles,
+} = require('./completeBackend');
 
 const execFileAsync = promisify(execFile);
 
@@ -40,7 +46,7 @@ const ALLOWED_REL_EXACT = new Set([
   'scripts/apply-published-pack.ps1',
 ]);
 
-const ALLOWED_REL_PREFIXES = ['webapp/', 'backend/src/'];
+const ALLOWED_REL_PREFIXES = ['webapp/', 'backend/src/', 'backend/scripts/lib/'];
 
 const ALLOWED_EXTENSIONS = new Set([
   '.js', '.cjs', '.mjs', '.sql', '.json', '.html', '.css',
@@ -643,6 +649,83 @@ async function extractAndValidatePack(zipPath, extractDir, expected) {
   return { root, manifest: inner.manifest };
 }
 
+function copyDirOverwrite(fromDir, toDir, skipNames) {
+  if (!fs.existsSync(fromDir)) throw new Error(`Missing pack folder: ${fromDir}`);
+  const skip = skipNames instanceof Set ? skipNames : new Set(skipNames || []);
+  fs.mkdirSync(toDir, { recursive: true });
+  for (const name of fs.readdirSync(fromDir)) {
+    if (skip.has(name)) continue;
+    const src = path.join(fromDir, name);
+    const dest = path.join(toDir, name);
+    if (fs.statSync(src).isDirectory()) copyDirOverwrite(src, dest);
+    else fs.copyFileSync(src, dest);
+  }
+}
+
+function copyPackOntoLiveBackend(extractRoot, backendDir) {
+  const srcFrom = path.join(extractRoot, 'backend', 'src');
+  const webFrom = path.join(extractRoot, 'webapp');
+  const srcServer = path.join(srcFrom, 'server.js');
+  if (!fs.existsSync(srcServer)) {
+    throw new Error('Pack is missing backend/src/server.js');
+  }
+  if (!fs.existsSync(path.join(webFrom, 'index.html'))) {
+    throw new Error('Pack is missing webapp/index.html');
+  }
+  const extractFull = path.resolve(extractRoot).toLowerCase();
+  const backendFull = path.resolve(backendDir).toLowerCase();
+  if (extractFull === backendFull || extractFull.startsWith(`${backendFull}${path.sep.toLowerCase()}`)) {
+    throw new Error('Extract folder must not sit inside the live backend folder');
+  }
+  const destSrc = path.join(backendDir, 'src');
+  // Copy routes and other src files first. server.js last — a crash mid-copy
+  // must not leave a new server.js requiring files that were never copied.
+  copyDirOverwrite(srcFrom, destSrc, new Set(['server.js']));
+  copyDirOverwrite(webFrom, path.join(backendDir, 'webapp'));
+  for (const name of ['package.json', 'package-lock.json', 'BUILD_STAMP.json']) {
+    const from = path.join(extractRoot, 'backend', name);
+    if (fs.existsSync(from)) fs.copyFileSync(from, path.join(backendDir, name));
+  }
+  const scriptsLibFrom = path.join(extractRoot, 'backend', 'scripts', 'lib');
+  if (fs.existsSync(scriptsLibFrom)) {
+    copyDirOverwrite(scriptsLibFrom, path.join(backendDir, 'scripts', 'lib'));
+  }
+  const ensureFrom = path.join(extractRoot, 'backend', 'scripts', 'ensure-server-schema.js');
+  if (fs.existsSync(ensureFrom)) {
+    const dest = path.join(backendDir, 'scripts', 'ensure-server-schema.js');
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(ensureFrom, dest);
+  }
+  const missingBeforeServer = missingCopiedSrcFiles(srcFrom, backendDir)
+    .filter((rel) => rel !== 'src/server.js');
+  if (missingBeforeServer.length) {
+    throw new Error(`Update copy is incomplete (missing ${missingBeforeServer[0]})`);
+  }
+  fs.copyFileSync(srcServer, path.join(destSrc, 'server.js'));
+  assertCopiedSrcComplete(srcFrom, backendDir);
+  return backendDir;
+}
+
+function finalizeCopiedUpdateOnBoot() {
+  const job = readStatus();
+  if (!job || !isBusyPhase(job.phase)) return job;
+  const stamp = readBuildStampFiles();
+  const copied = job.filesCopied === true
+    && stamp?.commit
+    && job.buildId
+    && isSameBuild(stamp.commit, job.buildId);
+  if (!copied) return job;
+  releaseLock();
+  return writeStatus({
+    phase: 'success',
+    message: 'NEXOR was updated.',
+    ok: true,
+    percent: 100,
+    finishedAt: new Date().toISOString(),
+    buildId: stamp.commit,
+  });
+}
+
 function lockfileChanged(extractRoot, backendDir) {
   const incoming = path.join(extractRoot, 'backend', 'package-lock.json');
   const current = path.join(backendDir, 'package-lock.json');
@@ -802,9 +885,16 @@ function readNssmAppDirectory() {
 
 function resolveLiveBackendDir() {
   const nssmDir = readNssmAppDirectory();
+  // Updates still target the folder NSSM actually starts, even if it is an
+  // incomplete overlay — the copy is what repairs it. Start-up prefers a
+  // complete tree (see server.js redirect + findPackagedCompleteBackend).
   if (nssmDir) return nssmDir;
   const running = backendRootFromLib();
-  if (fs.existsSync(path.join(running, 'src', 'server.js'))) return running;
+  if (backendLooksComplete(running) || fs.existsSync(path.join(running, 'src', 'server.js'))) {
+    return running;
+  }
+  const packaged = findPackagedCompleteBackend();
+  if (packaged) return packaged;
   const installed = path.join(installDir(), 'backend');
   if (fs.existsSync(path.join(installed, 'src', 'server.js'))) return installed;
   return running;
@@ -814,7 +904,7 @@ function applyHasTakenOver(job) {
   if (!job) return false;
   if (job.applyAlive === true) return true;
   const msg = String(job.message || '');
-  if (/Updater is running|Backing up|Stopping NexorBackend|Files copied|Apply continues|Starting NexorBackend|Updating the database/i.test(msg)) {
+  if (/Updater is running|Backing up|Stopping NexorBackend|Apply continues|Starting NexorBackend|Updating the database/i.test(msg)) {
     return true;
   }
   if (job.phase === 'success' || job.phase === 'failed') return true;
@@ -996,9 +1086,19 @@ async function runApplyJob(pre) {
 
   writeStatus({
     phase: 'applying',
-    message: 'Starting the updater…',
+    message: 'Copying files onto this server…',
     needNpmCi,
-    percent: 52,
+    percent: 55,
+    buildId: latest.buildId,
+  });
+  copyPackOntoLiveBackend(extracted.root, pre.backendDir);
+  writeStatus({
+    phase: 'applying',
+    message: 'Files copied. Restarting the NEXOR service…',
+    needNpmCi,
+    filesCopied: true,
+    percent: 80,
+    buildId: latest.buildId,
   });
 
   const pid = spawnApplyScript({
@@ -1010,15 +1110,25 @@ async function runApplyJob(pre) {
     healthUrl,
   });
 
-  const taken = await waitForApplyTakeover(45000);
-  if (!taken) {
-    throw new Error('The updater did not start. Click Update NEXOR again.');
-  }
-  if (taken.phase === 'failed') {
+  const taken = await waitForApplyTakeover(20000);
+  if (taken && taken.phase === 'failed') {
     throw new Error(taken.message || taken.error || 'The updater failed');
   }
-  if (taken.applyPid == null && pid) {
-    writeStatus({ applyPid: pid });
+  if (taken && taken.applyPid == null && pid) {
+    writeStatus({ applyPid: pid, filesCopied: true });
+  }
+  if (!taken) {
+    writeStatus({
+      phase: 'restarting',
+      message: 'Files copied. Restarting the NEXOR service…',
+      filesCopied: true,
+      applyPid: pid || 0,
+      buildId: latest.buildId,
+      percent: 88,
+    });
+    if (process.env.NEXOR_APPLY_NO_EXIT !== '1') {
+      setTimeout(() => process.exit(0), 800);
+    }
   }
 }
 
@@ -1096,4 +1206,8 @@ module.exports = {
   isLaunchStuckJob,
   resolveLiveBackendDir,
   ensureApplyLaunchShim,
+  copyPackOntoLiveBackend,
+  finalizeCopiedUpdateOnBoot,
+  backendLooksComplete,
+  findPackagedCompleteBackend,
 };

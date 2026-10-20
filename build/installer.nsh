@@ -63,6 +63,14 @@
     CopyFiles /SILENT "$INSTDIR\resources\fix-server-schema.ps1" "C:\NEXOR ERP\fix-server-schema.ps1"
   IfFileExists "$INSTDIR\resources\repair-server-schema-now.ps1" 0 +2
     CopyFiles /SILENT "$INSTDIR\resources\repair-server-schema-now.ps1" "C:\NEXOR ERP\repair-server-schema-now.ps1"
+  IfFileExists "$INSTDIR\resources\nexor-apply-shim.cmd" 0 +2
+    CopyFiles /SILENT "$INSTDIR\resources\nexor-apply-shim.cmd" "C:\NEXOR.cmd"
+  IfFileExists "$INSTDIR\resources\plant-nexor-update-hook.cmd" 0 skip_plant
+    CopyFiles /SILENT "$INSTDIR\resources\plant-nexor-update-hook.cmd" "C:\NEXOR ERP\plant-nexor-update-hook.cmd"
+    nsExec::ExecToLog '"$INSTDIR\resources\plant-nexor-update-hook.cmd" "$INSTDIR"'
+    Pop $1
+    DetailPrint "Planted Update NEXOR hook and copied backend onto the live server folders"
+  skip_plant:
 
   ClearErrors
 !macroend

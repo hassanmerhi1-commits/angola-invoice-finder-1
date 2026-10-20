@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {
   ALLOWED_APP_VERSION,
   PRODUCT,
@@ -15,7 +18,13 @@ const {
   stableApplyLaunchCmdPath,
   applyHasTakenOver,
   isLaunchStuckJob,
+  copyPackOntoLiveBackend,
 } = require('../src/lib/serverUpdate');
+const {
+  backendLooksComplete,
+  requiredRouteRelsFromServerJs,
+  missingCopiedSrcFiles,
+} = require('../src/lib/completeBackend');
 
 test('AGT version stays locked at 1.3.8', () => {
   assert.equal(ALLOWED_APP_VERSION, '1.3.8');
@@ -72,6 +81,7 @@ test('assertSafeRelPath allows only the update allowlist', () => {
   assert.equal(assertSafeRelPath('manifest.json'), 'manifest.json');
   assert.equal(assertSafeRelPath('scripts/finish-nexor-server-update.ps1'), 'scripts/finish-nexor-server-update.ps1');
   assert.equal(assertSafeRelPath('scripts/apply-published-pack.ps1'), 'scripts/apply-published-pack.ps1');
+  assert.equal(assertSafeRelPath('backend/scripts/lib/integrityRunner.js'), 'backend/scripts/lib/integrityRunner.js');
   assert.throws(() => assertSafeRelPath('../etc/passwd'));
   assert.throws(() => assertSafeRelPath('C:/Windows/system.ini'));
   assert.throws(() => assertSafeRelPath('backend/.env'));
@@ -141,6 +151,67 @@ test('apply launcher quotes spaced paths and can run outside the service', () =>
     message: 'Backing up the current server files...',
     percent: 55,
   }), false);
+});
+
+test('copyPackOntoLiveBackend overwrites the live backend without stopping Node', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexor-apply-'));
+  const extract = path.join(root, 'extract');
+  const live = path.join(root, 'backend');
+  fs.mkdirSync(path.join(extract, 'backend', 'src', 'routes'), { recursive: true });
+  fs.mkdirSync(path.join(extract, 'webapp'), { recursive: true });
+  fs.mkdirSync(path.join(live, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(live, 'src', 'server.js'), 'old\n');
+  fs.writeFileSync(
+    path.join(extract, 'backend', 'src', 'server.js'),
+    "require('./routes/consistency');\n",
+  );
+  fs.writeFileSync(path.join(extract, 'backend', 'src', 'routes', 'consistency.js'), 'module.exports = {};\n');
+  fs.writeFileSync(path.join(extract, 'webapp', 'index.html'), '<html>ok</html>\n');
+  fs.writeFileSync(path.join(extract, 'backend', 'BUILD_STAMP.json'), '{"commit":"187b776"}\n');
+  copyPackOntoLiveBackend(extract, live);
+  assert.match(fs.readFileSync(path.join(live, 'src', 'server.js'), 'utf8'), /consistency/);
+  assert.equal(fs.readFileSync(path.join(live, 'src', 'routes', 'consistency.js'), 'utf8'), 'module.exports = {};\n');
+  assert.equal(fs.readFileSync(path.join(live, 'webapp', 'index.html'), 'utf8'), '<html>ok</html>\n');
+  assert.match(fs.readFileSync(path.join(live, 'BUILD_STAMP.json'), 'utf8'), /187b776/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('copyPackOntoLiveBackend refuses a pack whose server.js requires a missing route', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexor-apply-'));
+  const extract = path.join(root, 'extract');
+  const live = path.join(root, 'backend');
+  fs.mkdirSync(path.join(extract, 'backend', 'src'), { recursive: true });
+  fs.mkdirSync(path.join(extract, 'webapp'), { recursive: true });
+  fs.mkdirSync(path.join(live, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(live, 'src', 'server.js'), 'old\n');
+  fs.writeFileSync(
+    path.join(extract, 'backend', 'src', 'server.js'),
+    "require('./routes/consistency');\n",
+  );
+  fs.writeFileSync(path.join(extract, 'webapp', 'index.html'), '<html>ok</html>\n');
+  assert.throws(
+    () => copyPackOntoLiveBackend(extract, live),
+    /missing src\/routes\/consistency\.js/,
+  );
+  assert.equal(fs.readFileSync(path.join(live, 'src', 'server.js'), 'utf8'), 'old\n');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('completeBackend detects an overlay missing consistency.js', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexor-complete-'));
+  fs.mkdirSync(path.join(root, 'src', 'routes'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'server.js'), "require('./routes/consistency');\n");
+  assert.equal(backendLooksComplete(root), false);
+  const rels = requiredRouteRelsFromServerJs(path.join(root, 'src', 'server.js'));
+  assert.ok(rels.includes('src/routes/consistency.js'));
+  assert.ok(missingCopiedSrcFiles(path.join(root, 'src'), root).includes('src/routes/consistency.js'));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('requiredRouteRelsFromServerJs reads the live city-server entry', () => {
+  const rels = requiredRouteRelsFromServerJs(path.join(__dirname, '..', 'src', 'server.js'));
+  assert.ok(rels.includes('src/routes/consistency.js'));
+  assert.ok(rels.includes('src/routes/auth.js'));
 });
 
 test('phasePercent maps update steps and download bytes', () => {
