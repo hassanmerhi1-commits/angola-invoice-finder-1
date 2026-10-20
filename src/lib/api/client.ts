@@ -3062,6 +3062,7 @@ export const api = {
           buildId: string | null;
           buildIdShort: string | null;
           builtAt: string | null;
+          backendDir?: string | null;
         };
         latest: {
           buildId: string;

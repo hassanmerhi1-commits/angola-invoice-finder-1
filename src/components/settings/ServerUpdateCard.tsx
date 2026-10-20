@@ -220,6 +220,11 @@ export function ServerUpdateCard() {
             <div className="text-muted-foreground">{ui.currentBuild}</div>
             <div className="font-mono font-medium">{currentLabel}</div>
             {currentWhen ? <div className="text-xs text-muted-foreground">{currentWhen}</div> : null}
+            {status?.current?.backendDir ? (
+              <div className="break-all text-xs text-muted-foreground">
+                {ui.runningFrom}: {status.current.backendDir}
+              </div>
+            ) : null}
           </div>
           <div>
             <div className="text-muted-foreground">{ui.latestBuild}</div>

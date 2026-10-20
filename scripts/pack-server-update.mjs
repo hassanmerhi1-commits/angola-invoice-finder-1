@@ -100,6 +100,10 @@ const finishScript = path.join(root, 'scripts', 'finish-nexor-server-update.ps1'
 if (fs.existsSync(finishScript)) {
   fs.copyFileSync(finishScript, path.join(staging, 'scripts', 'finish-nexor-server-update.ps1'));
 }
+const publishedPackScript = path.join(root, 'scripts', 'apply-published-pack.ps1');
+if (fs.existsSync(publishedPackScript)) {
+  fs.copyFileSync(publishedPackScript, path.join(staging, 'scripts', 'apply-published-pack.ps1'));
+}
 
 fs.writeFileSync(path.join(staging, 'backend', 'BUILD_STAMP.json'), `${JSON.stringify(stamp, null, 2)}\n`);
 fs.writeFileSync(

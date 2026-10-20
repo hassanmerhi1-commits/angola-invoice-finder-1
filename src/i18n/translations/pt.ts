@@ -3691,6 +3691,7 @@ export const pt: TranslationKeys = {
       versionLocked: "Versão 1.3.8",
       thisServer: "Este servidor da cidade",
       currentBuild: "Build em execução",
+      runningFrom: "A correr de",
       latestBuild: "Build publicada",
       upToDate: "Este servidor já tem o pacote mais recente",
       check: "Verificar actualização",

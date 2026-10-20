@@ -3688,6 +3688,7 @@ export const en = {
       versionLocked: "Version 1.3.8",
       thisServer: "This city server",
       currentBuild: "Running build",
+      runningFrom: "Running from",
       latestBuild: "Published build",
       upToDate: "This server is already on the latest pack",
       check: "Check for update",

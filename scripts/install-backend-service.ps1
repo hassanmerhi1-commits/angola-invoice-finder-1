@@ -109,8 +109,13 @@ Write-Ok 'Running elevated'
 if ($BackendDir) {
   $backendDir = [System.IO.Path]::GetFullPath($BackendDir)
 } else {
-  $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
-  $backendDir = Join-Path $repoRoot 'backend'
+  $installBackend = Join-Path $InstallDir 'backend'
+  if (Test-Path -LiteralPath (Join-Path $installBackend 'src\server.js')) {
+    $backendDir = [System.IO.Path]::GetFullPath($installBackend)
+  } else {
+    $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+    $backendDir = Join-Path $repoRoot 'backend'
+  }
 }
 $serverEntry = Join-Path $backendDir 'src\server.js'
 

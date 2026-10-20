@@ -67,6 +67,7 @@ test('assertSafeRelPath allows only the update allowlist', () => {
   assert.equal(assertSafeRelPath('backend/package.json'), 'backend/package.json');
   assert.equal(assertSafeRelPath('manifest.json'), 'manifest.json');
   assert.equal(assertSafeRelPath('scripts/finish-nexor-server-update.ps1'), 'scripts/finish-nexor-server-update.ps1');
+  assert.equal(assertSafeRelPath('scripts/apply-published-pack.ps1'), 'scripts/apply-published-pack.ps1');
   assert.throws(() => assertSafeRelPath('../etc/passwd'));
   assert.throws(() => assertSafeRelPath('C:/Windows/system.ini'));
   assert.throws(() => assertSafeRelPath('backend/.env'));

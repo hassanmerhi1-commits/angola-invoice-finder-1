@@ -37,6 +37,7 @@ const ALLOWED_REL_EXACT = new Set([
   'backend/scripts/ensure-server-schema.js',
   'scripts/apply-nexor-server-update.ps1',
   'scripts/finish-nexor-server-update.ps1',
+  'scripts/apply-published-pack.ps1',
 ]);
 
 const ALLOWED_REL_PREFIXES = ['webapp/', 'backend/src/'];
@@ -697,6 +698,7 @@ async function buildUpdateStatus(db, { refreshLatest = true } = {}) {
       buildId: currentBuildId,
       buildIdShort: currentBuildId ? String(currentBuildId).slice(0, 7) : null,
       builtAt: stamp?.builtAt || null,
+      backendDir: pre.backendDir,
     },
     latest,
     latestError,
