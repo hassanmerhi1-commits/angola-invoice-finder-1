@@ -7,6 +7,10 @@ const {
   assertAllowedUpdateUrl,
   validateManifest,
   isSameBuild,
+  phasePercent,
+  APPLY_TASK_NAME,
+  winQuote,
+  buildApplyLaunchCmdText,
 } = require('../src/lib/serverUpdate');
 
 test('AGT version stays locked at 1.3.8', () => {
@@ -62,6 +66,7 @@ test('assertSafeRelPath allows only the update allowlist', () => {
   assert.equal(assertSafeRelPath('backend/src/server.js'), 'backend/src/server.js');
   assert.equal(assertSafeRelPath('backend/package.json'), 'backend/package.json');
   assert.equal(assertSafeRelPath('manifest.json'), 'manifest.json');
+  assert.equal(assertSafeRelPath('scripts/finish-nexor-server-update.ps1'), 'scripts/finish-nexor-server-update.ps1');
   assert.throws(() => assertSafeRelPath('../etc/passwd'));
   assert.throws(() => assertSafeRelPath('C:/Windows/system.ini'));
   assert.throws(() => assertSafeRelPath('backend/.env'));
@@ -87,4 +92,39 @@ test('isSameBuild matches full and short SHAs', () => {
   assert.equal(isSameBuild('1f389f6', '1f389f6abcde'), true);
   assert.equal(isSameBuild('aaaaaaaa', 'bbbbbbbb'), false);
   assert.equal(isSameBuild('', 'abc1234'), false);
+});
+
+test('apply launcher quotes spaced paths and can run outside the service', () => {
+  assert.equal(APPLY_TASK_NAME, 'NexorApplyUpdate');
+  assert.equal(winQuote('C:\\NEXOR ERP\\updates'), '"C:\\NEXOR ERP\\updates"');
+  const text = buildApplyLaunchCmdText({
+    script: 'C:\\NEXOR ERP\\updates\\apply-nexor-server-update.ps1',
+    extractDir: 'C:\\NEXOR ERP\\updates\\staging\\extract',
+    backendDir: 'C:\\NEXOR ERP\\backend',
+    installDir: 'C:\\NEXOR ERP',
+    statusFile: 'C:\\NEXOR ERP\\updates\\status.json',
+    nodeExe: 'C:\\Program Files\\nodejs\\node.exe',
+    serviceName: 'NexorBackend',
+    buildId: 'abc1234',
+    healthUrl: 'http://127.0.0.1:3000/api/health',
+    needNpmCi: true,
+    updatesDir: 'C:\\NEXOR ERP\\updates',
+  });
+  assert.match(text, /NEXOR_APPLY_INDEPENDENT=1/);
+  assert.match(text, /cd \/d "C:\\NEXOR ERP\\updates"/);
+  assert.match(text, /-File "C:\\NEXOR ERP\\updates\\apply-nexor-server-update.ps1"/);
+  assert.match(text, /-NeedNpmCi/);
+  assert.match(text, /powershell\.exe/);
+});
+
+test('phasePercent maps update steps and download bytes', () => {
+  assert.equal(phasePercent('checking'), 5);
+  assert.equal(phasePercent('downloading'), 15);
+  assert.equal(phasePercent('downloading', { bytes: 20, totalBytes: 100 }), 14);
+  assert.equal(phasePercent('verifying'), 45);
+  assert.equal(phasePercent('applying'), 62);
+  assert.equal(phasePercent('restarting'), 88);
+  assert.equal(phasePercent('restarting', { percent: 95 }), 95);
+  assert.equal(phasePercent('success'), 100);
+  assert.equal(phasePercent('failed'), 0);
 });

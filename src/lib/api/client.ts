@@ -3082,10 +3082,16 @@ export const api = {
         job?: {
           phase?: string;
           message?: string;
+          percent?: number;
+          bytes?: number;
+          totalBytes?: number | null;
           ok?: boolean | null;
           error?: string | null;
           rollback?: boolean;
           buildId?: string;
+          startedAt?: string;
+          updatedAt?: string;
+          finishedAt?: string;
         } | null;
         serviceName?: string;
       }>(`/deployment/update/status${refreshLatest ? '' : '?refresh=0'}`),

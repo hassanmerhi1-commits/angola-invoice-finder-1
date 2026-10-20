@@ -3,7 +3,9 @@
  *
  * Safety: admin_settings + PostgreSQL + Windows service only. SHA-512 of the
  * zip, allowlisted paths, backup, migrate, health, rollback. The HTTP handler
- * never restarts itself — a detached PowerShell script does that.
+ * never restarts itself. Apply is launched via a SYSTEM scheduled task so
+ * Stop-Service on NexorBackend cannot kill the updater (Node detached:true
+ * stays in the service job on Windows and died at "restarting").
  */
 const crypto = require('crypto');
 const fs = require('fs');
@@ -25,6 +27,7 @@ const LOCK_STALE_MS = 20 * 60 * 1000;
 const DEFAULT_TAG = 'v1.3.8';
 const DEFAULT_REPO = 'hassanmerhi1-commits/angola-invoice-finder-1';
 const USER_AGENT = 'NEXOR-ERP-ServerUpdate/1.3.8';
+const APPLY_TASK_NAME = 'NexorApplyUpdate';
 
 const ALLOWED_REL_EXACT = new Set([
   'manifest.json',
@@ -33,6 +36,7 @@ const ALLOWED_REL_EXACT = new Set([
   'backend/BUILD_STAMP.json',
   'backend/scripts/ensure-server-schema.js',
   'scripts/apply-nexor-server-update.ps1',
+  'scripts/finish-nexor-server-update.ps1',
 ]);
 
 const ALLOWED_REL_PREFIXES = ['webapp/', 'backend/src/'];
@@ -236,6 +240,41 @@ function isBusyPhase(phase) {
   return ['checking', 'downloading', 'verifying', 'applying', 'restarting'].includes(String(phase || ''));
 }
 
+function clampPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+/** Stable % for the Settings progress bar. Download uses bytes when known. */
+function phasePercent(phase, extra) {
+  const hint = extra && extra.percent != null ? Number(extra.percent) : null;
+  if (hint != null && Number.isFinite(hint)) return clampPercent(hint);
+  switch (String(phase || '')) {
+    case 'checking':
+      return 5;
+    case 'downloading': {
+      const bytes = Number(extra && extra.bytes) || 0;
+      const total = Number(extra && extra.totalBytes) || 0;
+      if (total > 0) return clampPercent(8 + (bytes / total) * 32);
+      return 15;
+    }
+    case 'verifying':
+      return 45;
+    case 'applying':
+      return 62;
+    case 'restarting':
+      return 88;
+    case 'success':
+    case 'upToDate':
+      return 100;
+    case 'failed':
+      return 0;
+    default:
+      return 0;
+  }
+}
+
 /** A hung apply (service did not come back) used to leave phase=restarting forever and lock the button. */
 function expireStaleUpdateJob() {
   const job = readStatus();
@@ -245,7 +284,7 @@ function expireStaleUpdateJob() {
   releaseLock();
   return writeStatus({
     phase: 'failed',
-    message: 'The previous update stopped before it finished. Check updates\\apply.log, then try Update NEXOR again.',
+    message: 'Previous update was interrupted while restarting. Check for update, then try Update NEXOR again.',
     ok: false,
     error: 'Update timed out',
     stale: true,
@@ -255,13 +294,18 @@ function expireStaleUpdateJob() {
 
 function writeStatus(patch) {
   const prev = readStatus() || {};
-  const next = {
+  const merged = {
     ...prev,
     ...patch,
     updatedAt: new Date().toISOString(),
   };
-  writeJson(statusFilePath(), next);
-  return next;
+  merged.percent = phasePercent(merged.phase, {
+    percent: Object.prototype.hasOwnProperty.call(patch, 'percent') ? patch.percent : undefined,
+    bytes: merged.bytes,
+    totalBytes: merged.totalBytes,
+  });
+  writeJson(statusFilePath(), merged);
+  return merged;
 }
 
 function readLock() {
@@ -418,6 +462,8 @@ function downloadToFile(url, destPath, { maxBytes = MAX_PACK_BYTES, timeoutMs = 
       }
       const out = fs.createWriteStream(destPath);
       let settled = false;
+      let lastProgressAt = 0;
+      const totalBytes = Number(res.headers['content-length']) || 0;
       const fail = (err) => {
         if (settled) return;
         settled = true;
@@ -425,13 +471,29 @@ function downloadToFile(url, destPath, { maxBytes = MAX_PACK_BYTES, timeoutMs = 
         try { fs.unlinkSync(destPath); } catch (_) { /* ignore */ }
         reject(err);
       };
+      const reportDownload = (force) => {
+        const now = Date.now();
+        if (!force && now - lastProgressAt < 400) return;
+        lastProgressAt = now;
+        const mb = (n) => (n / (1024 * 1024)).toFixed(1);
+        writeStatus({
+          phase: 'downloading',
+          message: totalBytes
+            ? `Downloading the NEXOR server pack… ${mb(bytes)} / ${mb(totalBytes)} MB`
+            : 'Downloading the NEXOR server pack…',
+          bytes,
+          totalBytes: totalBytes || null,
+        });
+      };
       res.on('data', (chunk) => {
         bytes += chunk.length;
         hash.update(chunk);
         if (bytes > maxBytes) {
           req.destroy();
           fail(new Error('Update pack exceeds the 80 MB safety limit'));
+          return;
         }
+        reportDownload(false);
       });
       res.pipe(out);
       out.on('finish', () => {
@@ -644,30 +706,134 @@ async function buildUpdateStatus(db, { refreshLatest = true } = {}) {
   };
 }
 
-function spawnApplyScript(opts) {
-  const script = findApplyScript();
-  if (!script) throw new Error('Apply script not found');
+function winQuote(value) {
+  return `"${String(value).replace(/"/g, '')}"`;
+}
+
+function applyLaunchCmdPath() {
+  return path.join(updatesDir(), 'run-apply.cmd');
+}
+
+function buildApplyLaunchCmdText(opts) {
   const args = [
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
-    '-File', script,
-    '-ExtractDir', opts.extractDir,
-    '-BackendDir', opts.backendDir,
-    '-InstallDir', installDir(),
-    '-StatusFile', statusFilePath(),
-    '-NodeExe', process.execPath,
-    '-ServiceName', opts.serviceName,
-    '-BuildId', opts.buildId,
-    '-HealthUrl', opts.healthUrl,
+    '-File', winQuote(opts.script),
+    '-ExtractDir', winQuote(opts.extractDir),
+    '-BackendDir', winQuote(opts.backendDir),
+    '-InstallDir', winQuote(opts.installDir),
+    '-StatusFile', winQuote(opts.statusFile),
+    '-NodeExe', winQuote(opts.nodeExe),
+    '-ServiceName', winQuote(opts.serviceName),
+    '-BuildId', winQuote(opts.buildId),
+    '-HealthUrl', winQuote(opts.healthUrl),
   ];
   if (opts.needNpmCi) args.push('-NeedNpmCi');
-  const child = spawn('powershell.exe', args, {
+  return [
+    '@echo off',
+    'set NEXOR_APPLY_INDEPENDENT=1',
+    `cd /d ${winQuote(opts.updatesDir)}`,
+    `powershell.exe ${args.join(' ')}`,
+    '',
+  ].join('\r\n');
+}
+
+function writeApplyLaunchCmd(opts) {
+  const fromExtract = opts.extractDir
+    ? path.join(opts.extractDir, 'scripts', 'apply-nexor-server-update.ps1')
+    : '';
+  const script = (fromExtract && fs.existsSync(fromExtract))
+    ? fromExtract
+    : findApplyScript();
+  if (!script) throw new Error('Apply script not found');
+  try {
+    if (fromExtract && fs.existsSync(fromExtract)) {
+      fs.copyFileSync(fromExtract, path.join(updatesDir(), 'apply-nexor-server-update.ps1'));
+    }
+  } catch (_) { /* ignore */ }
+  fs.mkdirSync(updatesDir(), { recursive: true });
+  const cmdPath = applyLaunchCmdPath();
+  fs.writeFileSync(cmdPath, buildApplyLaunchCmdText({
+    script,
+    extractDir: opts.extractDir,
+    backendDir: opts.backendDir,
+    installDir: installDir(),
+    statusFile: statusFilePath(),
+    nodeExe: process.execPath,
+    serviceName: opts.serviceName,
+    buildId: opts.buildId,
+    healthUrl: opts.healthUrl,
+    needNpmCi: opts.needNpmCi,
+    updatesDir: updatesDir(),
+  }), 'utf8');
+  return cmdPath;
+}
+
+function appendApplyLog(text) {
+  try {
+    fs.mkdirSync(updatesDir(), { recursive: true });
+    fs.appendFileSync(
+      path.join(updatesDir(), 'apply.log'),
+      `${new Date().toISOString().replace('T', ' ').slice(0, 19)}  ${text}\n`,
+      'utf8',
+    );
+  } catch (_) { /* ignore */ }
+}
+
+function schtasksOnceTime() {
+  const d = new Date(Date.now() + 2 * 60 * 1000);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function launchApplyOutsideService(cmdPath) {
+  try {
+    execFileSync('schtasks.exe', [
+      '/Create', '/F',
+      '/TN', APPLY_TASK_NAME,
+      '/SC', 'ONCE',
+      '/ST', schtasksOnceTime(),
+      '/RU', 'SYSTEM',
+      '/RL', 'HIGHEST',
+      '/TR', cmdPath,
+    ], { windowsHide: true, timeout: 20000, encoding: 'utf8' });
+    execFileSync('schtasks.exe', ['/Run', '/TN', APPLY_TASK_NAME], {
+      windowsHide: true,
+      timeout: 15000,
+      encoding: 'utf8',
+    });
+    appendApplyLog(`Apply launched via scheduled task ${APPLY_TASK_NAME}`);
+    return { method: 'schtasks', pid: 0 };
+  } catch (taskErr) {
+    appendApplyLog(`schtasks launch failed: ${taskErr.message || taskErr}`);
+  }
+  try {
+    const out = execFileSync('wmic.exe', ['process', 'call', 'create', cmdPath], {
+      windowsHide: true,
+      timeout: 15000,
+      encoding: 'utf8',
+    });
+    appendApplyLog('Apply launched via wmic process create');
+    return { method: 'wmic', pid: 0, detail: String(out || '').slice(0, 200) };
+  } catch (wmicErr) {
+    appendApplyLog(`wmic launch failed: ${wmicErr.message || wmicErr}`);
+  }
+  const child = spawn('cmd.exe', ['/c', 'start', '/min', '', cmdPath], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
+    cwd: updatesDir(),
   });
   child.unref();
-  return child.pid;
+  appendApplyLog(`Apply launched via cmd start pid=${child.pid}`);
+  return { method: 'start', pid: child.pid };
+}
+
+function spawnApplyScript(opts) {
+  const cmdPath = writeApplyLaunchCmd(opts);
+  const launched = launchApplyOutsideService(cmdPath);
+  return launched.pid || 0;
 }
 
 async function runApplyJob(pre) {
@@ -694,13 +860,16 @@ async function runApplyJob(pre) {
     message: 'Downloading the NEXOR server pack…',
     buildId: latest.buildId,
     latest,
+    bytes: 0,
+    totalBytes: latest.size || null,
+    percent: 8,
   });
   const downloaded = await downloadToFile(latest.url, zipPath);
   if (downloaded.sha512 !== latest.sha512) {
     throw new Error('Pack checksum does not match the published SHA-512 — update aborted');
   }
 
-  writeStatus({ phase: 'verifying', message: 'Verifying the pack…' });
+  writeStatus({ phase: 'verifying', message: 'Verifying the pack…', percent: 45 });
   const extracted = await extractAndValidatePack(zipPath, extractDir, latest);
   const needNpmCi = lockfileChanged(extracted.root, pre.backendDir);
   const port = Number(process.env.PORT) || 3000;
@@ -710,6 +879,7 @@ async function runApplyJob(pre) {
     phase: 'applying',
     message: 'Applying files and restarting the NEXOR service…',
     needNpmCi,
+    percent: 55,
   });
 
   const pid = spawnApplyScript({
@@ -726,6 +896,7 @@ async function runApplyJob(pre) {
     message: 'Service is restarting. The screen will reconnect in about a minute.',
     applyPid: pid,
     buildId: latest.buildId,
+    percent: 88,
   });
 }
 
@@ -752,6 +923,9 @@ function startServerUpdate(db, { confirm, user } = {}) {
     finishedAt: null,
     requestedBy: user?.email || user?.name || null,
     rollback: false,
+    percent: 5,
+    bytes: 0,
+    totalBytes: null,
   });
 
   setImmediate(() => {
@@ -790,4 +964,8 @@ module.exports = {
   startServerUpdate,
   defaultManifestUrl,
   assertAllowedUpdateUrl,
+  phasePercent,
+  APPLY_TASK_NAME,
+  winQuote,
+  buildApplyLaunchCmdText,
 };

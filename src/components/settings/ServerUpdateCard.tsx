@@ -9,6 +9,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +30,28 @@ import { toast } from 'sonner';
 type ServerUpdateStatus = Awaited<ReturnType<typeof api.deployment.updateStatus>>['data'];
 
 const BUSY_PHASES = new Set(['checking', 'downloading', 'verifying', 'applying', 'restarting']);
+
+function fallbackPercent(phase?: string | null) {
+  switch (phase) {
+    case 'checking': return 5;
+    case 'downloading': return 20;
+    case 'verifying': return 45;
+    case 'applying': return 62;
+    case 'restarting': return 88;
+    case 'success':
+    case 'upToDate': return 100;
+    default: return 0;
+  }
+}
+
+function formatElapsed(ms: number) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const totalSec = Math.floor(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min <= 0) return `${sec}s`;
+  return `${min}m ${String(sec).padStart(2, '0')}s`;
+}
 
 function formatWhen(value?: string | null) {
   if (!value) return null;
@@ -52,6 +75,8 @@ export function ServerUpdateCard() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [offlineDuringApply, setOfflineDuringApply] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const load = useCallback(async (refreshLatest = true) => {
     if (isDemoMode()) {
@@ -66,6 +91,7 @@ export function ServerUpdateCard() {
     const res = await api.deployment.updateStatus(refreshLatest);
     if (res.error) {
       if (restarting || applying) {
+        setOfflineDuringApply(true);
         setRestarting(true);
         return null;
       }
@@ -75,18 +101,17 @@ export function ServerUpdateCard() {
       return null;
     }
     setError(null);
+    setOfflineDuringApply(false);
     setStatus(res.data ?? null);
     setLoading(false);
     const phase = res.data?.job?.phase;
-    if (phase === 'success') {
+    if (phase === 'success' || phase === 'failed' || phase === 'upToDate') {
       setApplying(false);
       setRestarting(false);
-    } else if (phase === 'failed') {
-      setApplying(false);
-      setRestarting(false);
+      setOfflineDuringApply(false);
     } else if (phase && BUSY_PHASES.has(phase)) {
       setApplying(true);
-      if (phase === 'restarting') setRestarting(true);
+      setRestarting(phase === 'restarting');
     }
     return res.data ?? null;
   }, [canManage, applying, restarting, ui.demoUnavailable]);
@@ -99,13 +124,21 @@ export function ServerUpdateCard() {
     if (!applying && !restarting) return undefined;
     const id = window.setInterval(() => {
       void load(false);
-    }, 2500);
+    }, 1500);
     return () => window.clearInterval(id);
   }, [applying, restarting, load]);
+
+  useEffect(() => {
+    if (!applying && !restarting) return undefined;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [applying, restarting]);
 
   const onApply = async () => {
     setConfirmOpen(false);
     setApplying(true);
+    setRestarting(false);
+    setOfflineDuringApply(false);
     setError(null);
     const res = await api.deployment.applyUpdate();
     if (res.error) {
@@ -115,10 +148,26 @@ export function ServerUpdateCard() {
       toast.error(res.error);
       return;
     }
-    setRestarting(true);
-    toast.message(ui.restartingToast);
+    toast.message(ui.startedToast);
     void load(false);
   };
+
+  const jobPhase = status?.job?.phase;
+  const jobUpdatedRaw = status?.job?.updatedAt || status?.job?.finishedAt;
+  const jobAgeMs = (() => {
+    if (!jobUpdatedRaw) return Number.POSITIVE_INFINITY;
+    const ms = Date.now() - new Date(jobUpdatedRaw).getTime();
+    return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+  })();
+  const jobLooksStuck = !!(jobPhase && BUSY_PHASES.has(jobPhase) && jobAgeMs > 20 * 60 * 1000);
+
+  useEffect(() => {
+    if (jobLooksStuck && (applying || restarting)) {
+      setApplying(false);
+      setRestarting(false);
+      setOfflineDuringApply(false);
+    }
+  }, [jobLooksStuck, applying, restarting]);
 
   if (!canManage) {
     return (
@@ -135,21 +184,17 @@ export function ServerUpdateCard() {
   }
 
   const job = status?.job;
-  const jobAgeMs = (() => {
-    const raw = job?.updatedAt || job?.finishedAt;
-    if (!raw) return Number.POSITIVE_INFINITY;
-    const ms = Date.now() - new Date(raw).getTime();
-    return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
-  })();
-  const jobLooksStuck = !!(job?.phase && BUSY_PHASES.has(job.phase) && jobAgeMs > 20 * 60 * 1000);
-  const busy = !jobLooksStuck && (applying || restarting || (job?.phase ? BUSY_PHASES.has(job.phase) : false));
-
-  useEffect(() => {
-    if (jobLooksStuck && (applying || restarting)) {
-      setApplying(false);
-      setRestarting(false);
-    }
-  }, [jobLooksStuck, applying, restarting]);
+  const phaseBusy = !!(job?.phase && BUSY_PHASES.has(job.phase));
+  const busy = !jobLooksStuck && (applying || restarting || phaseBusy) && job?.phase !== 'failed' && job?.phase !== 'success';
+  const rawPercent = Number(job?.percent);
+  const displayPercent = Number.isFinite(rawPercent) && rawPercent > 0
+    ? Math.max(0, Math.min(100, Math.round(rawPercent)))
+    : fallbackPercent(job?.phase);
+  const startedMs = job?.startedAt ? new Date(job.startedAt).getTime() : NaN;
+  const elapsedLabel = Number.isFinite(startedMs) ? formatElapsed(nowMs - startedMs) : '';
+  const progressMessage = offlineDuringApply
+    ? (job?.message ? `${job.message} — ${ui.waitingReconnect}` : ui.waitingReconnect)
+    : (job?.message || (restarting ? ui.restarting : ui.applying));
   const latestLabel = status?.latest?.buildIdShort || status?.latest?.buildId?.slice(0, 7);
   const currentLabel = status?.current?.buildIdShort || '—';
   const latestWhen = formatWhen(status?.latest?.builtAt || null);
@@ -216,9 +261,22 @@ export function ServerUpdateCard() {
         ) : null}
 
         {busy ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            {restarting ? ui.restarting : job?.message || ui.applying}
+          <div className="space-y-2 rounded-lg border bg-muted/40 p-3">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <div className="flex min-w-0 items-center gap-2">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                <span className="min-w-0">{progressMessage}</span>
+              </div>
+              <span className="shrink-0 font-mono text-base font-semibold tabular-nums">
+                {displayPercent}%
+              </span>
+            </div>
+            <Progress value={displayPercent} className="h-2.5" />
+            {elapsedLabel ? (
+              <div className="text-xs text-muted-foreground">
+                {ui.elapsed.replace('{time}', elapsedLabel)}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

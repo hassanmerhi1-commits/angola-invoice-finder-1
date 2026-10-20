@@ -167,6 +167,65 @@ function Prune-OldBackups([string]$updatesRoot) {
 }
 
 # -----------------------------------------------------------------------------
+if (-not $env:NEXOR_APPLY_INDEPENDENT) {
+  Write-Log 'Re-launching apply outside NexorBackend so Stop-Service cannot kill it'
+  if (-not (Test-Path -LiteralPath $StatusFile)) {
+    $statusDir = Split-Path -Parent $StatusFile
+    if ($statusDir -and -not (Test-Path -LiteralPath $statusDir)) {
+      New-Item -ItemType Directory -Force -Path $statusDir | Out-Null
+    }
+  }
+  $updatesRoot = Split-Path -Parent $StatusFile
+  $self = $MyInvocation.MyCommand.Path
+  $cmdPath = Join-Path $updatesRoot 'run-apply.cmd'
+  $q = { param($s) '"{0}"' -f ([string]$s -replace '"', '') }
+  $ps = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0} -ExtractDir {1} -BackendDir {2} -InstallDir {3} -StatusFile {4} -NodeExe {5} -ServiceName {6} -BuildId {7} -HealthUrl {8}' -f @(
+    (& $q $self),
+    (& $q $ExtractDir),
+    (& $q $BackendDir),
+    (& $q $InstallDir),
+    (& $q $StatusFile),
+    (& $q $NodeExe),
+    (& $q $ServiceName),
+    (& $q $BuildId),
+    (& $q $HealthUrl)
+  )
+  if ($NeedNpmCi) { $ps = $ps + ' -NeedNpmCi' }
+  @(
+    '@echo off',
+    'set NEXOR_APPLY_INDEPENDENT=1',
+    $ps
+  ) | Set-Content -LiteralPath $cmdPath -Encoding ASCII
+  $launched = $false
+  try {
+    & schtasks.exe /Create /F /TN 'NexorApplyUpdate' /SC ONCE /ST 23:59 /RU SYSTEM /RL HIGHEST /TR $cmdPath | Out-Null
+    & schtasks.exe /Run /TN 'NexorApplyUpdate' | Out-Null
+    $launched = $true
+    Write-Log 'Apply re-launched via scheduled task NexorApplyUpdate'
+  } catch {
+    Write-Log ('schtasks re-launch failed: ' + $_.Exception.Message)
+  }
+  if (-not $launched) {
+    try {
+      & wmic.exe process call create $cmdPath | Out-Null
+      $launched = $true
+      Write-Log 'Apply re-launched via wmic'
+    } catch {
+      Write-Log ('wmic re-launch failed: ' + $_.Exception.Message)
+    }
+  }
+  if ($launched) {
+    Write-Status @{
+      phase = 'restarting'
+      message = 'Apply continues outside the service. Watch the percent bar.'
+      percent = 58
+      buildId = $BuildId
+    }
+    exit 0
+  }
+  Write-Log 'Independent re-launch failed — continuing in this process (may die when the service stops)'
+}
+
 if (-not (Test-Path -LiteralPath $ExtractDir)) { Fail 'Extract folder is missing' }
 if (-not (Test-Path -LiteralPath (Join-Path $ExtractDir 'manifest.json'))) { Fail 'Extract folder has no manifest.json' }
 if (-not (Test-Path -LiteralPath $BackendDir)) { Fail 'Backend folder is missing' }
@@ -197,19 +256,22 @@ $backupRoot = Join-Path $updatesRoot ('backup-' + $stamp)
 $rolledBack = $false
 
 Write-Log ('Apply start  build=' + $BuildId + ' backend=' + $BackendDir)
+# Give the SYSTEM task a moment to detach from NexorBackend before we stop it.
+Start-Sleep -Seconds 2
 Write-Status @{
   phase = 'applying'
   message = 'Backing up the current server files...'
   ok = $null
   buildId = $BuildId
   backupDir = $backupRoot
+  percent = 55
 }
 
 try {
   Backup-Live $backupRoot
   Write-Log ('Backup OK  ' + $backupRoot)
 
-  Write-Status @{ phase = 'applying'; message = 'Stopping NexorBackend...' }
+  Write-Status @{ phase = 'applying'; message = 'Stopping NexorBackend...'; percent = 60 }
   if ($svc.Status -ne 'Stopped') {
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
     if (-not (Wait-ServiceState $ServiceName 'Stopped' 45)) {
@@ -260,9 +322,10 @@ try {
   }
 
   Write-Log 'Files copied'
+  Write-Status @{ phase = 'applying'; message = 'Files copied. Preparing the service...'; percent = 70 }
 
   if ($NeedNpmCi) {
-    Write-Status @{ phase = 'applying'; message = 'Installing backend packages (lockfile changed)...' }
+    Write-Status @{ phase = 'applying'; message = 'Installing backend packages (lockfile changed)...'; percent = 75 }
     $npmCmd = Join-Path (Split-Path -Parent $NodeExe) 'npm.cmd'
     if (-not (Test-Path -LiteralPath $npmCmd)) { throw 'npm.cmd not found next to node.exe' }
     $npmLog = Join-Path $updatesRoot 'npm-ci.log'
@@ -271,7 +334,7 @@ try {
     Write-Log 'npm ci OK'
   }
 
-  Write-Status @{ phase = 'applying'; message = 'Updating the database schema...' }
+  Write-Status @{ phase = 'applying'; message = 'Updating the database schema...'; percent = 82 }
   $env:NEXOR_INSTALL_DIR = $InstallDir
   $migrate = Start-Process -FilePath $NodeExe -ArgumentList @('src\migrations\run.js') -WorkingDirectory $BackendDir -Wait -PassThru -NoNewWindow
   if ($migrate.ExitCode -ne 0) { throw ('migrate failed with exit ' + $migrate.ExitCode) }
@@ -279,13 +342,33 @@ try {
   if ($ensure.ExitCode -ne 0) { throw ('ensure-schema failed with exit ' + $ensure.ExitCode) }
   Write-Log 'Schema OK'
 
-  Write-Status @{ phase = 'restarting'; message = 'Starting NexorBackend...' }
+  Write-Status @{ phase = 'restarting'; message = 'Starting NexorBackend...'; percent = 88 }
   Start-Service -Name $ServiceName
   if (-not (Wait-ServiceState $ServiceName 'Running' 45)) {
     throw 'NexorBackend did not start'
   }
 
-  if (-not (Test-Health $HealthUrl 90)) {
+  Write-Status @{ phase = 'restarting'; message = 'Waiting for the server to answer...'; percent = 92 }
+  $healthDeadline = (Get-Date).AddSeconds(90)
+  $healthOk = $false
+  do {
+    $left = [Math]::Max(0, [int]($healthDeadline - (Get-Date)).TotalSeconds)
+    $pct = [Math]::Min(98, 92 + [int]((90 - $left) / 15))
+    Write-Status @{
+      phase = 'restarting'
+      message = ('Waiting for the server to answer… {0}s left' -f $left)
+      percent = $pct
+    }
+    try {
+      $res = Invoke-WebRequest -UseBasicParsing -Uri $HealthUrl -TimeoutSec 5
+      if ($res.StatusCode -eq 200) {
+        $json = $res.Content | ConvertFrom-Json
+        if ($json.ok -eq $true) { $healthOk = $true; break }
+      }
+    } catch { }
+    Start-Sleep -Seconds 2
+  } while ((Get-Date) -lt $healthDeadline)
+  if (-not $healthOk) {
     throw 'Server started but /api/health did not become OK — rolling back'
   }
 
@@ -312,6 +395,7 @@ try {
     finishedAt = (Get-Date).ToUniversalTime().ToString('o')
     buildId = $BuildId
     rollback = $false
+    percent = 100
   }
   exit 0
 } catch {
