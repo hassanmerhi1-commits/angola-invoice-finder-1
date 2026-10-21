@@ -18,6 +18,32 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required').max(128, 'Password too long'),
 });
 
+function LoginWatchEmblem({
+  logoSrc,
+  companyName,
+  size,
+}: {
+  logoSrc: string;
+  companyName: string;
+  size: 'lg' | 'sm';
+}) {
+  const mark = size === 'lg' ? 'w-[88px] h-[88px]' : 'w-14 h-14';
+  const img = size === 'lg' ? 'w-14 h-14' : 'w-8 h-8';
+  const ring = size === 'lg'
+    ? 'shadow-[inset_0_0_0_6px_rgba(255,255,255,0.12)]'
+    : 'shadow-[inset_0_0_0_4px_rgba(255,255,255,0.12)]';
+  return (
+    <div className="nexor-login-emblem mx-auto" data-size={size}>
+      <span className="nexor-login-bezel-track" aria-hidden />
+      <span className="nexor-login-bezel nexor-login-bezel--gold" aria-hidden />
+      <span className="nexor-login-bezel nexor-login-bezel--teal" aria-hidden />
+      <div className={`relative z-[1] ${mark} rounded-full bg-[radial-gradient(circle_at_35%_30%,#4aa3c7,#1b4f6b_55%,#0d2433)] flex items-center justify-center overflow-hidden ${ring}`}>
+        <img src={logoSrc} alt={companyName} className={`${img} object-contain`} />
+      </div>
+    </div>
+  );
+}
+
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -193,10 +219,7 @@ export default function Login() {
       <TillCityUiBanner />
       <div className="flex flex-1 min-h-0">
         <div className="hidden lg:flex w-[44%] relative flex-col items-center justify-center text-center px-10 border-r border-white/[0.06]">
-          <div className="absolute w-[380px] h-[380px] rounded-full border border-[#c4a574]/20 pointer-events-none" />
-          <div className="relative w-[88px] h-[88px] rounded-full bg-[radial-gradient(circle_at_35%_30%,#4aa3c7,#1b4f6b_55%,#0d2433)] flex items-center justify-center overflow-hidden shadow-[inset_0_0_0_6px_rgba(255,255,255,0.12)]">
-            <img src={logoSrc} alt={companyName} className="w-14 h-14 object-contain" />
-          </div>
+          <LoginWatchEmblem logoSrc={logoSrc} companyName={companyName} size="lg" />
           <h1 className="relative mt-[18px] mb-2 text-[28px] font-semibold">{companyName}</h1>
           <p className="relative m-0 max-w-[240px] text-[13px] text-[#8b97a8]">{t.auth.tagline}</p>
         </div>
@@ -204,9 +227,7 @@ export default function Login() {
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="w-full max-w-[360px]">
             <div className="lg:hidden text-center mb-6">
-              <div className="mx-auto w-14 h-14 rounded-full bg-[radial-gradient(circle_at_35%_30%,#4aa3c7,#1b4f6b_55%,#0d2433)] flex items-center justify-center overflow-hidden shadow-[inset_0_0_0_4px_rgba(255,255,255,0.12)]">
-                <img src={logoSrc} alt={companyName} className="w-8 h-8 object-contain" />
-              </div>
+              <LoginWatchEmblem logoSrc={logoSrc} companyName={companyName} size="sm" />
               <h1 className="mt-3 text-xl font-semibold">{companyName}</h1>
               <p className="mt-1 text-xs text-[#8b97a8]">{t.auth.tagline}</p>
             </div>

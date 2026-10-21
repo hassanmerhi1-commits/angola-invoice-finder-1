@@ -166,6 +166,9 @@ function rateLimiter(windowMs = 60000, maxRequests = 200, lanMaxRequests = 2000)
 const PUBLIC_API_EXACT = new Set([
   '/api/health',
   '/api/webapp-version',
+  '/api/webapp-manifest',
+  '/api/desktop-shell/latest',
+  '/api/desktop-shell/file',
   '/api/auth/login',
   '/api/auth/refresh',
   '/api/auth/mfa/verify',
@@ -174,7 +177,7 @@ const PUBLIC_API_EXACT = new Set([
 ]);
 // Sync carries its own API-key auth. Installation bootstrap/register stays public;
 // list/config endpoints require JWT after setup (see isPublicApiPath).
-const PUBLIC_API_PREFIXES = ['/api/sync'];
+const PUBLIC_API_PREFIXES = ['/api/sync', '/api/desktop-shell'];
 const PUBLIC_INSTALLATION_PATHS = new Set([
   '/api/installations/register-main',
   '/api/installations/register-city',

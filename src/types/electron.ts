@@ -250,9 +250,18 @@ export interface ElectronAPI {
       remoteVersion?: string | null;
       remoteCheckError?: string | null;
       packaged: boolean;
+      hasCityUiCache?: boolean;
+      shellBuildId?: string | null;
     }>;
     onStatus: (callback: (data: UpdateStatus) => void) => (() => void) | void;
     openReleasePage: () => Promise<{ success: boolean; url?: string }>;
+    downloadCityShell?: () => Promise<{
+      success: boolean;
+      error?: string;
+      alreadyCurrent?: boolean;
+      version?: string;
+      buildId?: string;
+    }>;
   };
 
   // Hot updates
@@ -262,7 +271,7 @@ export interface ElectronAPI {
     checkServer: (url: string) => Promise<{ success: boolean; available?: boolean; version?: { version: string }; error?: string }>;
     reload: () => Promise<{ success: boolean; source?: string; error?: string }>;
     check?: () => Promise<{ success: boolean; error?: string }>;
-    getSource: () => Promise<{ success: boolean; source: 'server' | 'local' | 'unknown' }>;
+    getSource: () => Promise<{ success: boolean; source: 'server' | 'local' | 'cache' | 'unknown' }>;
   };
 
   // AGT

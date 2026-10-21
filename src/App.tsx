@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { UpdateStatus } from "@/types/electron";
 import Login from "./pages/Login";
+import { CityDesktopShellBanner } from "./components/CityDesktopShellBanner";
 import Setup from "./pages/Setup";
 
 function RouteLoadingFallback() {
@@ -508,6 +509,7 @@ const App = () => {
         <ErrorBoundary>
           <ElectronTitleDragBar />
           <LiveWebappBanner />
+          <CityDesktopShellBanner />
           <BranchProvider>
             <TooltipProvider>
               <Toaster />

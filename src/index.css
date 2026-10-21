@@ -542,6 +542,67 @@
     color: hsl(var(--foreground)) !important;
     border-color: hsl(var(--border)) !important;
   }
+
+  /* Login watch bezel (option F) */
+  .nexor-login-emblem {
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+  .nexor-login-emblem[data-size='lg'] {
+    width: 232px;
+    height: 232px;
+  }
+  .nexor-login-emblem[data-size='sm'] {
+    width: 148px;
+    height: 148px;
+  }
+  .nexor-login-bezel-track,
+  .nexor-login-bezel {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .nexor-login-emblem[data-size='lg'] .nexor-login-bezel-track,
+  .nexor-login-emblem[data-size='lg'] .nexor-login-bezel--gold {
+    inset: 16px;
+  }
+  .nexor-login-emblem[data-size='sm'] .nexor-login-bezel-track,
+  .nexor-login-emblem[data-size='sm'] .nexor-login-bezel--gold {
+    inset: 10px;
+  }
+  .nexor-login-bezel--teal {
+    inset: 0;
+  }
+  .nexor-login-bezel-track {
+    border: 1px solid rgba(196, 165, 116, 0.28);
+  }
+  .nexor-login-bezel {
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  }
+  .nexor-login-bezel--gold {
+    background: conic-gradient(from 0deg, transparent 0 58%, #f0d7a4 68%, #c4a574 76%, transparent 86%);
+    animation: nexor-login-bezel-spin 8s linear infinite;
+  }
+  .nexor-login-bezel--teal {
+    background: conic-gradient(from 180deg, transparent 0 70%, rgba(26, 138, 168, 0.85) 78%, transparent 88%);
+    animation: nexor-login-bezel-spin-rev 14s linear infinite;
+  }
+}
+
+@keyframes nexor-login-bezel-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes nexor-login-bezel-spin-rev {
+  to { transform: rotate(-360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nexor-login-bezel--gold,
+  .nexor-login-bezel--teal {
+    animation: none;
+  }
 }
 
 /* Modern scrollbar */

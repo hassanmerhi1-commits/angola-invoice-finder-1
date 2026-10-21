@@ -25,7 +25,7 @@
     "postgres:up": "docker compose up -d postgres",
     "postgres:migrate": "npm run migrate --prefix backend",
     "fix:schema-meta": "node scripts/check-schema-meta.cjs",
-    "electron:build": "npm run build && npm run rebuild:backend && node scripts/stage-updater-runtime-deps.cjs && electron-builder --win && node scripts/verify-packaged-backend.mjs && node scripts/verify-packaged-updater.mjs",
+    "electron:build": "npm run build && npm run rebuild:backend && node scripts/write-shell-build.mjs && node scripts/stage-updater-runtime-deps.cjs && electron-builder --win && node scripts/verify-packaged-backend.mjs && node scripts/verify-packaged-updater.mjs",
     "electron:build:mac": "npm run build && npm run rebuild:backend && electron-builder --mac",
     "electron:build:linux": "npm run build && npm run rebuild:backend && electron-builder --linux",
     "i18n:audit": "node scripts/i18n-audit.mjs",

@@ -151,6 +151,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     getDiagnostics: () => ipcRenderer.invoke('updater:getDiagnostics'),
     openReleasePage: () => ipcRenderer.invoke('updater:openReleasePage'),
+    downloadCityShell: () => ipcRenderer.invoke('updater:downloadCityShell'),
   },
 
   // Hot updates

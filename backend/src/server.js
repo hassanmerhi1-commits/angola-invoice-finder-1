@@ -373,6 +373,37 @@ app.get('/api/webapp-version', (_req, res) => {
   });
 });
 
+app.get('/api/webapp-manifest', (_req, res) => {
+  try {
+    const { buildWebappManifest } = require('./lib/webappManifest');
+    res.json(buildWebappManifest(webappPath));
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error?.message || 'webapp-manifest failed' });
+  }
+});
+
+app.get('/api/desktop-shell/latest', (_req, res) => {
+  const { publicLatestPayload, ensureDesktopShellCached } = require('./lib/desktopShell');
+  const payload = publicLatestPayload();
+  res.json(payload);
+  if (!payload.ready) {
+    ensureDesktopShellCached().catch((err) => console.warn('[desktop-shell]', err.message));
+  }
+});
+
+app.get('/api/desktop-shell/file', (req, res) => {
+  const { openCachedInstaller, ensureDesktopShellCached } = require('./lib/desktopShell');
+  const cached = openCachedInstaller();
+  if (!cached) {
+    ensureDesktopShellCached().catch((err) => console.warn('[desktop-shell]', err.message));
+    return res.status(503).json({ ok: false, error: 'Desktop installer is not on this city server yet' });
+  }
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${cached.meta.file}"`);
+  res.setHeader('X-NEXOR-BuildId', cached.meta.buildId);
+  fs.createReadStream(cached.filePath).pipe(res);
+});
+
 // ── Global API authentication gate ──────────────────────────────────────────
 // Every /api route requires a valid user JWT, except the public allowlist in
 // security.js (health, auth, sync, installations). NEXOR_OPEN_API=1 disables it
@@ -527,6 +558,15 @@ app.get(/^\/(?!api(?:\/|$)|app(?:\/|$)).*/, (req, res, next) => {
         update.ensureApplyLaunchShim();
       }
     } catch (_) { /* optional city-server apply shim */ }
+    setTimeout(() => {
+      try {
+        require('./lib/desktopShell').ensureDesktopShellCached()
+          .then((r) => console.log('[desktop-shell]', r?.skipped ? 'already cached' : 'cached installer'))
+          .catch((e) => console.warn('[desktop-shell]', e.message));
+      } catch (e) {
+        console.warn('[desktop-shell]', e.message);
+      }
+    }, 20_000);
     startReplicatorWorker(4000);
     startAgtWorker(5000);
     const { startAutoBackupWorker } = require('./jobs/autoBackup');

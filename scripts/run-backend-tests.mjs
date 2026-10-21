@@ -53,6 +53,8 @@ const testFiles = [
   'test/lastSaleDates.test.js',
   'test/serverUpdate.test.js',
   'test/branchCaixaOnCheckoutClient.test.js',
+  'test/cityUiCache.test.js',
+  'test/desktopShell.test.js',
 ];
 
 function resolveElectronBinary() {

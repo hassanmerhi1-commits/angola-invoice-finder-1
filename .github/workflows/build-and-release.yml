@@ -38,6 +38,11 @@ jobs:
       - name: Rebuild native modules for Electron
         run: npm run rebuild:backend
 
+      - name: Stamp desktop shell build
+        run: node scripts/write-shell-build.mjs
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+
       - name: Stage electron-updater runtime dependencies
         run: node scripts/stage-updater-runtime-deps.cjs
 
@@ -50,6 +55,7 @@ jobs:
         run: |
           npm run build:webapp
           node scripts/pack-server-update.mjs
+          node scripts/write-latest-desktop.mjs
         env:
           GITHUB_SHA: ${{ github.sha }}
 
@@ -81,6 +87,9 @@ jobs:
           if (-not (Test-Path release/latest-server.json)) {
             Write-Error "latest-server.json missing — city servers cannot check for a pack"
           }
+          if (-not (Test-Path release/latest-desktop.json)) {
+            Write-Error "latest-desktop.json missing — tills cannot take the desktop shell from the city"
+          }
           node scripts/verify-packaged-updater.mjs
 
       - name: Upload Release Assets
@@ -93,6 +102,7 @@ jobs:
             release/latest.yml
             release/nexor-server-update.zip
             release/latest-server.json
+            release/latest-desktop.json
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -59,3 +59,4 @@ backend/webapp/build.json
 backend/BUILD_STAMP.json
 .vs/
 release/
+electron/shell-build.json

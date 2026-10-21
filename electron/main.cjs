@@ -23,6 +23,7 @@ const backendManager = require('./backendManager.cjs');
 const { scanForServers } = require('./discoveryClient.cjs');
 const { httpJsonRequest } = require('./httpJson.cjs');
 const { httpBinaryRequest } = require('./httpBinary.cjs');
+const cityUiCache = require('./cityUiCache.cjs');
 
 /** Log line when localhost has no unified Express (often better-sqlite3 ABI mismatch). */
 function embeddedExpressUnreachableLogLine() {
@@ -418,10 +419,36 @@ function clearPendingUpdateMeta() {
   } catch (_) {}
 }
 
+function readShellBuildId() {
+  const candidates = [
+    path.join(__dirname, 'shell-build.json'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'app', 'electron', 'shell-build.json') : '',
+    process.resourcesPath ? path.join(process.resourcesPath, 'electron', 'shell-build.json') : '',
+  ].filter(Boolean);
+  for (const filePath of candidates) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const id = String(JSON.parse(fs.readFileSync(filePath, 'utf8')).buildId || '').trim();
+      if (id) return id;
+    } catch (_) { /* try next */ }
+  }
+  return null;
+}
+
+function isSameShellBuild(a, b) {
+  const left = String(a || '').trim().toLowerCase();
+  const right = String(b || '').trim().toLowerCase();
+  return !!left && !!right && left === right;
+}
+
 async function validatePendingUpdate(meta) {
   if (!meta?.installerPath || !meta?.version) return null;
   if (!fs.existsSync(meta.installerPath)) return null;
-  if (compareSemver(meta.version, app.getVersion()) <= 0) {
+  const currentBuild = readShellBuildId();
+  if (meta.buildId && currentBuild && isSameShellBuild(meta.buildId, currentBuild)) {
+    return null;
+  }
+  if (!meta.buildId && compareSemver(meta.version, app.getVersion()) <= 0) {
     try {
       fs.unlinkSync(meta.installerPath);
     } catch (_) {}
@@ -647,14 +674,21 @@ async function launchDownloadedInstaller(installerPath, version) {
   }, 800);
 }
 
-function verifySha512File(filePath, expectedBase64) {
+function verifySha512File(filePath, expected) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha512');
     const stream = fs.createReadStream(filePath);
     stream.on('data', (chunk) => hash.update(chunk));
     stream.on('end', () => {
-      const actual = hash.digest('base64');
-      if (actual !== expectedBase64) {
+      const expectedNorm = String(expected || '').trim();
+      const buf = hash.digest();
+      const actualHex = buf.toString('hex');
+      const actualB64 = buf.toString('base64');
+      if (
+        expectedNorm
+        && expectedNorm.toLowerCase() !== actualHex.toLowerCase()
+        && expectedNorm !== actualB64
+      ) {
         reject(new Error('Downloaded installer failed integrity check'));
         return;
       }
@@ -3052,6 +3086,14 @@ function normalizeServerUrl(url) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 }
 
+let lastRendererKind = 'local';
+let cityUiCacheServerInfo = null;
+let cityUiSnapshotInFlight = null;
+
+function cityUiCacheRoot() {
+  return path.join(INSTALL_DIR, 'city-ui-cache');
+}
+
 function getLocalRendererSource() {
   const possiblePaths = [
     path.join(__dirname, '../dist/index.html'),
@@ -3118,6 +3160,79 @@ function persistClientCityUi(serverUrl) {
   } catch (_) {}
 }
 
+function snapshotCityWebappFrom(baseUrl) {
+  const cityBase = String(baseUrl || '').replace(/\/$/, '').replace(/\/app$/i, '');
+  if (!cityBase) return Promise.resolve({ ok: false, error: 'no-url' });
+  if (cityUiSnapshotInFlight) return cityUiSnapshotInFlight;
+  cityUiSnapshotInFlight = cityUiCache.snapshotCityWebapp(cityBase, {
+    cacheRoot: cityUiCacheRoot(),
+    fetchJson: async (url) => {
+      const r = await httpJsonRequest(url, { timeoutMs: 15000 });
+      return r.ok ? r.json : null;
+    },
+    fetchBuffer: async (url) => {
+      const r = await httpBinaryRequest(url, { timeoutMs: 30000, headers: { Accept: '*/*' } });
+      return r.ok ? r.body : null;
+    },
+  }).then((result) => {
+    if (result?.ok && !result.skipped) {
+      console.warn(`[Renderer] Cached city UI ${result.stamp || ''} (${result.files || 0} files)`);
+    }
+    return result;
+  }).catch((error) => {
+    console.warn('[Renderer] City UI snapshot failed:', error?.message || error);
+    return { ok: false, error: error?.message || 'snapshot-failed' };
+  }).finally(() => {
+    cityUiSnapshotInFlight = null;
+  });
+  return cityUiSnapshotInFlight;
+}
+
+async function ensureCityUiCacheServer() {
+  if (cityUiCacheServerInfo?.port) return cityUiCacheServerInfo.port;
+  cityUiCacheServerInfo = await cityUiCache.startCityUiCacheServer(cityUiCacheRoot());
+  return cityUiCacheServerInfo.port;
+}
+
+async function loadCachedCityRenderer(targetWindow, normalizedRoute) {
+  if (!cityUiCache.hasCityUiCache(cityUiCacheRoot())) {
+    throw new Error('no city UI cache');
+  }
+  const port = await ensureCityUiCacheServer();
+  lastRendererKind = 'cache';
+  const url = `http://127.0.0.1:${port}/app/#${normalizedRoute}`;
+  console.warn('[Renderer] Using last city UI (server offline)');
+  await targetWindow.loadURL(url);
+}
+
+function keepTryingCityWebapp(targetWindow, cityUrl, normalizedRoute) {
+  const baseUrl = String(cityUrl || '').replace(/\/$/, '');
+  if (!baseUrl || isLoopbackHttpUrl(baseUrl)) return;
+  const started = Date.now();
+  const timer = setInterval(() => {
+    if (!targetWindow || targetWindow.isDestroyed() || Date.now() - started > 5 * 60 * 1000) {
+      clearInterval(timer);
+      return;
+    }
+    void httpJsonRequest(`${baseUrl}/api/webapp-version`, { timeoutMs: 1500 }).then((res) => {
+      if (!res?.ok || !targetWindow || targetWindow.isDestroyed()) return;
+      let url = '';
+      try { url = targetWindow.webContents.getURL() || ''; } catch (_) { url = ''; }
+      if (url.startsWith(`${baseUrl}/app`)) {
+        clearInterval(timer);
+        return;
+      }
+      clearInterval(timer);
+      console.warn(`[Renderer] City server is back, loading ${baseUrl}/app`);
+      loadServerRenderer(targetWindow, {
+        type: 'server',
+        url: `${baseUrl}/app`,
+        baseUrl,
+      }, normalizedRoute);
+    }).catch(() => {});
+  }, 3000);
+}
+
 function getRendererSource() {
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
   if (isDev) {
@@ -3145,6 +3260,9 @@ function getRendererSource() {
     return { type: 'server', url: `${serverUrl}/app`, baseUrl: serverUrl };
   }
 
+  if (cityUiCache.hasCityUiCache(cityUiCacheRoot())) {
+    return { type: 'cache' };
+  }
   return getLocalRendererSource();
 }
 
@@ -3228,20 +3346,40 @@ function loadServerRenderer(targetWindow, source, normalizedRoute) {
   const fallbackSource = getLocalRendererSource();
   let recovered = false;
   const baseUrl = String(source.url || '').replace(/\/$/, '');
+  const cityBase = String(source.baseUrl || baseUrl.replace(/\/app$/i, '')).replace(/\/$/, '');
   const serverLoadUrl = `${baseUrl}/#${normalizedRoute}`;
 
   const cleanup = () => {
     targetWindow.webContents.removeListener('did-fail-load', handleFail);
     targetWindow.webContents.removeListener('render-process-gone', handleGone);
+    targetWindow.webContents.removeListener('did-finish-load', handleFinish);
   };
 
   const fallbackToLocal = (reason) => {
     if (recovered) return;
     recovered = true;
     cleanup();
-    console.warn('[HotUpdate] Server renderer failed, falling back to local bundle:', reason);
+    console.warn('[HotUpdate] Server renderer failed, using last city UI if we have one:', reason);
+    if (cityUiCache.hasCityUiCache(cityUiCacheRoot())) {
+      loadCachedCityRenderer(targetWindow, normalizedRoute).then(() => {
+        if (isServerMode) keepTryingLiveWebapp(targetWindow, normalizedRoute);
+        else keepTryingCityWebapp(targetWindow, cityBase, normalizedRoute);
+      }).catch((error) => {
+        console.error('[HotUpdate] City UI cache failed:', error);
+        try {
+          lastRendererKind = 'local';
+          targetWindow.loadFile(fallbackSource.path, { hash: normalizedRoute });
+        } catch (fileError) {
+          showRendererRecoveryScreen(targetWindow, fileError?.message || error?.message || reason);
+        }
+      });
+      return;
+    }
     try {
+      lastRendererKind = 'local';
       targetWindow.loadFile(fallbackSource.path, { hash: normalizedRoute });
+      if (isServerMode) keepTryingLiveWebapp(targetWindow, normalizedRoute);
+      else keepTryingCityWebapp(targetWindow, cityBase, normalizedRoute);
     } catch (error) {
       console.error('[HotUpdate] Local fallback failed:', error);
       showRendererRecoveryScreen(targetWindow, error?.message || reason);
@@ -3257,9 +3395,17 @@ function loadServerRenderer(targetWindow, source, normalizedRoute) {
     fallbackToLocal(details?.reason || 'Renderer process crashed');
   };
 
+  const handleFinish = () => {
+    if (recovered) return;
+    cleanup();
+    lastRendererKind = 'server';
+    void snapshotCityWebappFrom(cityBase);
+  };
+
   cleanup();
   targetWindow.webContents.once('did-fail-load', handleFail);
   targetWindow.webContents.once('render-process-gone', handleGone);
+  targetWindow.webContents.once('did-finish-load', handleFinish);
   targetWindow.loadURL(serverLoadUrl).catch((error) => fallbackToLocal(error?.message || 'loadURL failed'));
 }
 
@@ -3307,17 +3453,30 @@ function loadRendererRoute(targetWindow, route = '/') {
         }, normalizedRoute);
         return;
       }
-      const local = getLocalRendererSource();
-      targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((error) => {
-        console.error('[Renderer] Failed to load local renderer:', error);
-        showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
-      });
+      if (cityUiCache.hasCityUiCache(cityUiCacheRoot())) {
+        loadCachedCityRenderer(targetWindow, normalizedRoute).catch((error) => {
+          console.error('[Renderer] Failed to load cached city UI:', error);
+          const local = getLocalRendererSource();
+          lastRendererKind = 'local';
+          targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((fileError) => {
+            showRendererRecoveryScreen(targetWindow, fileError?.message || error?.message || 'Local renderer load failed');
+          });
+        });
+      } else {
+        const local = getLocalRendererSource();
+        lastRendererKind = 'local';
+        targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((error) => {
+          console.error('[Renderer] Failed to load local renderer:', error);
+          showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
+        });
+      }
       keepTryingLiveWebapp(targetWindow, normalizedRoute);
     });
     return;
   }
 
   if (source.type === 'dev') {
+    lastRendererKind = 'dev';
     const devUrl = `${source.url}/#${normalizedRoute}`;
     const handleDevFail = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame) return;
@@ -3342,6 +3501,21 @@ function loadRendererRoute(targetWindow, route = '/') {
     return;
   }
 
+  if (source.type === 'cache') {
+    loadCachedCityRenderer(targetWindow, normalizedRoute).then(() => {
+      keepTryingCityWebapp(targetWindow, resolveCityServerUrl(), normalizedRoute);
+    }).catch((error) => {
+      console.error('[Renderer] Failed to load cached city UI:', error);
+      lastRendererKind = 'local';
+      const local = getLocalRendererSource();
+      targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((fileError) => {
+        showRendererRecoveryScreen(targetWindow, fileError?.message || error?.message || 'Cached UI load failed');
+      });
+    });
+    return;
+  }
+
+  lastRendererKind = 'local';
   targetWindow.loadFile(source.path, { hash: normalizedRoute }).catch((error) => {
     console.error('[Renderer] Failed to load local renderer:', error);
     showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
@@ -4628,9 +4802,53 @@ ipcMain.handle('updater:getDiagnostics', async () => {
     remoteVersion,
     remoteCheckError,
     packaged: app.isPackaged,
+    hasCityUiCache: true,
+    shellBuildId: readShellBuildId(),
   };
 });
 ipcMain.handle('updater:download', async () => runUpdateDownload());
+ipcMain.handle('updater:downloadCityShell', async () => {
+  try {
+    const city = resolveCityServerUrl()
+      || (isServerMode ? `http://127.0.0.1:${readServerListenPort()}` : '');
+    if (!city) return { success: false, error: 'City server address is not known' };
+    const latestRes = await httpJsonRequest(`${city.replace(/\/$/, '')}/api/desktop-shell/latest`, { timeoutMs: 15000 });
+    const info = latestRes.json;
+    if (!latestRes.ok || !info?.ready) {
+      return { success: false, error: 'City server does not have the desktop installer yet' };
+    }
+    if (isSameShellBuild(readShellBuildId(), info.buildId)) {
+      sendUpdaterStatus({ status: 'not-available' });
+      return { success: true, alreadyCurrent: true, buildId: info.buildId };
+    }
+    const destDir = getUpdaterPendingDir();
+    fs.mkdirSync(destDir, { recursive: true });
+    const destPath = path.join(destDir, path.basename(String(info.file || 'NEXOR-ERP-1.3.8-x64.exe')));
+    sendUpdaterStatus({ status: 'downloading', progress: 0 });
+    await downloadFileResilient(`${city.replace(/\/$/, '')}/api/desktop-shell/file`, destPath, {
+      expectedSize: Number(info.size) || 0,
+      onProgress: (percent) => {
+        sendUpdaterStatus({ status: 'downloading', progress: Math.round(percent) });
+      },
+    });
+    if (info.sha512) await verifySha512File(destPath, info.sha512);
+    unblockWindowsDownload(destPath);
+    pendingHttpInstallerPath = destPath;
+    writePendingUpdateMeta({
+      version: info.appVersion || '1.3.8',
+      buildId: info.buildId,
+      installerPath: destPath,
+      sha512: info.sha512,
+      downloadedAt: new Date().toISOString(),
+    });
+    sendUpdaterStatus({ status: 'downloaded', version: info.appVersion || '1.3.8' });
+    return { success: true, version: info.appVersion || '1.3.8', buildId: info.buildId, source: 'city' };
+  } catch (err) {
+    const message = err?.message || String(err);
+    sendUpdaterStatus({ status: 'error', error: message });
+    return { success: false, error: message };
+  }
+});
 ipcMain.handle('updater:getState', async () => {
   const meta = await restorePendingUpdate();
   if (!meta) return { status: 'none' };
@@ -4691,8 +4909,11 @@ ipcMain.handle('hotUpdate:setConfig', (_, config) => {
   return saveHotUpdateConfig(config);
 });
 ipcMain.handle('hotUpdate:getSource', () => {
+  if (lastRendererKind === 'server' || lastRendererKind === 'cache' || lastRendererKind === 'local') {
+    return { success: true, source: lastRendererKind };
+  }
   const source = getRendererSource();
-  return { success: true, source: source.type === 'server' ? 'server' : 'local' };
+  return { success: true, source: source.type === 'server' ? 'server' : source.type === 'cache' ? 'cache' : 'local' };
 });
 ipcMain.handle('hotUpdate:checkServer', async (_, url) => {
   try {

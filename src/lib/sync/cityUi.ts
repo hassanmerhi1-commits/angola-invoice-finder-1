@@ -6,7 +6,7 @@ export async function getTillUiSource(): Promise<TillUiSource> {
   if (typeof window === 'undefined' || !(window as any).electronAPI?.isElectron) return 'web';
   try {
     const result = await (window as any).electronAPI?.hotUpdate?.getSource?.();
-    if (result?.source === 'server') return 'server';
+    if (result?.source === 'server' || result?.source === 'cache') return 'server';
   } catch {
     /* old Electron */
   }
