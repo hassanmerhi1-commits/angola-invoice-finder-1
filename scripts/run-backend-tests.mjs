@@ -52,6 +52,7 @@ const testFiles = [
   'test/inventoryGridServerCache.test.js',
   'test/lastSaleDates.test.js',
   'test/serverUpdate.test.js',
+  'test/branchCaixaOnCheckoutClient.test.js',
 ];
 
 function resolveElectronBinary() {

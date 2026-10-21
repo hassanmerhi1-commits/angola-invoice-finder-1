@@ -3168,9 +3168,25 @@ function showRendererRecoveryScreen(targetWindow, message) {
   targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 
-function probeLoopbackWebappReady() {
+function readServerListenPort() {
+  const envPort = Number(process.env.PORT);
+  if (Number.isFinite(envPort) && envPort > 0) return envPort;
+  try {
+    const envPath = path.join(INSTALL_DIR, 'database.env');
+    if (fs.existsSync(envPath)) {
+      const match = fs.readFileSync(envPath, 'utf8').match(/^\s*PORT\s*=\s*(\d+)/m);
+      if (match) {
+        const port = Number(match[1]);
+        if (Number.isFinite(port) && port > 0) return port;
+      }
+    }
+  } catch (_) { /* default */ }
+  return getEmbeddedExpressPort() || 3000;
+}
+
+function probeLoopbackWebappReady(port = readServerListenPort()) {
   return new Promise((resolve) => {
-    const req = http.get('http://127.0.0.1:3000/app/', { timeout: 1500 }, (res) => {
+    const req = http.get(`http://127.0.0.1:${port}/app/`, { timeout: 1500 }, (res) => {
       let body = '';
       res.on('data', (chunk) => {
         body += chunk;
@@ -3180,7 +3196,7 @@ function probeLoopbackWebappReady() {
       });
       res.on('end', () => {
         const ok = res.statusCode === 200 && /index-[^"' ]+\.js/.test(body);
-        resolve(ok);
+        resolve(ok ? port : false);
       });
       res.on('error', () => resolve(false));
     });
@@ -3190,6 +3206,16 @@ function probeLoopbackWebappReady() {
       resolve(false);
     });
   });
+}
+
+async function waitForLoopbackWebapp(timeoutMs = 25000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const readyPort = await probeLoopbackWebappReady(readServerListenPort());
+    if (readyPort) return readyPort;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return null;
 }
 
 function loadServerRenderer(targetWindow, source, normalizedRoute) {
@@ -3236,14 +3262,15 @@ function loadRendererRoute(targetWindow, route = '/') {
   const source = getRendererSource();
 
   if (isServerMode && source.type !== 'dev') {
-    void probeLoopbackWebappReady().then((ready) => {
+    void waitForLoopbackWebapp(25000).then((port) => {
       if (!targetWindow || targetWindow.isDestroyed()) return;
-      if (ready) {
-        console.warn('[Renderer] Server desktop using http://127.0.0.1:3000/app');
+      if (port) {
+        const baseUrl = `http://127.0.0.1:${port}`;
+        console.warn(`[Renderer] Server desktop using ${baseUrl}/app`);
         loadServerRenderer(targetWindow, {
           type: 'server',
-          url: 'http://127.0.0.1:3000/app',
-          baseUrl: 'http://127.0.0.1:3000',
+          url: `${baseUrl}/app`,
+          baseUrl,
         }, normalizedRoute);
         return;
       }

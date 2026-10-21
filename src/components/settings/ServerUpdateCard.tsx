@@ -109,6 +109,9 @@ export function ServerUpdateCard() {
       setApplying(false);
       setRestarting(false);
       setOfflineDuringApply(false);
+      if (phase === 'success') {
+        window.setTimeout(() => window.location.reload(), 1500);
+      }
     } else if (phase && BUSY_PHASES.has(phase)) {
       setApplying(true);
       setRestarting(phase === 'restarting');

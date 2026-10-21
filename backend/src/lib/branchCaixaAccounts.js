@@ -126,6 +126,12 @@ async function ensureBranchCaixaAccount(dbOrClient, branchId, branchName) {
     return { created: false, code: null, branchId: branchIdStr, branchName: name };
   };
 
+  // A checked-out pg client already has .connect AND .release. Calling
+  // connect() again throws "Client has already been connected" and rolls
+  // back Filial create. Only checkout from a pool (connect, no release).
+  if (typeof dbOrClient.release === 'function') {
+    return run(dbOrClient);
+  }
   if (typeof dbOrClient.connect === 'function') {
     const client = await dbOrClient.connect();
     try {

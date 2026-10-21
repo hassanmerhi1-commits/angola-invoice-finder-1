@@ -83,7 +83,11 @@ module.exports = function(broadcastTable) {
 
       const branch = result.rows[0];
 
-      await ensureBranchCaixaAccount(client, branch.id, normalizedName);
+      try {
+        await ensureBranchCaixaAccount(client, branch.id, normalizedName);
+      } catch (caixaErr) {
+        console.warn('[BRANCHES] branch caixa account:', caixaErr.message);
+      }
       try {
         const { ensureDefaultWarehouse } = require('../lib/warehouses');
         await ensureDefaultWarehouse(client, branch.id, normalizedName);
@@ -109,7 +113,7 @@ module.exports = function(broadcastTable) {
       if (error.code === '23505') {
         return res.status(409).json({ error: 'Branch code already exists. Please try again.' });
       }
-      res.status(500).json({ error: 'Failed to create branch' });
+      res.status(500).json({ error: error.message || 'Failed to create branch' });
     } finally {
       client.release();
     }
