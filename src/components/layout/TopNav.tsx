@@ -24,7 +24,7 @@ import { NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { dispatchToolbarEvent, NEXOR_TOOLBAR, NEXOR_SUPPLIERS_NEW } from '@/lib/nexorToolbarEvents';
 import { NEXOR_TOOLBAR_BTN } from '@/lib/nexorToolbarStyles';
 import { prefetchRoute } from '@/lib/routePrefetch';
-import { themeChrome } from '@/themes/active';
+import { getThemePreset, useColorThemeId } from '@/themes/colorTheme';
 import { 
   Building2, User as UserIcon, LogOut, Settings, Menu,
   LayoutDashboard, ShoppingCart, FileText, Package,
@@ -179,6 +179,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
   const { logo, companyName } = useCompanyLogo();
+  const themeChrome = getThemePreset(useColorThemeId()).chrome;
   // Authoritative permission check based on the logged-in user's role (the prop),
   // not a localStorage lookup which can be stale after a user switch.
   const canDo = useCallback(

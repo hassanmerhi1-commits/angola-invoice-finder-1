@@ -17,7 +17,7 @@ import { useDailyBriefing } from '@/hooks/useDailyBriefing';
 import { DailyTodoTasksPanel } from '@/components/daily/DailyTodoTasksPanel';
 import { DailyTodoBriefingList } from '@/components/daily/DailyTodoBriefingList';
 import { ensureDayTodos, markDailyTodoShown, todayKey, type DailyTodoItem } from '@/lib/dailyTodos';
-import { themeChrome } from '@/themes/active';
+import { getThemePreset, useColorThemeId } from '@/themes/colorTheme';
 
 interface DailyTodoDialogProps {
   open: boolean;
@@ -25,6 +25,7 @@ interface DailyTodoDialogProps {
 }
 
 function TabCount({ count, tone = 'tasks' }: { count: number; tone?: 'tasks' | 'amber' | 'emerald' | 'rose' | 'indigo' }) {
+  const themeChrome = getThemePreset(useColorThemeId()).chrome;
   if (count <= 0) return null;
   const toneClass =
     tone === 'amber'
@@ -44,6 +45,7 @@ function TabCount({ count, tone = 'tasks' }: { count: number; tone?: 'tasks' | '
 }
 
 export function DailyTodoDialog({ open, onOpenChange }: DailyTodoDialogProps) {
+  const themeChrome = getThemePreset(useColorThemeId()).chrome;
   const { t } = useTranslation();
   const d = t.dailyTodosUi;
   const { apiBranchId } = useBranchScope();

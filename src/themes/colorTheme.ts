@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { getThemePreset, isColorThemeId, type ColorThemeId } from '@/themes/registry';
 
 export type { ColorThemeId } from '@/themes/types';
@@ -75,18 +76,29 @@ export function applyColorTheme(theme: ColorThemeId = resolveColorTheme()) {
   }
 }
 
-/** Persist and reload so Tailwind chrome class maps pick up the new preset.
- *  Do not flip the Windows title bar before reload — that is what made ink feel stuck. */
+type ColorThemeListener = (theme: ColorThemeId) => void;
+const colorThemeListeners = new Set<ColorThemeListener>();
+
+export function subscribeColorTheme(listener: ColorThemeListener) {
+  colorThemeListeners.add(listener);
+  return () => {
+    colorThemeListeners.delete(listener);
+  };
+}
+
+/** Apply CSS + Windows chrome immediately. No full reload. */
 export function setColorTheme(theme: ColorThemeId) {
   if (!isColorThemeId(theme)) return;
-  try {
-    localStorage.setItem(COLOR_THEME_STORAGE_KEY, theme);
-  } catch {
-    /* ignore */
-  }
-  window.location.reload();
+  applyColorTheme(theme);
+  colorThemeListeners.forEach((listener) => listener(theme));
 }
 
 export function getCurrentColorTheme(): ColorThemeId {
   return resolveColorTheme();
+}
+
+export function useColorThemeId(): ColorThemeId {
+  const [theme, setTheme] = useState<ColorThemeId>(() => resolveColorTheme());
+  useEffect(() => subscribeColorTheme(setTheme), []);
+  return theme;
 }

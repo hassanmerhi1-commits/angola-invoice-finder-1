@@ -12,6 +12,8 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { RoutePermissionGuard } from "@/components/RoutePermissionGuard";
 import { PrintPreviewHost } from "@/components/print/PrintPreviewHost";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ElectronTitleDragBar } from "@/components/ElectronTitleDragBar";
+import { LiveWebappBanner } from "@/components/LiveWebappBanner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -504,6 +506,8 @@ const App = () => {
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>
         <ErrorBoundary>
+          <ElectronTitleDragBar />
+          <LiveWebappBanner />
           <BranchProvider>
             <TooltipProvider>
               <Toaster />

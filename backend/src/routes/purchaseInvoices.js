@@ -4,6 +4,7 @@ const db = require('../db');
 const { toRow, fromRow } = require('../purchaseInvoiceMappers');
 const { requirePermission } = require('../middleware/requirePermission');
 const { userHasPermission } = require('../lib/rolePermissions');
+const { resolvePurchaseInvoiceWrite } = require('../lib/purchaseInvoiceConfirmPolicy');
 const { buildPurchaseInvoiceBranchFilter } = require('../lib/branchIdMatch');
 const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride, isForeignBranch } = require('../middleware/branchScope');
 const { auditErpSafe } = require('../lib/erpAudit');
@@ -395,11 +396,30 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         });
       }
 
-      const skipAccounting = req.body?.skipAccounting === true || req.body?.metadataOnly === true;
-      const priorInvoice = await db.query('SELECT branch_id FROM purchase_invoices WHERE id = $1', [row.id]);
+      const priorInvoice = await db.query(
+        'SELECT branch_id, status, created_by, created_by_name, created_at FROM purchase_invoices WHERE id = $1',
+        [row.id],
+      );
       if (priorInvoice.rows[0] && isForeignBranch(req.branchScope, priorInvoice.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Not found' });
       }
+      const write = resolvePurchaseInvoiceWrite({
+        user: req.user,
+        existing: priorInvoice.rows[0] || null,
+        requestedStatus: row.status || req.body?.status,
+      });
+      if (!write.ok) {
+        return res.status(write.statusCode || 403).json({ error: write.error });
+      }
+      row.status = write.status;
+      if (priorInvoice.rows[0]) {
+        row.created_by = priorInvoice.rows[0].created_by || row.created_by;
+        row.created_by_name = priorInvoice.rows[0].created_by_name || row.created_by_name;
+        row.created_at = priorInvoice.rows[0].created_at || row.created_at;
+      }
+      const skipAccounting = write.skipAccounting
+        || req.body?.skipAccounting === true
+        || req.body?.metadataOnly === true;
 
       const { resolveBranchRow } = require('../lib/branchIdMatch');
       const warehouseRaw = String(row.warehouse_id || row.branch_id || '').trim();
@@ -627,11 +647,28 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
   router.put('/:id', requirePermission('purchase_create'), async (req, res) => {
     try {
       applyWriteBranchOverride(req, req.body, ['branchId', 'branch_id', 'warehouseId', 'warehouse_id'], 'PURCHASE INVOICE');
-      const existing = await db.query('SELECT branch_id FROM purchase_invoices WHERE id = $1', [req.params.id]);
+      const existing = await db.query(
+        'SELECT branch_id, status, created_by, created_by_name, created_at FROM purchase_invoices WHERE id = $1',
+        [req.params.id],
+      );
       if (existing.rows[0] && isForeignBranch(req.branchScope, existing.rows[0].branch_id)) {
         return res.status(404).json({ error: 'Not found' });
       }
       const row = toRow({ ...req.body, id: req.params.id });
+      const write = resolvePurchaseInvoiceWrite({
+        user: req.user,
+        existing: existing.rows[0] || null,
+        requestedStatus: row.status || req.body?.status,
+      });
+      if (!write.ok) {
+        return res.status(write.statusCode || 403).json({ error: write.error });
+      }
+      row.status = write.status;
+      if (existing.rows[0]) {
+        row.created_by = existing.rows[0].created_by || row.created_by;
+        row.created_by_name = existing.rows[0].created_by_name || row.created_by_name;
+        row.created_at = existing.rows[0].created_at || row.created_at;
+      }
       const dup = await findDuplicateSupplierInvoice(row.supplier_id, row.supplier_invoice_no, row.id);
       if (dup) {
         return res.status(409).json({

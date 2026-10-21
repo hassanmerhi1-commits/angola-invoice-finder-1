@@ -4,9 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useLanguage } from '@/i18n';
 import {
-  getCurrentColorTheme,
   setColorTheme,
   THEME_PRESET_LIST,
+  useColorThemeId,
   type ColorThemeId,
 } from '@/themes/colorTheme';
 import {
@@ -49,7 +49,7 @@ export function AppearanceSwitcher({
   const { language, setLanguage, t } = useLanguage();
   const colorLabels = t.colorTheme;
   const sizeLabels = t.textSize;
-  const currentTheme = getCurrentColorTheme();
+  const currentTheme = useColorThemeId();
   const [textSize, setTextSizeState] = useState(getCurrentTextSize);
   const isMenu = variant === 'menu';
   const label = t.topNav.menus.display;

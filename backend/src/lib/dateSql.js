@@ -7,6 +7,22 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
+function luandaToday() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Luanda',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+    if (year && month && day) return `${year}-${month}-${day}`;
+  } catch (_) { /* Intl timezone data missing */ }
+  return new Date().toISOString().slice(0, 10);
+}
+
 function formatYmd(year, monthIndex, day) {
   return `${year}-${pad2(monthIndex + 1)}-${pad2(day)}`;
 }
@@ -18,7 +34,7 @@ function fromDateObject(d) {
 }
 
 function normalizeSqlDate(value, { allowNull = true } = {}) {
-  const fallback = () => (allowNull ? null : new Date().toISOString().slice(0, 10));
+  const fallback = () => (allowNull ? null : luandaToday());
 
   if (value == null || value === '') return fallback();
 
@@ -53,4 +69,4 @@ function normalizeSqlDate(value, { allowNull = true } = {}) {
   return fallback();
 }
 
-module.exports = { normalizeSqlDate };
+module.exports = { normalizeSqlDate, luandaToday };

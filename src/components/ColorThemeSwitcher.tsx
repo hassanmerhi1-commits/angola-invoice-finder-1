@@ -10,9 +10,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useTranslation } from '@/i18n';
 import {
-  getCurrentColorTheme,
   setColorTheme,
   THEME_PRESET_LIST,
+  useColorThemeId,
   type ColorThemeId,
 } from '@/themes/colorTheme';
 import { cn } from '@/lib/utils';
@@ -26,7 +26,7 @@ function themeLabel(
 
 export function ColorThemeSwitcher({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
-  const current = getCurrentColorTheme();
+  const current = useColorThemeId();
   const labels = t.colorTheme;
 
   return (

@@ -30,6 +30,9 @@ export const en = {
     appExitDetail: "Are you sure you want to quit NEXOR ERP? Unsaved changes may be lost.",
     appExitCancel: "Cancel",
     appExitQuit: "Quit",
+    webappUpdatedTitle: "Server update ready",
+    webappUpdatedDesc: "Reload this window to pick it up. You do not need to close NEXOR.",
+    webappUpdatedAction: "Reload now",
     actions: "Actions",
     status: "Status",
     date: "Date",
@@ -5222,6 +5225,13 @@ export const en = {
 
     // Save results
     purchaseInvoiceSavedTitle: "Purchase invoice saved",
+    saveDraft: "Save draft",
+    confirmPurchase: "Confirm",
+    draftSavedTitle: "Draft saved",
+    draftSavedDesc: "{number} is saved as a draft. You can open it again and keep working.",
+    confirmDenied: "You do not have permission to confirm a purchase invoice.",
+    cannotEditOthersDraft: "You can only edit your own draft until an administrator confirms it.",
+    cannotEditConfirmed: "This purchase invoice is already confirmed.",
     savedToOtherWarehouseTitle: "Saved to another warehouse",
     savedToOtherWarehouseDesc:
       "This purchase was saved to {warehouse}. Stock was updated there. Switch the branch in the top bar to see it in journals and branch-filtered reports.",

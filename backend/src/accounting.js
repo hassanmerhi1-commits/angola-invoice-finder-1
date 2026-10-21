@@ -1,6 +1,7 @@
 // Automatic Journal Entry Generator
 // Creates double-entry accounting records for all business transactions
 const { randomUUID } = require('crypto');
+const { normalizeSqlDate } = require('./lib/dateSql');
 
 /** Central registry of atomic document sequences (prefix + document_type key). */
 const DOCUMENT_SEQUENCE_CONFIG = {
@@ -253,7 +254,7 @@ async function findAccountByCode(client, code) {
  */
 /** Block posts into closed/locked months (shared by all JE creators). */
 async function assertPeriodOpenForJournal(client, entryDate) {
-  const d = new Date(entryDate || new Date().toISOString().split('T')[0]);
+  const d = new Date(entryDate || normalizeSqlDate(null, { allowNull: false }));
   if (Number.isNaN(d.getTime())) return;
   const year = d.getFullYear();
   const month = d.getMonth() + 1;
@@ -326,7 +327,7 @@ async function createJournalEntry(client, params) {
      (id, entry_number, entry_date, description, reference_type, reference_id, 
       total_debit, total_credit, is_posted, posted_at, branch_id, created_by, created_by_name)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, CURRENT_TIMESTAMP, $9, $10, $11)`,
-    [entryId, entryNumber, entryDate || new Date().toISOString().split('T')[0],
+    [entryId, entryNumber, normalizeSqlDate(entryDate, { allowNull: false }),
       description, referenceType, storedReferenceId,
       // created_by is UUID in Postgres — never pass display names like "HUSSEIN MERHI"
       totalDebit, totalCredit, normalizeOptionalId(branchId), normalizeUuid(createdBy), String(createdByName || '').trim()]
@@ -357,7 +358,7 @@ async function createJournalEntry(client, params) {
     }
 
     const lineId = randomUUID();
-    const lineEntryDate = entryDate || new Date().toISOString().split('T')[0];
+    const lineEntryDate = normalizeSqlDate(entryDate, { allowNull: false });
     try {
       await client.query(
         `INSERT INTO journal_entry_lines
@@ -453,7 +454,7 @@ async function updateJournalEntry(client, entryId, params) {
     );
   }
 
-  const newDate = entryDate || entry.entry_date || new Date().toISOString().split('T')[0];
+  const newDate = normalizeSqlDate(entryDate || entry.entry_date, { allowNull: false });
   await assertPeriodOpenForJournal(client, entry.entry_date);
   await assertPeriodOpenForJournal(client, newDate);
 
@@ -524,7 +525,7 @@ async function updateJournalEntry(client, entryId, params) {
       );
     }
 
-    const lineEntryDate = newDate || entry.entry_date || new Date().toISOString().split('T')[0];
+    const lineEntryDate = normalizeSqlDate(newDate || entry.entry_date, { allowNull: false });
     try {
       await client.query(
         `INSERT INTO journal_entry_lines

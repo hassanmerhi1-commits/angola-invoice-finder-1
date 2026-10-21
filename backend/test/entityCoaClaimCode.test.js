@@ -103,6 +103,23 @@ describe('supplier COA claim compact codes', () => {
     assert.equal(header.rows[0].name, 'Combustivel');
   });
 
+  it('reuses an existing 3211 header instead of saying the code is taken', async () => {
+    const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
+    const rowId = randomUUID();
+    await harness.withClient(async (client) => {
+      await client.query(`DELETE FROM chart_of_accounts WHERE code = '3214'`);
+      await client.query(
+        `INSERT INTO chart_of_accounts
+         (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '3214', $2, 'liability', 'credit', NULL, 3, 1, 1)`,
+        [rowId, `PGC leftover ${suffix}`],
+      );
+      const claim = await claimChartAccountCode(client, { code: '3214', isHeader: true });
+      assert.equal(claim.action, 'reuse');
+      assert.equal(claim.row.id, rowId);
+    });
+  });
+
   it('reactivates an unused inactive 3212 instead of colliding', async () => {
     const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
     const rowId = randomUUID();

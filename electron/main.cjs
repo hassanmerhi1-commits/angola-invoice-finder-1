@@ -3576,6 +3576,20 @@ function chromeForTheme(id) {
   return WINDOW_CHROME[id] || WINDOW_CHROME.ink;
 }
 
+/** Windows caption buttons sit on a 32px overlay. Must be set at BrowserWindow create. */
+function windowFrameOptions(chrome) {
+  const frame = { backgroundColor: chrome.background };
+  if (process.platform === 'win32') {
+    frame.titleBarStyle = 'hidden';
+    frame.titleBarOverlay = {
+      color: chrome.background,
+      symbolColor: chrome.symbol,
+      height: 32,
+    };
+  }
+  return frame;
+}
+
 function applyNativeWindowTheme(themeId = readStoredColorTheme()) {
   const chrome = chromeForTheme(themeId);
   try { nativeTheme.themeSource = chrome.source; } catch (_) { /* ignore */ }
@@ -3600,15 +3614,16 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400, height: 900, minWidth: 900, minHeight: 640,
     icon: path.join(__dirname, '../public/icon.png'),
-    backgroundColor: chrome.background,
+    ...windowFrameOptions(chrome),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs')
     },
-    autoHideMenuBar: false,
+    autoHideMenuBar: true,
     show: false
   });
+  applyNativeWindowTheme(readStoredColorTheme());
 
   const menuTemplate = [
     { label: 'NEXOR ERP', submenu: [
@@ -3697,16 +3712,17 @@ function createSecondaryWindow() {
     width: 1400, height: 900, minWidth: 900, minHeight: 640,
     icon: path.join(__dirname, '../public/icon.png'),
     title: 'NEXOR ERP',
-    backgroundColor: chrome.background,
+    ...windowFrameOptions(chrome),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
       partition,
     },
-    autoHideMenuBar: false,
+    autoHideMenuBar: true,
     show: false,
   });
+  applyNativeWindowTheme(readStoredColorTheme());
 
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
   loadRendererRoute(win, '/');

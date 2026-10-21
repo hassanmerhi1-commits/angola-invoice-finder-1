@@ -15,7 +15,7 @@ import {
   Users, Calendar, CreditCard, GitBranch,
 } from 'lucide-react';
 import { NEXOR_STAT_CARD_TONE, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, NEXOR_FLOW_STEP, type NexorTone } from '@/lib/nexorToneStyles';
-import { themeChrome } from '@/themes/active';
+import { getThemePreset, useColorThemeId } from '@/themes/colorTheme';
 import { NEXOR_FEATURE_SHORTCUT_BTN } from '@/lib/nexorToolbarStyles';
 
 const DashboardChartsSection = lazy(() => import('@/components/dashboard/DashboardChartsSection'));
@@ -41,6 +41,7 @@ export default function Dashboard() {
   const { language, t } = useTranslation();
   const d = t.dashboardUi;
   const { companyName, logo } = useCompanyLogo();
+  const themeChrome = getThemePreset(useColorThemeId()).chrome;
   const cacheKey = String(apiBranchId || 'all');
   const cached = kpiCache.get(cacheKey);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(cached?.kpis ?? null);

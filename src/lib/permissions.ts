@@ -66,6 +66,7 @@ export const PERMISSIONS: Permission[] = [
   { id: 'purchase_create', name: 'Create PO', description: 'Create purchase order', category: 'stock' },
   { id: 'purchase_approve', name: 'Approve PO', description: 'Approve purchase order', category: 'stock' },
   { id: 'purchase_receive', name: 'Receive PO', description: 'Receive goods', category: 'stock' },
+  { id: 'purchase_invoice_confirm', name: 'Confirm purchase invoice', description: 'Confirm a purchase invoice (stock and accounts). Admin has this; a manager can be granted it.', category: 'stock' },
 
   // Reports
   { id: 'reports_daily', name: 'Daily Reports', description: 'Daily reports', category: 'reports' },

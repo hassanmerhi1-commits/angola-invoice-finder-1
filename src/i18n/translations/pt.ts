@@ -32,6 +32,9 @@ export const pt: TranslationKeys = {
     appExitDetail: "Tem a certeza que deseja sair do NEXOR ERP? Alterações não guardadas podem ser perdidas.",
     appExitCancel: "Cancelar",
     appExitQuit: "Sair",
+    webappUpdatedTitle: "Actualização do servidor pronta",
+    webappUpdatedDesc: "Recarregue esta janela para a receber. Não precisa de fechar o NEXOR.",
+    webappUpdatedAction: "Recarregar agora",
     actions: "Acções",
     status: "Estado",
     date: "Data",
@@ -5224,6 +5227,13 @@ export const pt: TranslationKeys = {
 
     // Save results
     purchaseInvoiceSavedTitle: "Fatura de Compra Guardada",
+    saveDraft: "Guardar rascunho",
+    confirmPurchase: "Confirmar",
+    draftSavedTitle: "Rascunho guardado",
+    draftSavedDesc: "{number} ficou em rascunho. Pode abrir de novo e continuar.",
+    confirmDenied: "Não tem permissão para confirmar uma fatura de compra.",
+    cannotEditOthersDraft: "Só pode editar o seu próprio rascunho até um administrador confirmar.",
+    cannotEditConfirmed: "Esta fatura de compra já está confirmada.",
     savedToOtherWarehouseTitle: "Gravada noutro armazém",
     savedToOtherWarehouseDesc:
       "Esta compra foi gravada em {warehouse}. O stock foi actualizado aí. Mude a filial na barra superior para a ver nos diários e relatórios filtrados por filial.",

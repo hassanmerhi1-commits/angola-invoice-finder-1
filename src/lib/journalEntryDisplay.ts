@@ -1,3 +1,5 @@
+import { timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
+
 export interface JournalContextItem {
   name: string;
   sku?: string;
@@ -147,28 +149,26 @@ export function formatJournalDateTime(
   entry: Pick<JournalDisplayEntry, 'createdAt' | 'postedAt' | 'entryDate'>,
   locale: string,
 ): string {
-  const ts = entry.postedAt || entry.createdAt || entry.entryDate;
-  if (!ts) return '—';
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return String(ts);
-  return d.toLocaleString(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const day = timestampLocalDate(entry.entryDate || entry.createdAt || entry.postedAt);
+  const time = timestampLocalTime(entry.postedAt || entry.createdAt || entry.entryDate);
+  if (!day) return '—';
+  const [year, month, date] = day.split('-');
+  const datePart = String(locale || '').toLowerCase().startsWith('en')
+    ? `${month}/${date}/${year}`
+    : `${date}/${month}/${year}`;
+  return time ? `${datePart} ${time.slice(0, 5)}` : datePart;
 }
 
 export function formatJournalEntryDate(
   entry: Pick<JournalDisplayEntry, 'entryDate' | 'createdAt'>,
   locale: string,
 ): string {
-  const ts = entry.entryDate || entry.createdAt;
-  if (!ts) return '—';
-  const d = new Date(ts.includes('T') ? ts : `${ts}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return String(ts);
-  return d.toLocaleDateString(locale);
+  const day = timestampLocalDate(entry.entryDate || entry.createdAt);
+  if (!day) return '—';
+  const [year, month, date] = day.split('-');
+  return String(locale || '').toLowerCase().startsWith('en')
+    ? `${month}/${date}/${year}`
+    : `${date}/${month}/${year}`;
 }
 
 export function isCogsJournalDescription(description: string): boolean {

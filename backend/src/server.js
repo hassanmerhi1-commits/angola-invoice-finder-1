@@ -358,6 +358,21 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.get('/api/webapp-version', (_req, res) => {
+  let stamp = null;
+  try {
+    const indexPath = path.join(webappPath, 'index.html');
+    const html = fs.readFileSync(indexPath, 'utf8');
+    stamp = require('crypto').createHash('sha1').update(html).digest('hex').slice(0, 16);
+  } catch (_) { /* webapp not built yet */ }
+  res.json({
+    ok: true,
+    appVersion: APP_VERSION,
+    commit: GIT_COMMIT,
+    stamp,
+  });
+});
+
 // ── Global API authentication gate ──────────────────────────────────────────
 // Every /api route requires a valid user JWT, except the public allowlist in
 // security.js (health, auth, sync, installations). NEXOR_OPEN_API=1 disables it

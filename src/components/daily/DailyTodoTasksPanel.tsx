@@ -21,7 +21,7 @@ import {
   resolveDailyTodoAction,
   type DailyTodoAction,
 } from '@/lib/dailyTodoActions';
-import { themeChrome } from '@/themes/active';
+import { getActivePreset } from '@/themes/active';
 
 interface DailyTodoTasksPanelProps {
   selectedDay: string;
@@ -70,6 +70,7 @@ function actionHint(
 }
 
 function actionRowClass(action: DailyTodoAction | null): string {
+  const themeChrome = getActivePreset().chrome;
   switch (action) {
     case 'review_invoices':
       return themeChrome.rowInvoices;
@@ -100,6 +101,7 @@ export function DailyTodoTasksPanel({
   onOpenBriefingTab,
 }: DailyTodoTasksPanelProps) {
   const { t, language } = useTranslation();
+  const themeChrome = getActivePreset().chrome;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const d = t.dailyTodosUi;
   const navigate = useNavigate();

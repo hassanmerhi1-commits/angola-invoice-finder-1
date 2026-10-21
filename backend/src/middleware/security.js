@@ -165,6 +165,7 @@ function rateLimiter(windowMs = 60000, maxRequests = 200, lanMaxRequests = 2000)
 // endpoints; health is an unauthenticated liveness probe.
 const PUBLIC_API_EXACT = new Set([
   '/api/health',
+  '/api/webapp-version',
   '/api/auth/login',
   '/api/auth/refresh',
   '/api/auth/mfa/verify',

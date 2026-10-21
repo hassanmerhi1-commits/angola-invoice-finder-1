@@ -455,6 +455,12 @@
   .glass {
     @apply bg-card/80 backdrop-blur-xl border border-border/50;
   }
+  .nexor-electron-drag {
+    height: 32px;
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+    background: hsl(var(--background));
+  }
   /* Legacy names → light professional icon badges */
   .gradient-primary {
     @apply bg-sky-50 text-sky-600;

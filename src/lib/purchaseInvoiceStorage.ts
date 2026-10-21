@@ -494,7 +494,7 @@ export type SavePurchaseInvoiceResult = {
 
 export async function savePurchaseInvoice(
   invoice: PurchaseInvoice,
-  opts?: { metadataOnly?: boolean },
+  opts?: { metadataOnly?: boolean; skipAccounting?: boolean },
 ): Promise<SavePurchaseInvoiceResult> {
   const payload = normalizeInvoiceWarehouse({
     ...invoice,
@@ -502,8 +502,11 @@ export async function savePurchaseInvoice(
   });
 
   if (usePurchaseInvoiceApi()) {
-    const body = opts?.metadataOnly
-      ? { ...payload, metadataOnly: true }
+    const skipAccounting = opts?.skipAccounting === true
+      || opts?.metadataOnly === true
+      || payload.status === 'draft';
+    const body = skipAccounting
+      ? { ...payload, metadataOnly: opts?.metadataOnly === true, skipAccounting: true }
       : payload;
     const res = await api.purchaseInvoices.save(body);
     if (res.error) throw new Error(res.error);

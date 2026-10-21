@@ -562,11 +562,16 @@ async function claimChartAccountCode(client, opts) {
 
   const header = isTruthyFlag(row.is_header);
   const active = isActiveFlag(row.is_active);
-  const compactLeaf = isCompactEntityCode(row.code) && !header;
+  const nifLeaf = /NIF\s*:/i.test(String(row.description || ''));
+  const compactLeaf = isCompactEntityCode(row.code) && (!header || nifLeaf);
 
   if (wantHeader && compactLeaf) {
     const recoded = await recodeOccupyingLeaf(client, row);
     return { action: 'insert', recoded };
+  }
+
+  if (wantHeader && header) {
+    return { action: 'reuse', row };
   }
 
   if (!active) {

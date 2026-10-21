@@ -5,6 +5,9 @@ import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
+import { usePermissions } from '@/hooks/usePermissions';
+import { canEditPurchaseInvoiceDraft, isPurchaseInvoiceDraft } from '@/lib/purchaseInvoiceDraft';
+import { localISODate } from '@/lib/workingDayAccess';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { resolveUserBranch, branchIdsEquivalent } from '@/lib/branchAccess';
 import { useBranchScope } from '@/hooks/useBranchScope';
@@ -88,7 +91,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
-  Search, Plus, Save, X, Trash2, Eye, FileText, BookOpen,
+  Search, Plus, Save, X, Trash2, Eye, FileText, BookOpen, Pencil,
   Package, ArrowLeft, CheckCircle, Printer, AlertCircle,
   ShoppingCart, Filter, Calendar, Download, RotateCcw,
 } from 'lucide-react';
@@ -752,12 +755,13 @@ function buildPurchaseInvoiceJournalLines({
 
 // ─────────── Invoice View (full page) ───────────
 function InvoiceViewPage({
-  invoice, loading, onClose, onCreateReturn,
+  invoice, loading, onClose, onCreateReturn, onContinueDraft,
 }: {
   invoice: PurchaseInvoice | null;
   loading?: boolean;
   onClose: () => void;
   onCreateReturn?: (invoice: PurchaseInvoice) => void;
+  onContinueDraft?: (invoice: PurchaseInvoice) => void;
 }) {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
@@ -1035,6 +1039,16 @@ function InvoiceViewPage({
         <Badge variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}>
           {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
         </Badge>
+        {onContinueDraft && isPurchaseInvoiceDraft(invoice.status) && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            onClick={() => onContinueDraft(invoice)}
+          >
+            <Pencil className="h-4 w-4" /> {t.interaction.openEdit}
+          </Button>
+        )}
         {invoice.status === 'confirmed' && invoice.purchaseReturnsStatus !== 'full' && onCreateReturn && (
           <Button
             variant="outline"
@@ -1258,6 +1272,11 @@ export default function PurchaseInvoices() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { user } = useAuth();
+  const { hasPermission } = usePermissions(user?.id);
+  const canConfirmPurchase = hasPermission('purchase_invoice_confirm');
+  const canWorkOnInvoice = useCallback((inv?: PurchaseInvoice | null) => (
+    canEditPurchaseInvoiceDraft(inv, { userId: user?.id, canConfirm: canConfirmPurchase })
+  ), [user?.id, canConfirmPurchase]);
   const { apiBranchId, currentBranch, isConsolidatedView, allBranches: branches, treasuryAllBranches } = useBranchScope();
   // Sede / consolidated: no branch filter (all filiais). Do NOT fall back to currentBranch.id —
   // that wrongly limited Compras to SEDE-only invoices.
@@ -1805,8 +1824,8 @@ export default function PurchaseInvoices() {
     editingInvoiceRef.current = null;
     setNextFcPreview(null);
     setForm({
-      date: now.split('T')[0],
-      paymentDate: now.split('T')[0],
+      date: localISODate(),
+      paymentDate: localISODate(),
       currency: 'KZ',
       warehouseId: wid,
       warehouseName: wname,
@@ -1924,6 +1943,16 @@ export default function PurchaseInvoices() {
   }, [location.search, location.hash, location.state, invoices, mode, searchTerm, openViewInvoice]);
 
   const startEditInvoice = useCallback(async (inv: PurchaseInvoice) => {
+    if (!canWorkOnInvoice(inv)) {
+      toast({
+        title: t.common.error,
+        description: isPurchaseInvoiceDraft(inv.status)
+          ? t.purchaseInvoicesUi.cannotEditOthersDraft
+          : t.purchaseInvoicesUi.cannotEditConfirmed,
+        variant: 'destructive',
+      });
+      return;
+    }
     const full = (await getPurchaseInvoiceById(inv.id)) || inv;
     editingInvoiceRef.current = full;
     createInvoiceSessionRef.current = {
@@ -1981,7 +2010,7 @@ export default function PurchaseInvoices() {
     setSaveError(null);
     setSelectedListInvoiceId(full.id);
     setMode('create');
-  }, []);
+  }, [canWorkOnInvoice, t, toast]);
 
   const handleMarkAsPaid = useCallback(async (inv: PurchaseInvoice) => {
     if (!inv.isPending) return;
@@ -1990,7 +2019,7 @@ export default function PurchaseInvoices() {
       const updated: PurchaseInvoice = {
         ...inv,
         isPending: false,
-        paymentDate: formatInvoiceDateField(now) || now.split('T')[0],
+        paymentDate: formatInvoiceDateField(now) || localISODate(),
         updatedAt: now,
       };
       await savePurchaseInvoice(updated, { metadataOnly: true });
@@ -2422,16 +2451,17 @@ export default function PurchaseInvoices() {
       const inv = invoices.find((i) => i.id === invoiceId);
       if (!inv) return [];
 
-      const items = [
-        {
+      const items: { id: string; label: string; onSelect: () => void }[] = [];
+      if (canWorkOnInvoice(inv)) {
+        items.push({
           id: 'pi-edit',
           label: t.interaction.openEdit,
           onSelect: () => {
             setSelectedListInvoiceId(inv.id);
             void startEditInvoice(inv);
           },
-        },
-      ];
+        });
+      }
       if (inv.isPending) {
         items.push({
           id: 'pi-mark-paid',
@@ -2454,7 +2484,7 @@ export default function PurchaseInvoices() {
     });
 
     return () => setContextMenuResolver(null);
-  }, [mode, listTab, invoices, startEditInvoice, handleMarkAsPaid, handleRepostAccounting, t]);
+  }, [mode, listTab, invoices, startEditInvoice, handleMarkAsPaid, handleRepostAccounting, t, canWorkOnInvoice]);
 
   const isCreateDirty = useMemo(() => {
     if (lines.length > 0) return true;
@@ -2668,8 +2698,17 @@ export default function PurchaseInvoices() {
   }, [accountPickerTarget, editingJournalIdx, updateJournalLine, freightPickerOpen]);
 
   // ─────── SAVE (all phases) ───────
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (intent: 'draft' | 'confirm') => {
     if (savingPurchaseRef.current || savingPurchase) return;
+    const saveAsDraft = intent !== 'confirm' || !canConfirmPurchase;
+    if (intent === 'confirm' && !canConfirmPurchase) {
+      toast({
+        title: t.common.error,
+        description: t.purchaseInvoicesUi.confirmDenied,
+        variant: 'destructive',
+      });
+      return;
+    }
     savingPurchaseRef.current = true;
     setSavingPurchase(true);
     try {
@@ -2769,21 +2808,23 @@ export default function PurchaseInvoices() {
         resolvedSupplierAccountCode = await ensureSupplierAccount(matchedSupplier.id, matchedSupplier.name, matchedSupplier.nif);
         console.log(`[PurchaseInvoices] Resolved supplier account: ${resolvedSupplierAccountCode} for ${matchedSupplier.name}`);
       } catch (err: any) {
-        setSaveError(
-          t.purchaseInvoicesUi.cannotResolveSupplierAccount
-            .replace('{message}', err?.message || t.purchaseInvoicesUi.unknownError)
-        );
-        console.error('[PurchaseInvoices] Failed to resolve supplier account:', err);
-        toast({
-          title: t.purchaseInvoicesUi.supplierAccountErrorTitle,
-          description: t.purchaseInvoicesUi.cannotResolveSupplierAccountShort
-            .replace('{message}', err?.message || t.purchaseInvoicesUi.unknownError),
-          variant: 'destructive',
-        });
-        return;
+        if (!saveAsDraft) {
+          setSaveError(
+            t.purchaseInvoicesUi.cannotResolveSupplierAccount
+              .replace('{message}', err?.message || t.purchaseInvoicesUi.unknownError)
+          );
+          console.error('[PurchaseInvoices] Failed to resolve supplier account:', err);
+          toast({
+            title: t.purchaseInvoicesUi.supplierAccountErrorTitle,
+            description: t.purchaseInvoicesUi.cannotResolveSupplierAccountShort
+              .replace('{message}', err?.message || t.purchaseInvoicesUi.unknownError),
+            variant: 'destructive',
+          });
+          return;
+        }
       }
     }
-    if (!resolvedSupplierAccountCode) {
+    if (!resolvedSupplierAccountCode && !saveAsDraft) {
       setSaveError(t.purchaseInvoicesUi.supplierNoValidSubaccount);
       console.warn('[PurchaseInvoices] BLOCKED: No supplier account code resolved');
       toast({
@@ -2793,7 +2834,7 @@ export default function PurchaseInvoices() {
       });
       return;
     }
-    if (lines.length === 0) {
+    if (!saveAsDraft && lines.length === 0) {
       setSaveError(t.purchaseInvoicesUi.addAtLeastOneProductBeforeSave);
       console.warn('[PurchaseInvoices] BLOCKED: No lines');
       toast({ title: t.common.error, description: t.purchaseInvoicesUi.addAtLeastOneProduct, variant: 'destructive' });
@@ -2844,7 +2885,7 @@ export default function PurchaseInvoices() {
 
     let resolvedFreightAccount = freightSourceAccount;
     let resolvedFreightName = freightSourceName;
-    if (totalLandingCosts > 0) {
+    if (!saveAsDraft && totalLandingCosts > 0) {
       if (freightPaymentSource === 'caixa' && !freightCaixaId) {
         setSaveError(t.purchaseInvoicesUi.selectFreightCaixa);
         toast({ title: t.common.error, description: t.purchaseInvoicesUi.selectFreightCaixa, variant: 'destructive' });
@@ -2919,6 +2960,7 @@ export default function PurchaseInvoices() {
         subtotal: totals.subtotal,
         ivaTotal: totals.ivaTotal,
         total: supplierNetPayable,
+        status: saveAsDraft ? 'draft' : 'confirmed',
         branchId: resolvedBranchId,
         branchName: resolvedBranchName,
         updatedAt: now,
@@ -2943,9 +2985,9 @@ export default function PurchaseInvoices() {
         labelFreightLine: t.purchaseInvoicesUi.transportOnPurchases,
         labelDeductibleVat: t.purchaseInvoicesUi.deductibleVat,
       });
-      const saveResult = await savePurchaseInvoice(updatedInvoice);
+      const saveResult = await savePurchaseInvoice(updatedInvoice, { skipAccounting: saveAsDraft });
       // Only repair when the primary save did not post freight/journal; don't block Save on success.
-      if (totalLandingCosts > 0 && !saveResult.accounting?.journalEntryId) {
+      if (!saveAsDraft && totalLandingCosts > 0 && !saveResult.accounting?.journalEntryId) {
         void api.purchaseInvoices.repostAccounting(updatedInvoice.id).then((repost) => {
           const journalOk = !!(repost.data?.journalEntryId || saveResult.accounting?.journalEntryId);
           const journalErr = repost.data?.errors?.find((e) => String(e).toLowerCase().includes('journal'))
@@ -2966,8 +3008,12 @@ export default function PurchaseInvoices() {
         console.warn('[PurchaseInvoices] document sync:', docErr);
       });
       toast({
-        title: t.purchaseInvoicesUi.purchaseInvoiceUpdatedTitle,
-        description: `${updatedInvoice.invoiceNumber} — ${updatedInvoice.supplierName}`,
+        title: saveAsDraft
+          ? t.purchaseInvoicesUi.draftSavedTitle
+          : t.purchaseInvoicesUi.purchaseInvoiceUpdatedTitle,
+        description: saveAsDraft
+          ? t.purchaseInvoicesUi.draftSavedDesc.replace('{number}', updatedInvoice.invoiceNumber)
+          : `${updatedInvoice.invoiceNumber} — ${updatedInvoice.supplierName}`,
       });
       upsertInvoiceInList(updatedInvoice);
       scheduleLoadInvoiceList({ includeInvoiceId: updatedInvoice.id, delayMs: 4000 });
@@ -3012,8 +3058,8 @@ export default function PurchaseInvoices() {
       contact: form.contact,
       department: form.department,
       ref2: form.ref2,
-      date: form.date || now,
-      paymentDate: form.paymentDate || now,
+      date: form.date || localISODate(),
+      paymentDate: form.paymentDate || localISODate(),
       project: form.project,
       currency: form.currency || 'KZ',
       warehouseId: resolvedWarehouseId,
@@ -3050,7 +3096,7 @@ export default function PurchaseInvoices() {
       ivaTotal: totals.ivaTotal,
       // Net payable to supplier (gross - withholding). Stamp tax is booked separately as tax payable.
       total: supplierNetPayable,
-      status: 'confirmed',
+      status: saveAsDraft ? 'draft' : 'confirmed',
       branchId: resolvedBranchId,
       branchName: resolvedBranchName,
       createdBy: user?.id || '',
@@ -3085,11 +3131,29 @@ export default function PurchaseInvoices() {
       invoiceNumber: invoice.invoiceNumber,
     };
 
-      const saveResult = await savePurchaseInvoice(invoice);
+      const saveResult = await savePurchaseInvoice(invoice, { skipAccounting: saveAsDraft });
       invoice = saveResult.invoice;
       void syncPurchaseInvoiceDocument(invoice, t.purchaseInvoicesUi.supplierInvoiceNoStripPrefix).catch((docErr) => {
         console.warn('[PurchaseInvoices] document sync:', docErr);
       });
+
+      if (saveAsDraft) {
+        toast({
+          title: t.purchaseInvoicesUi.draftSavedTitle,
+          description: t.purchaseInvoicesUi.draftSavedDesc.replace('{number}', invoice.invoiceNumber),
+        });
+        upsertInvoiceInList(invoice);
+        scheduleLoadInvoiceList({ includeInvoiceId: invoice.id, delayMs: 4000 });
+        resetCreateFormState();
+        clearPurchaseCreateIntent();
+        urlCreateAppliedRef.current = false;
+        setSelectedListInvoiceId(invoice.id);
+        setViewInvoice(null);
+        setViewLoading(false);
+        setMode('list');
+        goToPurchaseListRoute();
+        return;
+      }
 
       const serverAccounting = saveResult.accounting;
       const serverPostedStock = (serverAccounting?.stockMovementIds?.length ?? 0) > 0;
@@ -3252,7 +3316,7 @@ export default function PurchaseInvoices() {
       savingPurchaseRef.current = false;
       setSavingPurchase(false);
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, scheduleLoadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId, upsertInvoiceInList]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, scheduleLoadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId, upsertInvoiceInList, canConfirmPurchase]);
 
   // ═══════════════ RENDER ═══════════════
 
@@ -3263,6 +3327,11 @@ export default function PurchaseInvoices() {
         loading={viewLoading}
         onClose={closeViewInvoice}
         onCreateReturn={(inv) => openReturnFromInvoice(inv.id)}
+        onContinueDraft={
+          viewInvoice && canWorkOnInvoice(viewInvoice)
+            ? (inv) => { void startEditInvoice(inv); }
+            : undefined
+        }
       />
     );
   }
@@ -3465,6 +3534,20 @@ export default function PurchaseInvoices() {
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={e => { e.stopPropagation(); void openViewInvoice(inv); }}>
                               <Eye className="h-3.5 w-3.5" />
                             </Button>
+                            {canWorkOnInvoice(inv) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                title={t.interaction.openEdit}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void startEditInvoice(inv);
+                                }}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={e => { e.stopPropagation(); void openViewInvoice(inv); }}>
                               <Printer className="h-3.5 w-3.5" />
                             </Button>
@@ -4076,15 +4159,40 @@ export default function PurchaseInvoices() {
           <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={requestCloseCreate} disabled={savingPurchase}>
             <X className="h-3 w-3" /> {t.common.cancel}
           </Button>
-          <Button
-            size="sm"
-            className="h-7 gap-1 text-xs"
-            onClick={handleSave}
-            disabled={savingPurchase}
-            aria-disabled={savingPurchase}
-          >
-            <Save className="h-3 w-3" /> {savingPurchase ? t.common.saving : t.common.save}
-          </Button>
+          {(!editingInvoiceRef.current || isPurchaseInvoiceDraft(editingInvoiceRef.current.status)) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => void handleSave('draft')}
+              disabled={savingPurchase}
+              aria-disabled={savingPurchase}
+            >
+              <Save className="h-3 w-3" /> {savingPurchase ? t.common.saving : t.purchaseInvoicesUi.saveDraft}
+            </Button>
+          )}
+          {canConfirmPurchase && (!editingInvoiceRef.current || isPurchaseInvoiceDraft(editingInvoiceRef.current.status)) && (
+            <Button
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => void handleSave('confirm')}
+              disabled={savingPurchase}
+              aria-disabled={savingPurchase}
+            >
+              <CheckCircle className="h-3 w-3" /> {savingPurchase ? t.common.saving : t.purchaseInvoicesUi.confirmPurchase}
+            </Button>
+          )}
+          {editingInvoiceRef.current && !isPurchaseInvoiceDraft(editingInvoiceRef.current.status) && (
+            <Button
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => void handleSave('confirm')}
+              disabled={savingPurchase}
+              aria-disabled={savingPurchase}
+            >
+              <Save className="h-3 w-3" /> {savingPurchase ? t.common.saving : t.common.save}
+            </Button>
+          )}
         </div>
       </div>
 
