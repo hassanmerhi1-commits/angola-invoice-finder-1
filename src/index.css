@@ -8,6 +8,7 @@
   /* Default fallback = medium (balanced) until data-color-theme is applied */
   :root,
   [data-color-theme='medium'] {
+    color-scheme: light;
     --background: 210 36% 97%;
     --foreground: 222 28% 22%;
     --card: 0 0% 100%;
@@ -61,6 +62,7 @@
   }
 
   [data-color-theme='light'] {
+    color-scheme: light;
     --background: 220 20% 98%;
     --foreground: 222 20% 20%;
     --card: 0 0% 100%;
@@ -113,6 +115,7 @@
   }
 
   [data-color-theme='warm'] {
+    color-scheme: light;
     --background: 32 45% 97%;
     --foreground: 20 30% 18%;
     --card: 0 0% 100%;
@@ -218,9 +221,64 @@
     --nexor-body-glow-c: 222 36% 20%;
   }
 
+  [data-color-theme='frost'] {
+    color-scheme: light;
+    --background: 222 40% 96%;
+    --foreground: 222 28% 18%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 28% 18%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 28% 18%;
+    --table-grid-border: 217 16% 72%;
+    --primary: 193 73% 38%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 24% 94%;
+    --secondary-foreground: 222 24% 22%;
+    --muted: 222 20% 93%;
+    --muted-foreground: 215 14% 40%;
+    --accent: 222 24% 94%;
+    --accent-foreground: 193 60% 32%;
+    --destructive: 0 68% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 20% 86%;
+    --input: 217 20% 86%;
+    --ring: 193 73% 38%;
+    --radius: 0.75rem;
+
+    --success: 158 45% 36%;
+    --success-foreground: 158 50% 22%;
+    --warning: 36 80% 42%;
+    --warning-foreground: 28 70% 28%;
+    --info: 199 72% 42%;
+    --info-foreground: 199 55% 28%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(193 73% 38%), hsl(37 41% 61%));
+    --gradient-accent: linear-gradient(135deg, hsl(193 73% 38%), hsl(222 36% 92%));
+
+    --shadow-sm: 0 1px 2px 0 hsl(222 30% 20% / 0.05);
+    --shadow-md: 0 8px 24px -8px hsl(222 30% 20% / 0.08);
+    --shadow-lg: 0 16px 40px -12px hsl(222 30% 20% / 0.1);
+    --shadow-xl: 0 24px 50px -16px hsl(222 30% 20% / 0.12);
+    --shadow-glow: 0 0 24px -6px hsl(193 73% 38% / 0.18);
+
+    --sidebar-background: 222 36% 97%;
+    --sidebar-foreground: 222 24% 22%;
+    --sidebar-primary: 193 73% 38%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 24% 94%;
+    --sidebar-accent-foreground: 222 24% 22%;
+    --sidebar-border: 217 16% 88%;
+    --sidebar-ring: 193 73% 38%;
+
+    --nexor-body-glow-a: 193 73% 38%;
+    --nexor-body-glow-b: 37 41% 61%;
+    --nexor-body-glow-c: 222 36% 80%;
+  }
+
   /* cold + legacy "cool" id */
   [data-color-theme='cold'],
   [data-color-theme='cool'] {
+    color-scheme: light;
     --background: 200 42% 96%;
     --foreground: 222 32% 18%;
     --card: 0 0% 100%;
@@ -464,6 +522,19 @@
   }
   [data-color-theme='ink'] .nexor-row-selected:hover {
     @apply bg-sky-500/30;
+  }
+
+  [data-color-theme='frost'] .nexor-page-surface {
+    @apply bg-background min-h-full;
+  }
+  [data-color-theme='frost'] .nexor-stat-card {
+    @apply border-white/80 bg-white/70 backdrop-blur-xl shadow-none;
+  }
+  [data-color-theme='ink'] [data-sonner-toast],
+  [data-color-theme='frost'] [data-sonner-toast] {
+    background: hsl(var(--card)) !important;
+    color: hsl(var(--foreground)) !important;
+    border-color: hsl(var(--border)) !important;
   }
 }
 

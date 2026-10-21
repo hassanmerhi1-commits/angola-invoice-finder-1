@@ -1,7 +1,7 @@
 // Branches API routes
 const express = require('express');
 const db = require('../db');
-const { branchesListSql } = require('../lib/sqlDialect');
+const { branchesListSql, deactivateBranchSql, deactivateBranchWarehousesSql } = require('../lib/sqlDialect');
 const { ensureBranchCaixaAccount, ensureAllBranchCaixaAccounts } = require('../lib/branchCaixaAccounts');
 const { requirePermission } = require('../middleware/requirePermission');
 const crypto = require('crypto');
@@ -196,10 +196,17 @@ module.exports = function(broadcastTable) {
       if (existing.rows.length === 0) {
         return res.status(404).json({ error: 'Branch not found' });
       }
-      if (existing.rows[0].is_main) {
+      const row = existing.rows[0];
+      if (row.is_main === true || row.is_main === 1 || row.is_main === '1') {
         return res.status(400).json({ error: 'Cannot delete the main branch' });
       }
-      await db.query('UPDATE branches SET is_active = 0 WHERE id = $1', [id]);
+      await db.query(deactivateBranchSql(db), [id]);
+      try {
+        await db.query(deactivateBranchWarehousesSql(db), [id]);
+        await broadcastTable('warehouses');
+      } catch (whErr) {
+        console.warn('[BRANCHES] deactivate warehouses:', whErr.message);
+      }
       await broadcastTable('branches');
       auditErpSafe(req, {
         table: 'branches',
@@ -210,7 +217,7 @@ module.exports = function(broadcastTable) {
       res.json({ success: true });
     } catch (error) {
       console.error('[BRANCHES ERROR]', error);
-      res.status(500).json({ error: 'Failed to delete branch' });
+      res.status(500).json({ error: error.message || 'Failed to delete branch' });
     }
   });
 

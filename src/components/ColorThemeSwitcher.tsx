@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 
 function themeLabel(
   id: ColorThemeId,
-  labels: { ink: string; light: string; medium: string; warm: string; cold: string },
+  labels: { ink: string; frost: string; light: string; medium: string; warm: string; cold: string },
 ) {
   return labels[id];
 }

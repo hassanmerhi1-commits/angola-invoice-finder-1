@@ -217,6 +217,7 @@ export interface ElectronAPI {
     relaunch: () => Promise<void>;
     getVersion: () => Promise<string>;
     setUiLanguage?: (lang: 'en' | 'pt') => Promise<boolean>;
+    setColorTheme?: (themeId: string) => Promise<boolean>;
     getPrinterConfig?: () => Promise<Record<string, unknown> | null>;
     setPrinterConfig?: (config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   };

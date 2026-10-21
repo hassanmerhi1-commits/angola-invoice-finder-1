@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
     getVersion: () => ipcRenderer.invoke('app:version'),
     setUiLanguage: (lang) => ipcRenderer.invoke('app:setUiLanguage', lang),
+    setColorTheme: (themeId) => ipcRenderer.invoke('app:setColorTheme', themeId),
     getPrinterConfig: () => ipcRenderer.invoke('app:getPrinterConfig'),
     setPrinterConfig: (config) => ipcRenderer.invoke('app:setPrinterConfig', config),
   },

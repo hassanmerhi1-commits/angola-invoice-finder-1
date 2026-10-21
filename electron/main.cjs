@@ -13,7 +13,7 @@
  *   Client: SERVIDOR or 10.0.0.5  (hostname/IP = client mode)
  */
 
-const { app, BrowserWindow, Menu, ipcMain, shell, dialog, net } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, dialog, net, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -2572,6 +2572,12 @@ ipcMain.handle('clientLocal:pullMasterData', async (_, branchId) => {
 
 ipcMain.handle('sync:getApiUrl', async () => getCityApiBaseForClient());
 
+ipcMain.handle('app:setColorTheme', (_, themeId) => {
+  const id = WINDOW_CHROME[themeId] ? themeId : 'ink';
+  writeStoredColorTheme(id);
+  applyNativeWindowTheme(id);
+  return true;
+});
 ipcMain.handle('app:setUiLanguage', (_, lang) => {
   persistUiLanguage(lang);
   return true;
@@ -3257,6 +3263,33 @@ function loadServerRenderer(targetWindow, source, normalizedRoute) {
   targetWindow.loadURL(serverLoadUrl).catch((error) => fallbackToLocal(error?.message || 'loadURL failed'));
 }
 
+function keepTryingLiveWebapp(targetWindow, normalizedRoute) {
+  const started = Date.now();
+  const timer = setInterval(() => {
+    if (!targetWindow || targetWindow.isDestroyed() || Date.now() - started > 5 * 60 * 1000) {
+      clearInterval(timer);
+      return;
+    }
+    void probeLoopbackWebappReady(readServerListenPort()).then((port) => {
+      if (!port || !targetWindow || targetWindow.isDestroyed()) return;
+      let url = '';
+      try { url = targetWindow.webContents.getURL() || ''; } catch (_) { url = ''; }
+      if (/^https?:\/\/127\.0\.0\.1:\d+\/app/i.test(url)) {
+        clearInterval(timer);
+        return;
+      }
+      clearInterval(timer);
+      const baseUrl = `http://127.0.0.1:${port}`;
+      console.warn(`[Renderer] Switching packed UI to ${baseUrl}/app`);
+      loadServerRenderer(targetWindow, {
+        type: 'server',
+        url: `${baseUrl}/app`,
+        baseUrl,
+      }, normalizedRoute);
+    });
+  }, 3000);
+}
+
 function loadRendererRoute(targetWindow, route = '/') {
   const normalizedRoute = route.startsWith('/') ? route : `/${route}`;
   const source = getRendererSource();
@@ -3279,6 +3312,7 @@ function loadRendererRoute(targetWindow, route = '/') {
         console.error('[Renderer] Failed to load local renderer:', error);
         showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
       });
+      keepTryingLiveWebapp(targetWindow, normalizedRoute);
     });
     return;
   }
@@ -3505,10 +3539,68 @@ function requestAppExit() {
   }
 }
 
+const WINDOW_CHROME = {
+  ink: { source: 'dark', background: '#070b16', symbol: '#e8eef5' },
+  frost: { source: 'light', background: '#f4f6fb', symbol: '#1a1d24' },
+  light: { source: 'light', background: '#f7f8fb', symbol: '#1a1d24' },
+  medium: { source: 'light', background: '#f3f6f9', symbol: '#1a1d24' },
+  warm: { source: 'light', background: '#fbf6ef', symbol: '#1a1d24' },
+  cold: { source: 'light', background: '#eff7fb', symbol: '#1a1d24' },
+};
+
+function colorThemePrefsPath() {
+  try {
+    return path.join(app.getPath('userData'), 'color-theme.json');
+  } catch {
+    return path.join(installDir(), 'color-theme.json');
+  }
+}
+
+function readStoredColorTheme() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(colorThemePrefsPath(), 'utf8'));
+    const id = String(raw?.id || '').trim();
+    if (WINDOW_CHROME[id]) return id;
+  } catch (_) { /* default ink */ }
+  return 'ink';
+}
+
+function writeStoredColorTheme(id) {
+  if (!WINDOW_CHROME[id]) return;
+  try {
+    fs.writeFileSync(colorThemePrefsPath(), JSON.stringify({ id }));
+  } catch (_) { /* ignore */ }
+}
+
+function chromeForTheme(id) {
+  return WINDOW_CHROME[id] || WINDOW_CHROME.ink;
+}
+
+function applyNativeWindowTheme(themeId = readStoredColorTheme()) {
+  const chrome = chromeForTheme(themeId);
+  try { nativeTheme.themeSource = chrome.source; } catch (_) { /* ignore */ }
+  for (const win of BrowserWindow.getAllWindows()) {
+    try { win.setBackgroundColor(chrome.background); } catch (_) { /* ignore */ }
+    try {
+      if (typeof win.setTitleBarOverlay === 'function') {
+        win.setTitleBarOverlay({
+          color: chrome.background,
+          symbolColor: chrome.symbol,
+          height: 32,
+        });
+      }
+    } catch (_) { /* overlay only if the window was created with it */ }
+  }
+}
+
+try { nativeTheme.themeSource = 'dark'; } catch (_) { /* ignore */ }
+
 function createWindow() {
+  const chrome = chromeForTheme(readStoredColorTheme());
   mainWindow = new BrowserWindow({
     width: 1400, height: 900, minWidth: 900, minHeight: 640,
     icon: path.join(__dirname, '../public/icon.png'),
+    backgroundColor: chrome.background,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -3600,10 +3692,12 @@ function createWindow() {
 function createSecondaryWindow() {
   // Ephemeral, unique session partition → independent login/storage per window.
   const partition = `nexor-login-${++secondaryWindowSeq}-${Date.now()}`;
+  const chrome = chromeForTheme(readStoredColorTheme());
   const win = new BrowserWindow({
     width: 1400, height: 900, minWidth: 900, minHeight: 640,
     icon: path.join(__dirname, '../public/icon.png'),
     title: 'NEXOR ERP',
+    backgroundColor: chrome.background,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -3646,6 +3740,7 @@ function createSecondaryWindow() {
 // ============= APP LIFECYCLE =============
 app.whenReady().then(async () => {
   loadUiLanguageFromDisk();
+  applyNativeWindowTheme();
   createSplashWindow();
 
   // Phase 6: initialize backend log directory under userData (cross-platform).

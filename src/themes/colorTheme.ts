@@ -26,8 +26,48 @@ export function resolveColorTheme(preferred?: ColorThemeId | null): ColorThemeId
   return DEFAULT_COLOR_THEME;
 }
 
-export function applyColorTheme(theme: ColorThemeId = resolveColorTheme()) {
+const DARK_COLOR_THEMES = new Set<ColorThemeId>(['ink']);
+
+const THEME_WINDOW_HEX: Record<ColorThemeId, string> = {
+  ink: '#070b16',
+  frost: '#f4f6fb',
+  light: '#f7f8fb',
+  medium: '#f3f6f9',
+  warm: '#fbf6ef',
+  cold: '#eff7fb',
+};
+
+export function themeWindowChrome(theme: ColorThemeId = resolveColorTheme()) {
+  const dark = DARK_COLOR_THEMES.has(theme);
+  return {
+    id: theme,
+    dark,
+    background: THEME_WINDOW_HEX[theme],
+    colorScheme: dark ? 'dark' : 'light',
+  };
+}
+
+function syncDocumentWindowChrome(theme: ColorThemeId) {
+  const chrome = themeWindowChrome(theme);
   document.documentElement.dataset.colorTheme = theme;
+  document.documentElement.style.colorScheme = chrome.colorScheme;
+  document.documentElement.classList.toggle('dark', chrome.dark);
+  let meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.setAttribute('name', 'theme-color');
+    document.head.appendChild(meta);
+  }
+  meta.setAttribute('content', chrome.background);
+  try {
+    void window.electronAPI?.app?.setColorTheme?.(theme);
+  } catch {
+    /* browser / older desktop */
+  }
+}
+
+export function applyColorTheme(theme: ColorThemeId = resolveColorTheme()) {
+  syncDocumentWindowChrome(theme);
   try {
     localStorage.setItem(COLOR_THEME_STORAGE_KEY, theme);
   } catch {
@@ -35,10 +75,15 @@ export function applyColorTheme(theme: ColorThemeId = resolveColorTheme()) {
   }
 }
 
-/** Persist and reload so Tailwind chrome class maps pick up the new preset. */
+/** Persist and reload so Tailwind chrome class maps pick up the new preset.
+ *  Do not flip the Windows title bar before reload — that is what made ink feel stuck. */
 export function setColorTheme(theme: ColorThemeId) {
   if (!isColorThemeId(theme)) return;
-  applyColorTheme(theme);
+  try {
+    localStorage.setItem(COLOR_THEME_STORAGE_KEY, theme);
+  } catch {
+    /* ignore */
+  }
   window.location.reload();
 }
 

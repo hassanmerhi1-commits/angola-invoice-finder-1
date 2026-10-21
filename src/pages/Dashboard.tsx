@@ -278,12 +278,12 @@ export default function Dashboard() {
             onClick={() => navigate('/chart-of-accounts')}
             className={NEXOR_FEATURE_SHORTCUT_BTN}
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100/90 group-hover:bg-indigo-200/70 transition-colors">
-              <BookOpen className="w-4 h-4 text-indigo-600" />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 group-hover:bg-primary/25 transition-colors">
+              <BookOpen className="w-4 h-4 text-primary" />
             </span>
             <span className="flex min-w-0 flex-1 flex-col leading-tight">
-              <span className="text-[11px] font-semibold tracking-tight text-slate-800">{t.nav.chartOfAccounts}</span>
-              <span className="text-[10px] font-medium text-indigo-600/80">SAF-T</span>
+              <span className="text-[11px] font-semibold tracking-tight text-foreground">{t.nav.chartOfAccounts}</span>
+              <span className="text-[10px] font-medium text-primary">SAF-T</span>
             </span>
           </button>
         </div>

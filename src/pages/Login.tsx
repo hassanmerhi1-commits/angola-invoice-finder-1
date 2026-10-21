@@ -189,7 +189,7 @@ export default function Login() {
   const labelClass = 'text-[11px] font-semibold uppercase text-[#9aa6b5]';
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#070b16] text-[#e8eef5]">
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
       <TillCityUiBanner />
       <div className="flex flex-1 min-h-0">
         <div className="hidden lg:flex w-[44%] relative flex-col items-center justify-center text-center px-10 border-r border-white/[0.06]">

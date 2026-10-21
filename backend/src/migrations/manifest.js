@@ -85,6 +85,7 @@ const MIGRATION_FILES = [
   '078_stock_movements_product_wh_created.sql',
   '079_sale_items_sale_id.sql',
   '080_purchase_invoice_allow_new_receipt.sql',
+  '081_branches_is_active.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

@@ -3184,6 +3184,7 @@ export const en = {
   colorTheme: {
     select: "Color theme",
     ink: "Ink glass",
+    frost: "White ink glass",
     light: "Light",
     medium: "Medium",
     warm: "Warm",

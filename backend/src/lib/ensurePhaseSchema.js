@@ -293,6 +293,35 @@ async function ensureBranchPricingColumn(db) {
   }
 }
 
+/** Soft-delete flag — PG 001 created branches without is_active. */
+async function ensureBranchActiveColumn(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query('ALTER TABLE branches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true');
+      await db.query('UPDATE branches SET is_active = true WHERE is_active IS NULL');
+    } catch (err) {
+      if (err.code !== '42701') console.warn('[SCHEMA] branches.is_active column:', err.message);
+    }
+    return;
+  }
+
+  if (db.sqlite) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(branches)');
+    } catch (_) {
+      return;
+    }
+    if (!cols.length) return;
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('is_active')) {
+      try {
+        db.sqlite.exec('ALTER TABLE branches ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1');
+      } catch (_) {}
+    }
+  }
+}
+
 /** Filial can keep a local PVP; HQ cascade skips rows with price_override = true. */
 async function ensureProductPriceOverrideColumn(db) {
   if (db.engine === 'postgres') {
@@ -1300,6 +1329,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientPricingColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
+    await ensureBranchActiveColumn(db);
     await ensureProductPriceOverrideColumn(db);
     await ensureProductVatOverrideColumn(db);
     try {
@@ -1380,6 +1410,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientPricingColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
+    await ensureBranchActiveColumn(db);
     await ensureProductPriceOverrideColumn(db);
     await ensureProductVatOverrideColumn(db);
     try {
@@ -1428,6 +1459,7 @@ module.exports = {
   ensureClientPricingColumns,
   ensureClientsUniqueNif,
   ensureBranchPricingColumn,
+  ensureBranchActiveColumn,
   ensureProductPriceOverrideColumn,
   ensureProductVatOverrideColumn,
   ensureSalesCreditPaymentMethod,

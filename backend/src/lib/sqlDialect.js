@@ -23,12 +23,27 @@ function mainBranchWhere(db) {
   return '(is_main = 1 OR is_main = true)';
 }
 
-/** branches table: is_active exists on SQLite bootstrap, not on PG migration 001. */
+/** Active filiais only. PG now has branches.is_active (migration 081). */
 function branchesListSql(db) {
   if (db.engine === 'postgres') {
-    return 'SELECT * FROM branches ORDER BY is_main DESC, name';
+    return 'SELECT * FROM branches WHERE is_active IS NOT FALSE ORDER BY is_main DESC, name';
   }
   return 'SELECT * FROM branches WHERE COALESCE(is_active, 1) != 0 ORDER BY is_main DESC, name';
+}
+
+/** Soft-delete a filial. Hard DELETE fails on PG once warehouses / users point at it. */
+function deactivateBranchSql(db) {
+  if (db.engine === 'postgres') {
+    return 'UPDATE branches SET is_active = false WHERE id = $1';
+  }
+  return 'UPDATE branches SET is_active = 0 WHERE id = $1';
+}
+
+function deactivateBranchWarehousesSql(db) {
+  if (db.engine === 'postgres') {
+    return 'UPDATE warehouses SET is_active = false WHERE CAST(branch_id AS TEXT) = CAST($1 AS TEXT)';
+  }
+  return 'UPDATE warehouses SET is_active = 0 WHERE CAST(branch_id AS TEXT) = CAST($1 AS TEXT)';
 }
 
 /** SQLite: COALESCE(flag, 1) != 0 — invalid on PG boolean columns. */
@@ -129,6 +144,8 @@ module.exports = {
   activeFlagWhere,
   mainBranchWhere,
   branchesListSql,
+  deactivateBranchSql,
+  deactivateBranchWarehousesSql,
   coalesceActiveNotZero,
   isTruthySql,
   coalesceMainTruthy,
