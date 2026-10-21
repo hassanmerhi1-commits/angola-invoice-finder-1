@@ -708,18 +708,18 @@ function copyPackOntoLiveBackend(extractRoot, backendDir) {
 
 function finalizeCopiedUpdateOnBoot() {
   const job = readStatus();
-  if (!job || !isBusyPhase(job.phase)) return job;
+  if (!job) return job;
   const stamp = readBuildStampFiles();
-  const copied = job.filesCopied === true
-    && stamp?.commit
-    && job.buildId
-    && isSameBuild(stamp.commit, job.buildId);
-  if (!copied) return job;
+  if (!stamp?.commit || !job.buildId || !isSameBuild(stamp.commit, job.buildId)) return job;
+  if (job.phase === 'success' || job.phase === 'upToDate') return job;
+  if (!isBusyPhase(job.phase) && job.phase !== 'failed') return job;
   releaseLock();
   return writeStatus({
     phase: 'success',
     message: 'NEXOR was updated.',
     ok: true,
+    error: null,
+    stale: false,
     percent: 100,
     finishedAt: new Date().toISOString(),
     buildId: stamp.commit,
@@ -768,7 +768,20 @@ async function buildUpdateStatus(db, { refreshLatest = true } = {}) {
   const pre = applyPreconditions(db);
   const stamp = typeof readBuildStamp === 'function' ? readBuildStamp() : readBuildStampFiles();
   const currentBuildId = stamp?.commit || GIT_COMMIT || null;
-  const job = expireStaleUpdateJob();
+  let job = expireStaleUpdateJob();
+  if (job && (job.phase === 'failed' || isBusyPhase(job.phase)) && currentBuildId && job.buildId
+      && isSameBuild(currentBuildId, job.buildId)) {
+    job = finalizeCopiedUpdateOnBoot() || writeStatus({
+      phase: 'upToDate',
+      message: 'This server is already on the latest NEXOR pack',
+      ok: true,
+      error: null,
+      stale: false,
+      percent: 100,
+      finishedAt: new Date().toISOString(),
+      buildId: currentBuildId,
+    });
+  }
   let latest = null;
   let latestError = null;
   if (refreshLatest && pre.ok) {
@@ -777,6 +790,19 @@ async function buildUpdateStatus(db, { refreshLatest = true } = {}) {
     } catch (err) {
       latestError = err.message || String(err);
     }
+  }
+  if (job && job.phase === 'failed' && latest && currentBuildId && isSameBuild(currentBuildId, latest.buildId)) {
+    releaseLock();
+    job = writeStatus({
+      phase: 'upToDate',
+      message: 'This server is already on the latest NEXOR pack',
+      ok: true,
+      error: null,
+      stale: false,
+      percent: 100,
+      finishedAt: new Date().toISOString(),
+      buildId: currentBuildId,
+    });
   }
   const updateAvailable = !!(latest && currentBuildId && !isSameBuild(currentBuildId, latest.buildId));
   const firstPackUnknown = !!(latest && !currentBuildId);

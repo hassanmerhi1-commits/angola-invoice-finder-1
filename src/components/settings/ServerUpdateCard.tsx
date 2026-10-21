@@ -237,7 +237,7 @@ export function ServerUpdateCard() {
           </div>
         </div>
 
-        {status && !status.updateAvailable && status.canApply && !busy && job?.phase !== 'failed' ? (
+        {status && !status.updateAvailable && status.canApply && !busy ? (
           <div className="flex items-center gap-2 text-sm text-green-700">
             <CheckCircle2 className="h-4 w-4" />
             {ui.upToDate}
@@ -252,7 +252,7 @@ export function ServerUpdateCard() {
           <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{status.latestError}</div>
         ) : null}
 
-        {(error || job?.phase === 'failed') && (
+        {(error || (job?.phase === 'failed' && status?.updateAvailable)) && (
           <div className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>

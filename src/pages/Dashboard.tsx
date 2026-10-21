@@ -87,12 +87,12 @@ export default function Dashboard() {
   ], [d]);
 
   const biSidebarTone = [
-    'bg-slate-50/90 border-slate-200/60 text-slate-700 hover:bg-slate-100/80 [&_svg]:text-slate-500',
-    'bg-sky-50/90 border-sky-200/60 text-sky-800 hover:bg-sky-100/80 [&_svg]:text-sky-600',
-    'bg-indigo-50/90 border-indigo-200/60 text-indigo-800 hover:bg-indigo-100/80 [&_svg]:text-indigo-600',
-    'bg-emerald-50/90 border-emerald-200/60 text-emerald-800 hover:bg-emerald-100/80 [&_svg]:text-emerald-600',
-    'bg-amber-50/90 border-amber-200/60 text-amber-900 hover:bg-amber-100/80 [&_svg]:text-amber-700',
-    'bg-slate-50/90 border-slate-200/60 text-slate-700 hover:bg-slate-100/80 [&_svg]:text-slate-500',
+    NEXOR_TONE_TILE.slate,
+    NEXOR_TONE_TILE.sky,
+    NEXOR_TONE_TILE.indigo,
+    NEXOR_TONE_TILE.emerald,
+    NEXOR_TONE_TILE.amber,
+    NEXOR_TONE_TILE.slate,
   ];
 
   return (
@@ -104,8 +104,8 @@ export default function Dashboard() {
             <img src={logo} alt={companyName} className="h-10 object-contain rounded-lg" />
           )}
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-800">{companyName}</h1>
-            <p className="text-sm text-slate-500 font-medium">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">{companyName}</h1>
+            <p className="text-sm text-muted-foreground font-medium">
               {currentBranch?.name || d.headquarters} • {new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </p>
           </div>
@@ -119,7 +119,7 @@ export default function Dashboard() {
                 <span className="text-xs text-primary/80 font-medium">{d.kpis.salesToday}</span>
                 <span className="p-1.5 rounded-lg bg-primary/10"><ShoppingCart className="w-4 h-4 text-primary" /></span>
               </div>
-              <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.todaySales?.total ?? 0)} Kz</p>
+              <p className="text-xl font-semibold text-foreground">{fmt(kpis?.todaySales?.total ?? 0)} Kz</p>
               <p className="text-[10px] text-primary/70">
                 {d.kpis.transactions.replace('{count}', String(kpis?.todaySales?.count ?? 0))}
               </p>
@@ -131,7 +131,7 @@ export default function Dashboard() {
                 <span className="text-xs text-success font-medium">{d.kpis.salesMonth}</span>
                 <span className="p-1.5 rounded-lg bg-success/15"><TrendingUp className="w-4 h-4 text-success" /></span>
               </div>
-              <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.monthSales?.total ?? 0)} Kz</p>
+              <p className="text-xl font-semibold text-foreground">{fmt(kpis?.monthSales?.total ?? 0)} Kz</p>
               <p className="text-[10px] text-success/80">
                 {d.kpis.invoicesCount.replace('{count}', String(kpis?.monthSales?.count ?? 0))}
               </p>
@@ -143,7 +143,7 @@ export default function Dashboard() {
                 <span className="text-xs text-warning-foreground font-medium">{d.kpis.accountsReceivable}</span>
                 <span className="p-1.5 rounded-lg bg-warning/15"><CreditCard className="w-4 h-4 text-warning" /></span>
               </div>
-              <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.openAR?.total ?? 0)} Kz</p>
+              <p className="text-xl font-semibold text-foreground">{fmt(kpis?.openAR?.total ?? 0)} Kz</p>
               <p className="text-[10px] text-warning-foreground/70">
                 {d.kpis.openItems.replace('{count}', String(kpis?.openAR?.count ?? 0))}
               </p>
@@ -152,11 +152,11 @@ export default function Dashboard() {
           <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.rose} hover:shadow-md transition-shadow`} onClick={() => navigate('/payables')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-rose-700/80 font-medium">{d.kpis.accountsPayable}</span>
-                <span className="p-1.5 rounded-lg bg-rose-100/90"><Truck className="w-4 h-4 text-rose-600" /></span>
+                <span className="text-xs text-rose-600 font-medium">{d.kpis.accountsPayable}</span>
+                <span className="p-1.5 rounded-lg bg-rose-500/15"><Truck className="w-4 h-4 text-rose-600" /></span>
               </div>
-              <p className="text-xl font-semibold text-slate-800">{fmt(kpis?.openAP?.total ?? 0)} Kz</p>
-              <p className="text-[10px] text-rose-700/70">
+              <p className="text-xl font-semibold text-foreground">{fmt(kpis?.openAP?.total ?? 0)} Kz</p>
+              <p className="text-[10px] text-rose-600/70">
                 {d.kpis.openItems.replace('{count}', String(kpis?.openAP?.count ?? 0))}
               </p>
             </CardContent>
@@ -166,13 +166,13 @@ export default function Dashboard() {
         {((kpis?.pendingApprovals ?? 0) > 0 || (kpis?.monthExpenses ?? 0) > 0) && (
         <div className="flex gap-2 flex-wrap">
           {(kpis?.pendingApprovals ?? 0) > 0 && (
-            <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 bg-indigo-50/80 border-indigo-200/80 text-indigo-700 hover:bg-indigo-100/80" onClick={() => navigate('/approvals')}>
+            <Badge variant="outline" className="cursor-pointer gap-1.5 py-1 bg-indigo-500/10 border-indigo-400/30 text-indigo-700 hover:bg-indigo-500/15" onClick={() => navigate('/approvals')}>
               <GitBranch className="w-3 h-3" />
               {d.pendingApprovals.replace('{count}', String(kpis?.pendingApprovals ?? 0))}
             </Badge>
           )}
           {(kpis?.monthExpenses ?? 0) > 0 && (
-            <Badge variant="outline" className="gap-1.5 py-1 bg-slate-50 border-slate-200 text-slate-600">
+            <Badge variant="outline" className="gap-1.5 py-1 bg-muted border-border text-muted-foreground">
               <Receipt className="w-3 h-3" />
               {d.monthExpenses.replace('{amount}', fmt(kpis?.monthExpenses ?? 0))}
             </Badge>
@@ -225,32 +225,32 @@ export default function Dashboard() {
         {/* Financial Charts — lazy chunk so recharts doesn't block the KPI paint */}
         <div>
           <h3 className={`${NEXOR_SECTION_LABEL} mb-4`}>{d.financialAnalysis}</h3>
-          <Suspense fallback={<div className="h-64 rounded-xl bg-slate-50/80 border border-slate-200/60 animate-pulse" />}>
+          <Suspense fallback={<div className="h-64 rounded-xl bg-muted/50 border border-border animate-pulse" />}>
             <DashboardChartsSection />
           </Suspense>
         </div>
 
         {/* Quick Checks */}
         <div className="flex gap-3 flex-wrap">
-          <Button variant="outline" className="rounded-xl gap-2 shadow-sm border-slate-200/80 bg-white/80 text-slate-700 hover:bg-slate-50" onClick={() => navigate('/fiscal-documents')}>
-            <CheckCircle className="w-4 h-4 text-slate-500" />
+          <Button variant="outline" className="rounded-xl gap-2 shadow-sm border-border bg-card/80 text-foreground hover:bg-accent" onClick={() => navigate('/fiscal-documents')}>
+            <CheckCircle className="w-4 h-4 text-muted-foreground" />
             {d.verifyInvoice}
           </Button>
-          <Button variant="outline" className="rounded-xl gap-2 shadow-sm border-slate-200/80 bg-white/80 text-slate-700 hover:bg-slate-50" onClick={() => navigate('/proforma')}>
-            <Search className="w-4 h-4 text-slate-500" />
+          <Button variant="outline" className="rounded-xl gap-2 shadow-sm border-border bg-card/80 text-foreground hover:bg-accent" onClick={() => navigate('/proforma')}>
+            <Search className="w-4 h-4 text-muted-foreground" />
             {d.checkProforma}
           </Button>
-          <Button variant="outline" className="rounded-xl gap-2 shadow-sm border-slate-200/80 bg-white/80 text-slate-700 hover:bg-slate-50" onClick={() => navigate('/daily-reports')}>
-            <Calendar className="w-4 h-4 text-slate-500" />
+          <Button variant="outline" className="rounded-xl gap-2 shadow-sm border-border bg-card/80 text-foreground hover:bg-accent" onClick={() => navigate('/daily-reports')}>
+            <Calendar className="w-4 h-4 text-muted-foreground" />
             {d.dailyReport}
           </Button>
         </div>
       </div>
 
       {/* ====== BI SIDEBAR (Right) ====== */}
-      <div className="hidden lg:flex w-48 flex-col bg-white/80 border-l border-slate-200/80">
-        <div className="p-4 border-b border-slate-200/80">
-          <h3 className="font-semibold text-sm text-center tracking-tight text-slate-700">{d.biTitle}</h3>
+      <div className="hidden lg:flex w-48 flex-col bg-card/70 border-l border-border backdrop-blur-xl">
+        <div className="p-4 border-b border-border">
+          <h3 className="font-semibold text-sm text-center tracking-tight text-foreground">{d.biTitle}</h3>
         </div>
         <div className="flex-1 flex flex-col gap-2 p-3">
           {[
@@ -272,7 +272,7 @@ export default function Dashboard() {
           ))}
         </div>
 
-        <div className="p-3 border-t border-slate-200/80">
+        <div className="p-3 border-t border-border">
           <button
             type="button"
             onClick={() => navigate('/chart-of-accounts')}

@@ -3183,6 +3183,7 @@ export const en = {
 
   colorTheme: {
     select: "Color theme",
+    ink: "Ink glass",
     light: "Light",
     medium: "Medium",
     warm: "Warm",

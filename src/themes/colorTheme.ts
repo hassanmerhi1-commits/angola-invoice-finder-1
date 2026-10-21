@@ -6,7 +6,7 @@ export { COLOR_THEME_IDS, THEME_PRESET_LIST, getThemePreset } from '@/themes/reg
 export const COLOR_THEME_STORAGE_KEY = 'nexor:color-theme';
 
 /** Default when nothing is stored yet. */
-export const DEFAULT_COLOR_THEME: ColorThemeId = 'medium';
+export const DEFAULT_COLOR_THEME: ColorThemeId = 'ink';
 
 function migrateLegacyThemeId(raw: string | null): ColorThemeId | null {
   if (!raw) return null;

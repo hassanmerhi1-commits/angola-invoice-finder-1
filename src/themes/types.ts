@@ -1,4 +1,4 @@
-export type ColorThemeId = 'light' | 'medium' | 'warm' | 'cold';
+export type ColorThemeId = 'ink' | 'light' | 'medium' | 'warm' | 'cold';
 
 export type ToneMap = Record<'sky' | 'indigo' | 'emerald' | 'amber' | 'slate' | 'rose', string>;
 
@@ -64,8 +64,8 @@ export interface ThemePreset {
   chrome: ThemeChrome;
 }
 
-export const COLOR_THEME_IDS: ColorThemeId[] = ['light', 'medium', 'warm', 'cold'];
+export const COLOR_THEME_IDS: ColorThemeId[] = ['ink', 'light', 'medium', 'warm', 'cold'];
 
 export function isColorThemeId(value: string | null | undefined): value is ColorThemeId {
-  return value === 'light' || value === 'medium' || value === 'warm' || value === 'cold';
+  return value === 'ink' || value === 'light' || value === 'medium' || value === 'warm' || value === 'cold';
 }

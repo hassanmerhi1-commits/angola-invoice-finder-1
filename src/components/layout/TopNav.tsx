@@ -942,7 +942,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
                 onFocus={() => prefetchRoute(tab.path)}
                 className={({ isActive }) => cn(
                   "flex flex-col items-center gap-1.5 p-3 rounded-xl text-[10px] font-medium transition-all",
-                  isActive ? "nexor-mobile-nav-active" : "bg-slate-50 hover:bg-slate-100 text-slate-600"
+                  isActive ? "nexor-mobile-nav-active" : "bg-muted hover:bg-accent text-muted-foreground"
                 )}
               >
                 <tab.icon className="w-5 h-5" />
