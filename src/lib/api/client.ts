@@ -826,6 +826,11 @@ export const api = {
     delete: (id: string) => {
       return apiFetch<{ success?: boolean }>(`/branches/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
+    ensureCaixaAccounts: () =>
+      apiFetch<{ success?: boolean; created?: number; compacted?: number }>(
+        '/branches/ensure-caixa-accounts',
+        { method: 'POST' },
+      ),
   },
 
   warehouses: {

@@ -8,6 +8,22 @@ const { auditErpSafe } = require('../lib/erpAudit');
 const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
 const { journalFilteredSumSql, journalThroughEndJoinSql } = require('../lib/journalPeriodSums');
 const { syncLinkedEntityNameFromCoa, deleteLinkedEntityFromCoa } = require('../lib/entityCoaAccounts');
+const { isBranchCaixaLeafCode, upsertOperationalCaixaFromAccount } = require('../lib/branchCaixaAccounts');
+
+async function syncCaixaRegisterFromAccount(account) {
+  if (!account || !isBranchCaixaLeafCode(account.code) || account.is_header) return;
+  const branchId = String(account.branch_id || '').trim();
+  if (!branchId) return;
+  let branchName = '';
+  try {
+    const br = await db.query(
+      'SELECT name FROM branches WHERE CAST(id AS TEXT) = $1 LIMIT 1',
+      [branchId],
+    );
+    branchName = br.rows[0]?.name || '';
+  } catch { /* ignore */ }
+  await upsertOperationalCaixaFromAccount(db, account, branchName);
+}
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -549,6 +565,12 @@ module.exports = function(broadcastTable) {
       `, [code, name, description, account_type, account_nature, parent_id, level || 1, wantHeader, opening_balance || 0, branch_id]);
 
       await broadcastTable('chart_of_accounts');
+      try {
+        await syncCaixaRegisterFromAccount(result.rows[0]);
+        await broadcastTable('caixas');
+      } catch (caixaErr) {
+        console.warn('[CHART OF ACCOUNTS] caixa register sync:', caixaErr.message);
+      }
       auditErpSafe(req, {
         table: 'chart_of_accounts',
         id: result.rows[0]?.id,
@@ -575,7 +597,7 @@ module.exports = function(broadcastTable) {
       const { id } = req.params;
       const { 
         code, name, description, account_type, account_nature,
-        parent_id, level, is_header, is_active, opening_balance 
+        parent_id, level, is_header, is_active, opening_balance, branch_id
       } = req.body;
       const parentId = parent_id === '' || parent_id === undefined ? null : parent_id;
 
@@ -588,12 +610,16 @@ module.exports = function(broadcastTable) {
       }
 
       const before = await db.query(
-        'SELECT id, code, name, description FROM chart_of_accounts WHERE id = $1',
+        'SELECT id, code, name, description, branch_id FROM chart_of_accounts WHERE id = $1',
         [id],
       );
       if (before.rows.length === 0) {
         return res.status(404).json({ error: 'Account not found' });
       }
+
+      const nextBranchId = branch_id === undefined
+        ? before.rows[0]?.branch_id
+        : (branch_id || null);
 
       const result = await db.query(`
         UPDATE chart_of_accounts SET
@@ -607,10 +633,11 @@ module.exports = function(broadcastTable) {
           is_header = COALESCE($8, is_header),
           is_active = COALESCE($9, is_active),
           opening_balance = COALESCE($10, opening_balance),
+          branch_id = $12,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $11
         RETURNING *
-      `, [code, name, description, account_type, account_nature, parentId, level, is_header, is_active, opening_balance, id]);
+      `, [code, name, description, account_type, account_nature, parentId, level, is_header, is_active, opening_balance, id, nextBranchId]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Account not found' });
@@ -632,6 +659,12 @@ module.exports = function(broadcastTable) {
       }
 
       await broadcastTable('chart_of_accounts');
+      try {
+        await syncCaixaRegisterFromAccount(updated);
+        await broadcastTable('caixas');
+      } catch (caixaErr) {
+        console.warn('[CHART OF ACCOUNTS] caixa register sync:', caixaErr.message);
+      }
       auditErpSafe(req, {
         table: 'chart_of_accounts',
         id,

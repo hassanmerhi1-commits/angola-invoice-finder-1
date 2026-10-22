@@ -6244,6 +6244,10 @@ export const pt: TranslationKeys = {
     typeLabel: "Tipo",
     balanceLabel: "Saldo",
     cashBranchPrefix: "Caixa - ",
+    cashBranchLabel: "Filial *",
+    cashBranchPlaceholder: "Seleccione a filial",
+    cashBranchRequired: "Seleccione a filial desta caixa",
+    cashBranchHint: "Uma filial nova já recebe uma caixa. Escolha a filial para acrescentar outra, ou edite o nome aqui.",
 
     editTitle: "Editar Conta",
     newTitle: "Nova Conta",

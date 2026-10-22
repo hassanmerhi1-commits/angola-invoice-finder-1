@@ -18,3 +18,11 @@ test('a manager can receive backdate as a per-user grant', () => {
   assert.equal(userHasPermission('manager', granted, 'backdate_post'), true);
   assert.equal(userHasPermission('manager', granted, 'edit_historical'), true);
 });
+
+test('admin permission revokes are stored and applied', () => {
+  const revoked = { granted: [], revoked: ['inventory_delete', 'admin_backup'] };
+  assert.equal(userHasPermission('admin', revoked, 'inventory_delete'), false);
+  assert.equal(userHasPermission('admin', revoked, 'admin_backup'), false);
+  assert.equal(userHasPermission('admin', revoked, 'admin_users'), true);
+  assert.equal(userHasPermission('admin', none, 'inventory_delete'), true);
+});

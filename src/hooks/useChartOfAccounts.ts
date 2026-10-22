@@ -4,6 +4,7 @@ import { api } from '@/lib/api/client';
 import { getCachedList, isCachedListFresh, markCachedListStale, setCachedList } from '@/lib/listCache';
 import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, AccountType } from '@/types/accounting';
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
+import { compareAccountCodes } from '@/lib/coaTreeBalances';
 import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
 import { useTranslation } from '@/i18n';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
@@ -18,7 +19,8 @@ const isOfflineError = (error: unknown): boolean => {
   return /failed to fetch|network error|fetch failed|load failed/i.test(message);
 };
 
-const sortAccountsByCode = (items: Account[]) => [...items].sort((a, b) => a.code.localeCompare(b.code));
+const sortAccountsByCode = (items: Account[]) =>
+  [...items].sort((a, b) => compareAccountCodes(a.code, b.code));
 
 // Build the local fallback chart from the Angola PGC (novo com IVA) dataset.
 // (The `t` argument is kept for signature compatibility; PGC names are canonical Portuguese.)
@@ -261,10 +263,18 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
 
     const run = (branches: { id: string; name: string }[]) => {
       if (branches.length === 0) return;
-      void ensureBranchCaixaAccounts(branches, accounts).then((created) => {
-        if (!created) return;
-        scheduleCoaRefresh(400);
-      });
+      void api.branches.ensureCaixaAccounts()
+        .then((res) => {
+          if (res.error) throw new Error(res.error);
+          const changed = Number(res.data?.created || 0) + Number(res.data?.compacted || 0);
+          if (changed > 0) scheduleCoaRefresh(400);
+        })
+        .catch(() => {
+          void ensureBranchCaixaAccounts(branches, accounts).then((created) => {
+            if (!created) return;
+            scheduleCoaRefresh(400);
+          });
+        });
     };
 
     api.branches.list().then(response => {

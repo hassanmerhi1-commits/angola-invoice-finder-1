@@ -6242,6 +6242,10 @@ export const en = {
     typeLabel: "Type",
     balanceLabel: "Balance",
     cashBranchPrefix: "Cash - ",
+    cashBranchLabel: "Branch *",
+    cashBranchPlaceholder: "Select the branch",
+    cashBranchRequired: "Select the branch for this cash box",
+    cashBranchHint: "A new branch already gets one cash box. Pick the branch to add another, or edit the name here.",
 
     editTitle: "Edit account",
     newTitle: "New account",

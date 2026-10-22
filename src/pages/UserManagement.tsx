@@ -264,10 +264,8 @@ export default function UserManagement() {
 
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);
-    if (!useCustomPerms) {
-      const rolePerms = DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === role);
-      setCustomPerms(rolePerms?.permissions || []);
-    }
+    const rolePerms = DEFAULT_ROLE_PERMISSIONS.find(rp => rp.role === role);
+    setCustomPerms(rolePerms?.permissions || []);
   };
 
   const togglePermission = (permId: string) => {
@@ -800,15 +798,22 @@ export default function UserManagement() {
               </Select>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="customPerms"
-                checked={useCustomPerms}
-                onCheckedChange={(checked) => setUseCustomPerms(!!checked)}
-              />
-              <Label htmlFor="customPerms">
-                Use custom permissions (override role defaults)
-              </Label>
+            <div className="space-y-1.5">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="customPerms"
+                  checked={useCustomPerms}
+                  onCheckedChange={(checked) => setUseCustomPerms(!!checked)}
+                />
+                <Label htmlFor="customPerms">
+                  Use custom permissions (override role defaults)
+                </Label>
+              </div>
+              {selectedRole === 'admin' && useCustomPerms ? (
+                <p className="text-xs text-muted-foreground pl-6">
+                  Unchecked boxes are saved for this administrator too — they keep the Admin role, without those actions.
+                </p>
+              ) : null}
             </div>
 
             {useCustomPerms && (

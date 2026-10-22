@@ -492,6 +492,25 @@ function caixaRouter(broadcastTable) {
       if (!row.rows[0]) {
         return res.status(500).json({ error: 'Failed to save caixa' });
       }
+      try {
+        const {
+          ensureBranchCaixaAccount,
+          createExtraBranchCaixaAccount,
+        } = require('../lib/branchCaixaAccounts');
+        const countRes = await db.query(
+          'SELECT COUNT(*) AS n FROM caixas WHERE CAST(branch_id AS TEXT) = $1',
+          [resolvedBranchId],
+        );
+        const registerCount = Number(countRes.rows[0]?.n || 0);
+        if (registerCount <= 1) {
+          await ensureBranchCaixaAccount(db, resolvedBranchId, resolvedBranchName);
+        } else {
+          await createExtraBranchCaixaAccount(db, resolvedBranchId, resolvedBranchName, name);
+        }
+        if (broadcastTable) await broadcastTable('chart_of_accounts');
+      } catch (glErr) {
+        console.warn('[CAIXA] extra GL account:', glErr.message);
+      }
       if (broadcastTable) await broadcastTable('caixas');
       res.status(201).json({ data: mapCaixaRow(row.rows[0]) });
     } catch (error) {
@@ -531,6 +550,23 @@ function caixaRouter(broadcastTable) {
          WHERE id = $1`,
         [id, name, pettyLimit, dailyLimit, requiresApproval, now],
       );
+      if (name) {
+        try {
+          await db.query(
+            `UPDATE chart_of_accounts
+             SET name = $2, updated_at = CURRENT_TIMESTAMP
+             WHERE CAST(id AS TEXT) = $1
+                OR (
+                  CAST(branch_id AS TEXT) = $3
+                  AND LOWER(TRIM(name)) = LOWER(TRIM($4))
+                )`,
+            [id, name, existing.rows[0].branch_id, existing.rows[0].name],
+          );
+          if (broadcastTable) await broadcastTable('chart_of_accounts');
+        } catch (glErr) {
+          console.warn('[CAIXA] rename GL account:', glErr.message);
+        }
+      }
       const row = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
       if (broadcastTable) await broadcastTable('caixas');
       res.json({ data: mapCaixaRow(row.rows[0]) });

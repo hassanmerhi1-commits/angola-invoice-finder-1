@@ -145,6 +145,37 @@ function ensureEssentialAccounts(accounts: Account[]): Account[] {
 
 // ============= BRANCH CAIXA ACCOUNT =============
 
+export const CASH_PARENT_CODE = '45';
+
+export function isReservedCashCode(code?: string | null): boolean {
+  return String(code || '').trim() === CASH_PARENT_CODE;
+}
+
+export function isBranchCaixaLeaf(account: Pick<Account, 'code' | 'is_header'>): boolean {
+  const code = String(account.code || '').trim();
+  return /^45\d+$/.test(code) && code !== CASH_PARENT_CODE && !account.is_header;
+}
+
+/** Sequential cash numbers: 451, 452, 453 … 459, then 4510, 4511. Fills gaps. */
+export function nextTopLevelBranchCaixaCode(codes: string[]): string {
+  const used = new Set(codes.map((code) => String(code || '').trim()));
+  used.add(CASH_PARENT_CODE);
+  for (let n = 1; n <= 999; n += 1) {
+    const code = `${CASH_PARENT_CODE}${n}`;
+    if (!used.has(code)) return code;
+  }
+  return `${CASH_PARENT_CODE}999`;
+}
+
+export function nextExtraBranchCaixaCode(_parentCode: string, siblingCodes: string[]): string {
+  return nextTopLevelBranchCaixaCode(siblingCodes);
+}
+
+export function defaultBranchCaixaName(branchName: string, extraIndex = 0): string {
+  const base = `Caixa - ${String(branchName || '').trim()}`;
+  return extraIndex > 0 ? `${base} (${extraIndex + 1})` : base;
+}
+
 /**
  * Ensure each branch has a sub-account under 45 (Caixa).
  * Creates accounts like 454 Caixa - Sede, 455 Caixa - Luanda, etc.
@@ -185,19 +216,7 @@ export async function ensureBranchCaixaAccounts(
 
   for (const branch of missing) {
 
-    // Find next free 45x code (451–453 reserved by PGC).
-    const children = accounts.filter(
-      (a) => /^45\d+$/.test(a.code) && a.code.length === 3 && a.level === 2 && !a.is_header,
-    );
-    const used = new Set(children.map((a) => a.code));
-    let code = '';
-    for (let suffix = 4; suffix <= 99; suffix += 1) {
-      const candidate = `45${suffix}`;
-      if (!used.has(candidate)) {
-        code = candidate;
-        break;
-      }
-    }
+    const code = nextTopLevelBranchCaixaCode(accounts.map((a) => a.code));
     if (!code) {
       console.warn('[CoA Engine] No free 45x caixa code for branch', branch.name);
       continue;

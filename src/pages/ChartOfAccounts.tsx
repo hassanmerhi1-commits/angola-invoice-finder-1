@@ -9,6 +9,7 @@ import {
   buildRolledBalanceById,
   buildVisibleCoaForest,
   coaIdKey,
+  compareAccountCodes,
   idsOfAccountsWithChildren,
 } from '@/lib/coaTreeBalances';
 import { prefetchAccountLedger } from '@/lib/ledgerPrefetch';
@@ -39,6 +40,14 @@ import { ChartOfAccountsNewMenu } from '@/components/accounting/ChartOfAccountsN
 import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
 import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
 import { chartNewActionTab, type ChartNewAction } from '@/lib/chartOfAccountsNewActions';
+import { useBranchContext } from '@/contexts/BranchContext';
+import {
+  CASH_PARENT_CODE,
+  defaultBranchCaixaName,
+  isBranchCaixaLeaf,
+  isReservedCashCode,
+  nextTopLevelBranchCaixaCode,
+} from '@/lib/chartOfAccountsEngine';
 
 // Category tabs
 // Angola PGC (novo com IVA) — no-dot numbering. Tabs map to PGC class/main codes:
@@ -135,6 +144,7 @@ export default function ChartOfAccounts() {
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
+  const { branches } = useBranchContext();
 
   const [activeTab, setActiveTab] = useState('todos');
   const [searchTerm, setSearchTerm] = useState('');
@@ -282,7 +292,8 @@ export default function ChartOfAccounts() {
     parent_id: '',
     level: 1,
     is_header: false,
-    opening_balance: 0
+    opening_balance: 0,
+    branch_id: '',
   });
 
   // Filter accounts by tab + search
@@ -428,6 +439,7 @@ export default function ChartOfAccounts() {
       level: 1,
       is_header: false,
       opening_balance: 0,
+      branch_id: '',
     };
 
     let nextForm = { ...emptyForm };
@@ -445,7 +457,9 @@ export default function ChartOfAccounts() {
     };
 
     const tabConfig = CATEGORY_TABS.find((tab) => tab.key === tabKey) || CATEGORY_TABS[CATEGORY_TABS.length - 1];
-    const selectedMatchesCurrentTab = selectedAccount ? tabConfig.filter(selectedAccount) : false;
+    const selectedMatchesCurrentTab = selectedAccount
+      ? tabConfig.filter(selectedAccount) && tabKey !== 'caixa'
+      : false;
 
     if (selectedAccount && selectedMatchesCurrentTab) {
       applyParentDefaults(selectedAccount);
@@ -465,6 +479,29 @@ export default function ChartOfAccounts() {
         if (tabParent) {
           applyParentDefaults(tabParent);
         }
+      }
+    }
+
+    if (tabKey === 'caixa' && !nextForm.is_header) {
+      const cashParent = accounts.find((a) => a.code === CASH_PARENT_CODE && a.is_active !== false);
+      const selectedCaixa = selectedAccount && isBranchCaixaLeaf(selectedAccount) ? selectedAccount : null;
+      if (cashParent) {
+        applyParentDefaults(cashParent);
+        const extras = selectedCaixa
+          ? accounts.filter((a) => a.branch_id && a.branch_id === selectedCaixa.branch_id && isBranchCaixaLeaf(a))
+          : [];
+        nextForm = {
+          ...nextForm,
+          code: nextTopLevelBranchCaixaCode(accounts.map((a) => a.code)),
+          branch_id: selectedCaixa?.branch_id || '',
+          name: selectedCaixa?.branch_id
+            ? defaultBranchCaixaName(
+              branches.find((b) => b.id === selectedCaixa.branch_id)?.name
+                || selectedCaixa.name.replace(/^caixa\s*-\s*/i, ''),
+              extras.length,
+            )
+            : '',
+        };
       }
     }
 
@@ -516,6 +553,7 @@ export default function ChartOfAccounts() {
       level: (parent?.level ?? 2) + 1,
       is_header: true,
       opening_balance: 0,
+      branch_id: '',
     });
     setIsDialogOpen(true);
   };
@@ -540,6 +578,7 @@ export default function ChartOfAccounts() {
       level: 1,
       is_header: true,
       opening_balance: 0,
+      branch_id: '',
     });
     setIsDialogOpen(true);
   };
@@ -595,7 +634,8 @@ export default function ChartOfAccounts() {
       parent_id: account.parent_id || '',
       level: account.level,
       is_header: account.is_header,
-      opening_balance: Number(account.opening_balance) || 0
+      opening_balance: Number(account.opening_balance) || 0,
+      branch_id: account.branch_id || '',
     });
     setIsDialogOpen(true);
   };
@@ -634,6 +674,14 @@ export default function ChartOfAccounts() {
       return;
     }
 
+    const cashLeaf = !formData.is_header
+      && String(formData.code || '').startsWith('45')
+      && !isReservedCashCode(formData.code);
+    if (cashLeaf && !editingAccount && !formData.branch_id) {
+      toast.error(t.chartOfAccountsUi.cashBranchRequired);
+      return;
+    }
+
     // Customer (31x) / supplier (32x) ledger accounts must carry a NIF (stored in description).
     const submitParent = accounts.find(a => a.id === formData.parent_id);
     const isEntityRegistry = !formData.is_header && !!submitParent && isEntityRegistryParent(submitParent.code);
@@ -646,7 +694,12 @@ export default function ChartOfAccounts() {
     const description = isEntityRegistry
       ? `NIF: ${nif.trim()}${rest.description && !/NIF:/i.test(rest.description) ? ` — ${rest.description}` : ''}`
       : rest.description;
-    const payload = { ...rest, description, parent_id: formData.parent_id || null };
+    const payload = {
+      ...rest,
+      description,
+      parent_id: formData.parent_id || null,
+      branch_id: formData.branch_id || null,
+    };
 
     setIsSubmitting(true);
     try {
@@ -692,6 +745,34 @@ export default function ChartOfAccounts() {
 
   const handleTypeChange = (type: AccountType) => {
     setFormData(prev => ({ ...prev, account_type: type, account_nature: getDefaultNature(type) }));
+  };
+
+  const applyCashBranch = (branchId: string) => {
+    const branch = branches.find((b) => b.id === branchId);
+    setFormData((prev) => {
+      if (editingAccount) {
+        return { ...prev, branch_id: branchId };
+      }
+      const existing = accounts.filter((a) => isBranchCaixaLeaf(a) && a.branch_id === branchId && a.is_active !== false);
+      const cashParent = accounts.find((a) => a.code === CASH_PARENT_CODE && a.is_active !== false);
+      if (!cashParent) {
+        return {
+          ...prev,
+          branch_id: branchId,
+          name: branch ? defaultBranchCaixaName(branch.name, existing.length) : prev.name,
+        };
+      }
+      return {
+        ...prev,
+        branch_id: branchId,
+        parent_id: cashParent.id,
+        level: (cashParent.level || 1) + 1,
+        code: nextTopLevelBranchCaixaCode(accounts.map((a) => a.code)),
+        name: branch ? defaultBranchCaixaName(branch.name, existing.length) : prev.name,
+        account_type: 'asset',
+        account_nature: 'debit',
+      };
+    });
   };
 
   // Suggested code for a new header created inline under the currently selected parent.
@@ -782,7 +863,7 @@ export default function ChartOfAccounts() {
       a.code === '321'
       || (a.code.startsWith('321') && a.code.length > 3 && a.code.length < ENTITY_ACCOUNT_CODE_LENGTH)
     ))
-    .sort((a, b) => a.code.localeCompare(b.code));
+    .sort((a, b) => compareAccountCodes(a.code, b.code));
 
   const openMoveDialog = () => {
     if (!selectedSupplierLeaf) return;
@@ -825,6 +906,13 @@ export default function ChartOfAccounts() {
   // Whether the open dialog is creating/editing a customer/supplier ledger account (needs a NIF).
   const dialogParent = accounts.find(a => a.id === formData.parent_id);
   const dialogIsEntityRegistry = !formData.is_header && !!dialogParent && isEntityRegistryParent(dialogParent.code);
+  const dialogIsCashBox = !formData.is_header
+    && (
+      String(formData.code || '').startsWith('45')
+      || dialogParent?.code === CASH_PARENT_CODE
+      || !!(dialogParent && isBranchCaixaLeaf(dialogParent))
+    )
+    && !isReservedCashCode(formData.code);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -1023,6 +1111,24 @@ export default function ChartOfAccounts() {
               <Label>{t.chartOfAccountsUi.nameLabel}</Label>
               <Input value={formData.name} onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))} placeholder={t.chartOfAccountsUi.namePlaceholder} />
             </div>
+            {dialogIsCashBox && (
+              <div className="space-y-2">
+                <Label>{t.chartOfAccountsUi.cashBranchLabel}</Label>
+                <Select value={formData.branch_id || undefined} onValueChange={applyCashBranch}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t.chartOfAccountsUi.cashBranchPlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {branches.map((branch) => (
+                      <SelectItem key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">{t.chartOfAccountsUi.cashBranchHint}</p>
+              </div>
+            )}
             {dialogIsEntityRegistry && (
               <div className="space-y-2">
                 <Label>{t.clientsUi.nifLabel}</Label>
@@ -1227,7 +1333,7 @@ function AccountParentPicker({
         return String(a.code || '').toLowerCase().includes(q)
           || resolveAccountDisplayName(a, language, t).toLowerCase().includes(q);
       })
-      .sort((a, b) => a.code.localeCompare(b.code))
+      .sort((a, b) => compareAccountCodes(a.code, b.code))
       .slice(0, 80);
   }, [accounts, excludeId, language, query, t]);
 

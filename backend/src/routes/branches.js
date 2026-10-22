@@ -2,7 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { branchesListSql, deactivateBranchSql, deactivateBranchWarehousesSql } = require('../lib/sqlDialect');
-const { ensureBranchCaixaAccount, ensureAllBranchCaixaAccounts } = require('../lib/branchCaixaAccounts');
+const { ensureBranchCaixaAccount, ensureAllBranchCaixaAccounts, upsertOperationalCaixaFromAccount } = require('../lib/branchCaixaAccounts');
 const { requirePermission } = require('../middleware/requirePermission');
 const crypto = require('crypto');
 const { auditErpSafe } = require('../lib/erpAudit');
@@ -84,7 +84,22 @@ module.exports = function(broadcastTable) {
       const branch = result.rows[0];
 
       try {
-        await ensureBranchCaixaAccount(client, branch.id, normalizedName);
+        const caixaGl = await ensureBranchCaixaAccount(client, branch.id, normalizedName);
+        if (caixaGl?.id || caixaGl?.code) {
+          const acc = caixaGl.id
+            ? { id: caixaGl.id, code: caixaGl.code, name: `Caixa - ${normalizedName}`, branch_id: branch.id }
+            : (await client.query(
+              'SELECT id, code, name, branch_id FROM chart_of_accounts WHERE code = $1 LIMIT 1',
+              [caixaGl.code],
+            )).rows[0];
+          if (acc) {
+            try {
+              await upsertOperationalCaixaFromAccount(client, acc, normalizedName);
+            } catch (regErr) {
+              console.warn('[BRANCHES] operational caixa:', regErr.message);
+            }
+          }
+        }
       } catch (caixaErr) {
         console.warn('[BRANCHES] branch caixa account:', caixaErr.message);
       }
@@ -98,6 +113,7 @@ module.exports = function(broadcastTable) {
       await client.query('COMMIT');
       await broadcastTable('branches');
       await broadcastTable('chart_of_accounts');
+      await broadcastTable('caixas');
       await broadcastTable('warehouses');
       auditErpSafe(req, {
         table: 'branches',
@@ -123,8 +139,9 @@ module.exports = function(broadcastTable) {
   router.post('/ensure-caixa-accounts', requirePermission('admin_settings'), async (req, res) => {
     try {
       const result = await ensureAllBranchCaixaAccounts(db);
-      if (result.created > 0) {
+      if (result.created > 0 || result.compacted > 0) {
         await broadcastTable('chart_of_accounts');
+        await broadcastTable('caixas');
       }
       res.json({ success: true, ...result });
     } catch (error) {

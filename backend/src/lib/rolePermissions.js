@@ -31,6 +31,38 @@ const ROLE_PERMISSIONS = {
   ],
 };
 
+const ADMIN_EXTRA_PERMISSIONS = [
+  'invoice_delete',
+  'inventory_delete',
+  'purchase_approve',
+  'purchase_invoice_confirm',
+  'backdate_post',
+  'edit_historical',
+  'admin_users',
+  'admin_roles',
+  'admin_permissions',
+  'admin_branches',
+  'admin_settings',
+  'admin_backup',
+  'admin_restore',
+  'admin_consistency',
+];
+
+function allKnownPermissionIds() {
+  const all = new Set(ADMIN_EXTRA_PERMISSIONS);
+  for (const perms of Object.values(ROLE_PERMISSIONS)) {
+    if (Array.isArray(perms)) {
+      for (const id of perms) all.add(id);
+    }
+  }
+  return [...all];
+}
+
+function roleBaseline(role) {
+  if (role === 'admin') return allKnownPermissionIds();
+  return Array.isArray(ROLE_PERMISSIONS[role]) ? ROLE_PERMISSIONS[role] : [];
+}
+
 function roleHasPermission(role, permissionId) {
   if (!role) return false;
   if (role === 'admin') return true;
@@ -68,19 +100,16 @@ function parsePermissionOverrides(raw) {
  * Admins always have everything (immune to revokes). Revoke wins over grant.
  */
 function userHasPermission(role, overrides, permissionId) {
-  if (role === 'admin') return true;
   const o = parsePermissionOverrides(overrides);
   if (o.revoked.includes(permissionId)) return false;
   if (o.granted.includes(permissionId)) return true;
+  if (role === 'admin') return true;
   return roleHasPermission(role, permissionId);
 }
 
 /** Full effective permission set for a user (role defaults + grants − revokes). */
 function getEffectivePermissions(role, overrides) {
-  if (role === 'admin') {
-    return Object.keys(ROLE_PERMISSIONS).length ? null : null; // admin = all (null sentinel)
-  }
-  const base = Array.isArray(ROLE_PERMISSIONS[role]) ? ROLE_PERMISSIONS[role] : [];
+  const base = roleBaseline(role);
   const o = parsePermissionOverrides(overrides);
   const set = new Set(base);
   for (const g of o.granted) set.add(g);
@@ -94,4 +123,5 @@ module.exports = {
   getEffectivePermissions,
   parsePermissionOverrides,
   ROLE_PERMISSIONS,
+  roleBaseline,
 };

@@ -5,6 +5,18 @@ export function coaIdKey(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
 
+/** 451, 455, 4510, 4552 — not 455 then 451 then 4510. */
+export function compareAccountCodes(a: string, b: string): number {
+  return String(a || '').localeCompare(String(b || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+function sortAccountsByCode(items: Account[]): Account[] {
+  return [...items].sort((left, right) => compareAccountCodes(left.code, right.code));
+}
+
 /** Direct children by parent_id (O(n) once). */
 export function buildChildrenByParentId(accounts: Account[]): Map<string, Account[]> {
   const map = new Map<string, Account[]>();
@@ -40,6 +52,7 @@ export function buildRolledBalanceById(accounts: Account[]): Map<string, number>
         if (coaIdKey(other.id) === coaIdKey(acc.id) || coaIdKey(other.parent_id) === coaIdKey(acc.id)) continue;
         const code = String(acc.code || '');
         if (otherCode.length > code.length && otherCode.startsWith(code)) {
+          if (!acc.is_header && code.length > 2) continue;
           const list = prefixKids.get(coaIdKey(acc.id));
           if (list) list.push(other);
           else prefixKids.set(coaIdKey(acc.id), [other]);
@@ -114,12 +127,17 @@ export function buildVisibleCoaForest(accounts: Account[]): {
       if (coaIdKey(cand.id) === coaIdKey(a.id)) continue;
       const cCode = String(cand.code || '');
       if (!cCode || code.length <= cCode.length || !code.startsWith(cCode)) continue;
+      // 4510 is the next cash number after 459, not a child of 451.
+      if (!cand.is_header && cCode.length > 2) continue;
       if (!best || String(best.code || '').length < cCode.length) best = cand;
     }
     if (best) attach(coaIdKey(best.id), a);
   }
 
-  const roots = accounts.filter((a) => !placed.has(coaIdKey(a.id)));
+  const roots = sortAccountsByCode(accounts.filter((a) => !placed.has(coaIdKey(a.id))));
+  for (const [key, kids] of childrenByParent) {
+    childrenByParent.set(key, sortAccountsByCode(kids));
+  }
   return { roots, childrenByParent };
 }
 
