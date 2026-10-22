@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { TopNav } from './TopNav';
 import { StatusBar } from './StatusBar';
+import { LiveWebappBanner } from '@/components/LiveWebappBanner';
+import { CityDesktopShellBanner } from '@/components/CityDesktopShellBanner';
 import { BranchAccessGuard } from '@/components/BranchAccessGuard';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
@@ -112,6 +114,8 @@ export function AppLayout() {
           onBranchChange={setOperatingBranch}
           onLogout={logout}
         />
+        <LiveWebappBanner />
+        <CityDesktopShellBanner />
       </div>
       <main data-nexor-scale className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <AppInteractionProvider>

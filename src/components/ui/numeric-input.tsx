@@ -21,8 +21,14 @@ export const NumericInput = React.forwardRef<HTMLInputElement, NumericInputProps
     const [draft, setDraft] = React.useState<string | null>(null);
 
     React.useEffect(() => {
-      setDraft(null);
-    }, [value]);
+      setDraft((current) => {
+        if (current !== null) {
+          const parsed = integer ? parseInt(current, 10) : parseFloat(current);
+          if (!Number.isNaN(parsed) && parsed === value) return current;
+        }
+        return null;
+      });
+    }, [value, integer]);
 
     const clamp = React.useCallback(
       (n: number) => {

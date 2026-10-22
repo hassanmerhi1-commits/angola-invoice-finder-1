@@ -66,10 +66,11 @@ export const getProductSearchTier = (product: Product, rawTerm: string): Product
   if (barcode && barcode === term) return 'exact';
   if (termDigits && skuDigits && skuDigits === termDigits) return 'exact';
   if (termDigits && barcodeDigits && barcodeDigits === termDigits) return 'exact';
-  if (skuCompact.startsWith(termCompact)) return 'skuPrefix';
+  if (termCompact.length >= 2 && skuCompact.startsWith(termCompact)) return 'skuPrefix';
   if (termDigits.length >= 4 && skuDigits.startsWith(termDigits)) return 'skuPrefix';
-  if (name.includes(term)) return 'name';
-  if (barcode && barcode.includes(term)) return 'name';
+  // One letter/digit matches almost the whole catalog — do not scan names yet.
+  if (termCompact.length >= 2 && name.includes(term)) return 'name';
+  if (termCompact.length >= 3 && barcode && barcode.includes(term)) return 'name';
   if (termDigits.length >= 6 && barcodeDigits.includes(termDigits)) return 'name';
   if (termDigits.length >= 6 && skuDigits.includes(termDigits)) return 'name';
 
@@ -150,16 +151,22 @@ export const filterProductsForSearch = (
   search: string,
   usedElsewhere: Set<string>,
   branchId: string,
+  limit = 0,
 ): Product[] => {
   const term = search.trim();
   if (!term) return [];
 
-  const pool = products.filter((p) => !usedElsewhere.has(p.id));
   const termCompact = normalizeSearchText(term);
+  const maxHits = limit > 0 ? Math.max(limit * 3, 80) : 0;
+  const candidates: { product: Product; tier: ProductSearchTier }[] = [];
 
-  const candidates = pool
-    .map((p) => ({ product: p, tier: getProductSearchTier(p, term) }))
-    .filter((row): row is { product: Product; tier: ProductSearchTier } => row.tier !== null);
+  for (const p of products) {
+    if (usedElsewhere.has(p.id)) continue;
+    const tier = getProductSearchTier(p, term);
+    if (!tier) continue;
+    candidates.push({ product: p, tier });
+    if (maxHits && candidates.length >= maxHits) break;
+  }
 
   if (candidates.length === 0) return [];
 

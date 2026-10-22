@@ -142,12 +142,12 @@ export function ProductCategoryField({
         </Button>
       </div>
       {creating ? (
-        <div className="flex items-center gap-1.5">
+        <div className="space-y-1.5">
           <Input
             autoFocus
             value={newName}
             placeholder={t.productFormUi.newCategoryPlaceholder}
-            className={cn('min-w-0 flex-1', triggerClassName)}
+            className="h-9 w-full min-w-0 px-3 text-sm text-foreground bg-background caret-foreground"
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -157,12 +157,14 @@ export function ProductCategoryField({
               if (e.key === 'Escape') setCreating(false);
             }}
           />
-          <Button type="button" size="sm" className="h-8" disabled={saving} onClick={() => void saveNew()}>
-            {t.productFormUi.createCategory}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" className="h-8" disabled={saving} onClick={() => setCreating(false)}>
-            {t.common.cancel}
-          </Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button type="button" size="sm" className="h-8 shrink-0" disabled={saving} onClick={() => void saveNew()}>
+              {t.productFormUi.createCategory}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" className="h-8 shrink-0" disabled={saving} onClick={() => setCreating(false)}>
+              {t.common.cancel}
+            </Button>
+          </div>
         </div>
       ) : null}
     </div>

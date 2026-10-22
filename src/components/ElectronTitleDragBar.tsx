@@ -1,7 +1,17 @@
-/** 32px drag strip under the Windows title-bar overlay so ink is not a white caption. */
+import { useEffect } from 'react';
+
+/** Login-only 32px drag strip. After login, File/Company sit in the Windows title bar. */
 export function ElectronTitleDragBar() {
-  if (typeof window === 'undefined') return null;
-  if (!window.electronAPI?.isElectron) return null;
-  if (!/Windows/i.test(navigator.userAgent || '')) return null;
+  const isWinElectron = typeof window !== 'undefined'
+    && !!window.electronAPI?.isElectron
+    && /Windows/i.test(navigator.userAgent || '');
+
+  useEffect(() => {
+    if (!isWinElectron) return;
+    document.documentElement.classList.add('nexor-electron-win');
+    return () => document.documentElement.classList.remove('nexor-electron-win');
+  }, [isWinElectron]);
+
+  if (!isWinElectron) return null;
   return <div className="nexor-electron-drag" aria-hidden />;
 }

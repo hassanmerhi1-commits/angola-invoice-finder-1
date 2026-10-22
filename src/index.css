@@ -461,6 +461,21 @@
     -webkit-app-region: drag;
     background: hsl(var(--background));
   }
+  /* Logged-in: File / Company live in the title bar — drop the empty ink strip. */
+  html.nexor-electron-win:has([data-topnav]) .nexor-electron-drag {
+    display: none;
+  }
+  html.nexor-electron-win .nexor-title-drag-row {
+    -webkit-app-region: drag;
+    padding-right: 138px;
+  }
+  html.nexor-electron-win .nexor-title-drag-row button,
+  html.nexor-electron-win .nexor-title-drag-row a,
+  html.nexor-electron-win .nexor-title-drag-row input,
+  html.nexor-electron-win .nexor-title-drag-row [role='button'],
+  html.nexor-electron-win .nexor-title-drag-row [data-radix-collection-item] {
+    -webkit-app-region: no-drag;
+  }
   /* Legacy names → light professional icon badges */
   .gradient-primary {
     @apply bg-sky-50 text-sky-600;

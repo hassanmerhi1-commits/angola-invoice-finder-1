@@ -690,7 +690,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
     <header className="sticky top-0 z-50">
       <OfflineModeBanner />
       {/* ====== ROW 1: Menu Bar ====== */}
-      <div className={themeChrome.navRow1}>
+      <div className={cn(themeChrome.navRow1, 'nexor-title-drag-row')}>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
           {/* Logo + company — never wrap when text prefs change */}
           <div className={`${themeChrome.navBrandBorder} shrink-0 max-w-[min(12rem,28vw)]`}>

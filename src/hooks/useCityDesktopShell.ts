@@ -9,10 +9,32 @@ type Latest = {
   size?: number;
 };
 
+const SHELL_READY_KEY = 'nexor:desktop-shell-ready';
+
 function sameBuild(a?: string | null, b?: string | null) {
   const left = String(a || '').trim().toLowerCase();
   const right = String(b || '').trim().toLowerCase();
-  return !!left && !!right && left === right;
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.startsWith(right) || right.startsWith(left)
+    ? left.slice(0, 7) === right.slice(0, 7)
+    : false;
+}
+
+function readShellReadyFlag() {
+  try {
+    return String(localStorage.getItem(SHELL_READY_KEY) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function markShellReady(buildId?: string | null) {
+  try {
+    localStorage.setItem(SHELL_READY_KEY, String(buildId || '1').trim() || '1');
+  } catch {
+    /* ignore */
+  }
 }
 
 function isBusyError(message: string) {
@@ -50,7 +72,19 @@ export function useCityDesktopShell() {
       const diag = await (window as any).electronAPI?.updater?.getDiagnostics?.();
       const hasCache = diag?.hasCityUiCache === true;
       const current = diag?.shellBuildId || null;
-      setNeeded(!hasCache || !sameBuild(current, latest.buildId));
+      const capableShell = typeof (window as any).electronAPI?.updater?.downloadCityShell === 'function';
+      // One-time: hide after this till already has the city-shell (or already installed this build).
+      // Do not keep asking just because the city later published another 1.3.8 installer.
+      const alreadyReady = !!readShellReadyFlag()
+        || capableShell
+        || hasCache
+        || sameBuild(current, latest.buildId);
+      if (alreadyReady) {
+        markShellReady(latest.buildId || current || '1');
+        setNeeded(false);
+        return;
+      }
+      setNeeded(true);
     } catch {
       setReadyOnCity(false);
     }
@@ -132,6 +166,7 @@ export function useCityDesktopShell() {
         const result = await (window as any).electronAPI.updater.downloadCityShell();
         if (!result?.success) throw new Error(result?.error || 'Download failed');
         if (result.alreadyCurrent) {
+          markShellReady(result.buildId || '1');
           setNeeded(false);
           return;
         }

@@ -62,7 +62,7 @@ export const inkPreset: ThemePreset = {
       'h-10 px-2 bg-[#070b16] hidden sm:flex items-end justify-between gap-2 border-b border-white/10 overflow-x-auto',
     navTabActive:
       'bg-card/80 text-[#e8eef5] border-t-[2px] border-x border-t-[#c4a574] border-x-white/10 -mb-px',
-    navTabIdle: 'text-[#8b97a8] hover:text-[#e8eef5] hover:bg-white/5',
+    navTabIdle: 'text-[#d0d7e2] hover:text-white hover:bg-white/10',
     checklistTab:
       'flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-t-lg transition-all text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 ml-0.5 border border-amber-400/25 border-b-0',
     toolbarRow:

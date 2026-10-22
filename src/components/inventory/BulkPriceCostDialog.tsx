@@ -163,7 +163,7 @@ export function BulkPriceCostDialog({
     (rowId: string, search: string) => {
       if (!search.trim()) return [];
       const { ids, skus } = usedElsewhere(rowId);
-      return filterProductsForSearch(catalog, search, ids, '')
+      return filterProductsForSearch(catalog, search, ids, '', PRODUCT_LINE_SUGGESTION_LIMIT)
         .filter((p) => !skus.has(normalizeSearchText(p.sku)))
         .sort((a, b) => sortProductSearchResults(a, b, search, ''))
         .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);

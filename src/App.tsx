@@ -13,7 +13,6 @@ import { RoutePermissionGuard } from "@/components/RoutePermissionGuard";
 import { PrintPreviewHost } from "@/components/print/PrintPreviewHost";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ElectronTitleDragBar } from "@/components/ElectronTitleDragBar";
-import { LiveWebappBanner } from "@/components/LiveWebappBanner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,7 +25,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { UpdateStatus } from "@/types/electron";
 import Login from "./pages/Login";
-import { CityDesktopShellBanner } from "./components/CityDesktopShellBanner";
 import Setup from "./pages/Setup";
 
 function RouteLoadingFallback() {
@@ -508,8 +506,6 @@ const App = () => {
       <LanguageProvider>
         <ErrorBoundary>
           <ElectronTitleDragBar />
-          <LiveWebappBanner />
-          <CityDesktopShellBanner />
           <BranchProvider>
             <TooltipProvider>
               <Toaster />

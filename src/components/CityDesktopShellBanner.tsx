@@ -24,8 +24,8 @@ export function CityDesktopShellBanner() {
   const percent = downloading ? t.common.desktopShellDownloading.replace('{percent}', String(progress)) : null;
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-1.5 text-xs bg-sky-500/15 text-sky-950 dark:text-sky-100 border-b border-sky-500/30">
-      <span className="font-medium">{t.common.desktopShellTitle}.</span>
+    <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-1.5 text-xs bg-primary/15 text-foreground border-b border-border">
+      <span className="font-medium text-foreground">{t.common.desktopShellTitle}.</span>
       <span className="text-muted-foreground min-w-0">
         {readyToInstall
           ? t.common.desktopShellReady

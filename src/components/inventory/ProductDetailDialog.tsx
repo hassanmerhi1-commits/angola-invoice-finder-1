@@ -425,6 +425,7 @@ export function ProductDetailDialog({
       || (copySource?.id ? `copy:${copySource.id}` : 'new');
     if (formInitKeyRef.current === initKey) return;
     formInitKeyRef.current = initKey;
+    setFormDirty(false);
     setTierPct({});
 
     if (effectiveProduct) {
@@ -524,15 +525,34 @@ export function ProductDetailDialog({
     formSnapshotRef.current = JSON.stringify(next);
     formDataRef.current = next;
     setTierPct({});
+    setFormDirty(false);
     setFormData(next);
   }, [loadedProduct, open, buildFormFromProduct]);
 
-  const set = (field: string, value: any) => setFormData(prev => ({ ...prev, [field]: value }));
+  const [formDirty, setFormDirty] = useState(false);
+  const set = (field: string, value: any) => {
+    setFormDirty(true);
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
 
-  const isFormDirty = useMemo(() => {
-    if (!open || !formSnapshotRef.current) return false;
-    return JSON.stringify(formData) !== formSnapshotRef.current;
-  }, [open, formData]);
+  const setInvBarcode = (idx: number, value: string) => {
+    setFormDirty(true);
+    setFormData((prev) => {
+      const barcodes = prev.barcodes.map((bc, i) => (i === idx ? { ...bc, barPrice: value } : bc));
+      return idx === 0 ? { ...prev, barcode: value, barcodes } : { ...prev, barcodes };
+    });
+  };
+
+  const setIdentityBarcode = (value: string) => {
+    setFormDirty(true);
+    setFormData((prev) => ({
+      ...prev,
+      barcode: value,
+      barcodes: prev.barcodes.map((bc, i) => (i === 0 ? { ...bc, barPrice: value } : bc)),
+    }));
+  };
+
+  const isFormDirty = formDirty;
 
   const closeDialog = useCallback(() => {
     setDiscardCloseOpen(false);
@@ -563,6 +583,7 @@ export function ProductDetailDialog({
 
   // Changing Price 1 re-derives any tier that is currently driven by a % over Price 1.
   const updatePrice = (newPrice: number) => {
+    setFormDirty(true);
     setFormData((prev) => {
       const next: typeof prev = {
         ...prev,
@@ -580,6 +601,7 @@ export function ProductDetailDialog({
   };
 
   const updatePriceFromIVA = (newPriceIVA: number) => {
+    setFormDirty(true);
     setFormData((prev) => ({
       ...prev,
       priceIVA: newPriceIVA,
@@ -588,6 +610,7 @@ export function ProductDetailDialog({
   };
 
   const updateIVA = (newIVA: number) => {
+    setFormDirty(true);
     setFormData((prev) => ({
       ...prev,
       iva: newIVA,
@@ -622,6 +645,7 @@ export function ProductDetailDialog({
 
   // Editing a "%" field: level 1 derives Price 1 from cost; tiers derive from Price 1.
   const updateMarkupForLevel = (level: 1 | 2 | 3 | 4, markupPct: number) => {
+    setFormDirty(true);
     if (level === 1) {
       const newPrice = +(formData.cost * (1 + (markupPct || 0) / 100)).toFixed(2);
       setFormData((prev) => ({
@@ -639,6 +663,7 @@ export function ProductDetailDialog({
 
   // Typing an exact value into a tier price box overrides its %.
   const setTierPrice = (level: 2 | 3 | 4, value: number) => {
+    setFormDirty(true);
     setTierPct((prev) => {
       const nextPct = { ...prev };
       delete nextPct[level];
@@ -653,7 +678,7 @@ export function ProductDetailDialog({
   const copyHits = useMemo(() => {
     const term = copySearch.trim();
     if (!term) return [];
-    return filterProductsForSearch(copyPool, term, new Set(), scopeBranchId || '')
+    return filterProductsForSearch(copyPool, term, new Set(), scopeBranchId || '', PRODUCT_LINE_SUGGESTION_LIMIT)
       .sort((a, b) => sortProductSearchResults(a, b, term, scopeBranchId || ''))
       .slice(0, PRODUCT_LINE_SUGGESTION_LIMIT);
   }, [copyPool, copySearch, scopeBranchId]);
@@ -910,12 +935,12 @@ export function ProductDetailDialog({
                   <Input value={formData.sku} onChange={(e) => set('sku', e.target.value)} className={fieldControl} />
                 </Field>
                 <Field label={t.productFormUi.barcodeLabel}>
-                  <Input value={formData.barcode} onChange={(e) => set('barcode', e.target.value)} className={fieldControl} />
+                  <Input value={formData.barcode} onChange={(e) => setIdentityBarcode(e.target.value)} className={fieldControl} />
                 </Field>
                 <Field label={`${t.common.description} *`} className="col-span-2">
                   <Input value={formData.name} onChange={(e) => set('name', e.target.value)} className={fieldControl} />
                 </Field>
-                <Field label={t.inventory.category}>
+                <Field label={t.inventory.category} className="col-span-2">
                   <ProductCategoryField
                     value={formData.category}
                     onChange={(v) => set('category', v)}
@@ -1109,7 +1134,7 @@ export function ProductDetailDialog({
           </div>
 
           <Section title={t.productDetailUi.sectionBarcodes} className="mt-3">
-            <table className="w-full text-sm">
+            <table data-plain-table="true" className="w-full text-sm">
               <thead>
                 <tr className="text-[11px] text-muted-foreground">
                   <th className="pb-2 pr-2 text-left font-medium">{t.productDetailUi.invBarcode}</th>
@@ -1123,10 +1148,11 @@ export function ProductDetailDialog({
                 {formData.barcodes.map((bc, idx) => (
                   <tr key={idx}>
                     <td className="py-1 pr-2">
-                      <Input value={bc.barPrice} onChange={(e) => {
-                        const b = [...formData.barcodes]; b[idx] = { ...bc, barPrice: e.target.value };
-                        set('barcodes', b);
-                      }} className={fieldControl} />
+                      <Input
+                        value={bc.barPrice}
+                        onChange={(e) => setInvBarcode(idx, e.target.value)}
+                        className={fieldControl}
+                      />
                     </td>
                     <td className="py-1 px-1">
                       <Input type="number" value={bc.embalagem} onChange={(e) => {

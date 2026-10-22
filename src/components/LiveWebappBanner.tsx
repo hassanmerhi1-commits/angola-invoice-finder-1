@@ -7,8 +7,8 @@ export function LiveWebappBanner() {
   const { t } = useTranslation();
   if (!pending) return null;
   return (
-    <div className="flex items-center justify-center gap-3 px-3 py-1.5 text-xs bg-amber-500/15 text-amber-950 dark:text-amber-100 border-b border-amber-500/30">
-      <span className="font-medium">{t.common.webappUpdatedTitle}.</span>
+    <div className="flex items-center justify-center gap-3 px-3 py-1.5 text-xs bg-primary/15 text-foreground border-b border-border">
+      <span className="font-medium text-foreground">{t.common.webappUpdatedTitle}.</span>
       <span className="text-muted-foreground">{t.common.webappUpdatedDesc}</span>
       <Button size="sm" className="h-6 text-xs" onClick={reloadNow}>
         {t.common.webappUpdatedAction}
