@@ -26,6 +26,7 @@ import {
 import type { UpdateStatus } from "@/types/electron";
 import Login from "./pages/Login";
 import Setup from "./pages/Setup";
+import { useColorThemeId } from "@/themes/colorTheme";
 
 function RouteLoadingFallback() {
   return (
@@ -378,6 +379,7 @@ function LanguageKeyedRouter({ isElectron, browserBasename }: { isElectron: bool
 }
 
 const App = () => {
+  useColorThemeId();
   const isElectron = typeof window !== "undefined" && !!window.electronAPI?.isElectron;
 
   React.useEffect(() => {

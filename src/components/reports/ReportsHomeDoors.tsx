@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { NEXOR_STAT_CARD_TONE, type NexorTone } from '@/lib/nexorToneStyles';
+import { type NexorTone } from '@/lib/nexorToneStyles';
+import { useThemePreset } from '@/themes/colorTheme';
 
 export type ReportsDoorId = 'vendas' | 'receber' | 'pagar' | 'stock' | 'fecho' | 'iva';
 
@@ -29,6 +30,7 @@ export function ReportsHomeDoors({
   selected: ReportsDoorId | null;
   onSelect: (id: ReportsDoorId) => void;
 }) {
+  const statCardTone = useThemePreset().statCardTone;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {doors.map((door) => {
@@ -41,7 +43,7 @@ export function ReportsHomeDoors({
             onClick={() => onSelect(door.id)}
             className={cn(
               'text-left rounded-xl border p-5 min-h-[7.5rem] shadow-sm transition-shadow hover:shadow-md',
-              NEXOR_STAT_CARD_TONE[DOOR_TONE[door.id]],
+              statCardTone[DOOR_TONE[door.id]],
               active && 'ring-2 ring-primary ring-offset-2',
             )}
           >

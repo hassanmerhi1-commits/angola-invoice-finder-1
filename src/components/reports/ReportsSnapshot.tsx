@@ -10,7 +10,8 @@ import { mergeNetReportSales } from '@/lib/reports/netSales';
 import { useReportsPeriod } from '@/contexts/ReportsPeriodContext';
 import { ReportsPeriodBar } from '@/components/reports/ReportsPeriodBar';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
-import { NEXOR_STAT_CARD_TONE, type NexorTone } from '@/lib/nexorToneStyles';
+import { type NexorTone } from '@/lib/nexorToneStyles';
+import { useThemePreset } from '@/themes/colorTheme';
 import { cn } from '@/lib/utils';
 
 const FinancialReports = lazy(() => import('@/components/reports/FinancialReports'));
@@ -68,6 +69,7 @@ export function ReportsSnapshot({
   monthEndExporting: boolean;
 }) {
   const { t, language } = useTranslation();
+  const statCardTone = useThemePreset().statCardTone;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { apiBranchId, dateFrom, dateTo } = useReportsPeriod();
   const { sales, isLoading: salesLoading, loadError: salesError } = useReportSales();
@@ -217,7 +219,7 @@ export function ReportsSnapshot({
                 onClick={() => onDoor(card.id)}
                 className={cn(
                   'text-left rounded-lg border px-3 py-2.5 transition-shadow hover:shadow-sm',
-                  NEXOR_STAT_CARD_TONE[card.tone],
+                  statCardTone[card.tone],
                   active && 'ring-2 ring-primary ring-offset-1',
                 )}
               >

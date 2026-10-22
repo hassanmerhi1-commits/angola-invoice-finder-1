@@ -19,6 +19,7 @@ import { ensureDayTodos, shouldShowDailyTodoDialog, todayKey } from '@/lib/daily
 import { hydrateCompanySettingsFromServer } from '@/lib/companySettings';
 import { useRealtimeSyncBridge } from '@/hooks/useRealtimeSyncBridge';
 import { prefetchCoreRoutes } from '@/lib/routePrefetch';
+import { useColorThemeId } from '@/themes/colorTheme';
 
 function resolveAppPathname(pathname: string): string {
   const p = pathname.replace(/\/$/, '') || '/';
@@ -27,6 +28,9 @@ function resolveAppPathname(pathname: string): string {
 
 export function AppLayout() {
   useBackendHealth();
+  // Re-render the open page when the theme changes so frozen tile/toolbar
+  // class strings are not left on the previous palette.
+  useColorThemeId();
   const { branches, currentBranch, setOperatingBranch } = useBranchScope();
   const { user, logout } = useAuth();
   const location = useLocation();

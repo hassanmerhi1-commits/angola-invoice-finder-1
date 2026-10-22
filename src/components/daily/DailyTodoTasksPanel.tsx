@@ -21,7 +21,7 @@ import {
   resolveDailyTodoAction,
   type DailyTodoAction,
 } from '@/lib/dailyTodoActions';
-import { getActivePreset } from '@/themes/active';
+import { useThemePreset } from '@/themes/colorTheme';
 
 interface DailyTodoTasksPanelProps {
   selectedDay: string;
@@ -69,8 +69,10 @@ function actionHint(
   }
 }
 
-function actionRowClass(action: DailyTodoAction | null): string {
-  const themeChrome = getActivePreset().chrome;
+function actionRowClass(
+  action: DailyTodoAction | null,
+  themeChrome: ReturnType<typeof useThemePreset>['chrome'],
+): string {
   switch (action) {
     case 'review_invoices':
       return themeChrome.rowInvoices;
@@ -101,7 +103,7 @@ export function DailyTodoTasksPanel({
   onOpenBriefingTab,
 }: DailyTodoTasksPanelProps) {
   const { t, language } = useTranslation();
-  const themeChrome = getActivePreset().chrome;
+  const themeChrome = useThemePreset().chrome;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const d = t.dailyTodosUi;
   const navigate = useNavigate();
@@ -233,7 +235,7 @@ export function DailyTodoTasksPanel({
             return (
               <div
                 key={item.id}
-                className={`flex items-start gap-2 rounded-md border px-3 py-2 transition-colors ${actionRowClass(action)}`}
+                className={`flex items-start gap-2 rounded-md border px-3 py-2 transition-colors ${actionRowClass(action, themeChrome)}`}
               >
                 <Checkbox
                   id={`${selectedDay}-${item.id}`}

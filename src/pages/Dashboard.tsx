@@ -14,9 +14,8 @@ import {
   PieChart, Truck, CheckCircle, Search, BookOpen, ArrowRightLeft,
   Users, Calendar, CreditCard, GitBranch,
 } from 'lucide-react';
-import { NEXOR_STAT_CARD_TONE, NEXOR_SECTION_LABEL, NEXOR_TONE_TILE, NEXOR_FLOW_STEP, type NexorTone } from '@/lib/nexorToneStyles';
-import { getThemePreset, useColorThemeId } from '@/themes/colorTheme';
-import { NEXOR_FEATURE_SHORTCUT_BTN } from '@/lib/nexorToolbarStyles';
+import { type NexorTone } from '@/lib/nexorToneStyles';
+import { useThemePreset } from '@/themes/colorTheme';
 
 const DashboardChartsSection = lazy(() => import('@/components/dashboard/DashboardChartsSection'));
 
@@ -41,7 +40,8 @@ export default function Dashboard() {
   const { language, t } = useTranslation();
   const d = t.dashboardUi;
   const { companyName, logo } = useCompanyLogo();
-  const themeChrome = getThemePreset(useColorThemeId()).chrome;
+  const theme = useThemePreset();
+  const themeChrome = theme.chrome;
   const cacheKey = String(apiBranchId || 'all');
   const cached = kpiCache.get(cacheKey);
   const [kpis, setKpis] = useState<DashboardKPIs | null>(cached?.kpis ?? null);
@@ -88,12 +88,12 @@ export default function Dashboard() {
   ], [d]);
 
   const biSidebarTone = [
-    NEXOR_TONE_TILE.slate,
-    NEXOR_TONE_TILE.sky,
-    NEXOR_TONE_TILE.indigo,
-    NEXOR_TONE_TILE.emerald,
-    NEXOR_TONE_TILE.amber,
-    NEXOR_TONE_TILE.slate,
+    theme.toneTile.slate,
+    theme.toneTile.sky,
+    theme.toneTile.indigo,
+    theme.toneTile.emerald,
+    theme.toneTile.amber,
+    theme.toneTile.slate,
   ];
 
   return (
@@ -114,7 +114,7 @@ export default function Dashboard() {
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.sky} hover:shadow-md transition-shadow`} onClick={() => navigate('/vendas')}>
+          <Card className={`cursor-pointer ${theme.statCardTone.sky} hover:shadow-md transition-shadow`} onClick={() => navigate('/vendas')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-primary/80 font-medium">{d.kpis.salesToday}</span>
@@ -126,7 +126,7 @@ export default function Dashboard() {
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.emerald} hover:shadow-md transition-shadow`} onClick={() => navigate('/reports')}>
+          <Card className={`cursor-pointer ${theme.statCardTone.emerald} hover:shadow-md transition-shadow`} onClick={() => navigate('/reports')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-success font-medium">{d.kpis.salesMonth}</span>
@@ -138,7 +138,7 @@ export default function Dashboard() {
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.amber} hover:shadow-md transition-shadow`} onClick={() => navigate('/receivables')}>
+          <Card className={`cursor-pointer ${theme.statCardTone.amber} hover:shadow-md transition-shadow`} onClick={() => navigate('/receivables')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-warning-foreground font-medium">{d.kpis.accountsReceivable}</span>
@@ -150,7 +150,7 @@ export default function Dashboard() {
               </p>
             </CardContent>
           </Card>
-          <Card className={`cursor-pointer ${NEXOR_STAT_CARD_TONE.rose} hover:shadow-md transition-shadow`} onClick={() => navigate('/payables')}>
+          <Card className={`cursor-pointer ${theme.statCardTone.rose} hover:shadow-md transition-shadow`} onClick={() => navigate('/payables')}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-rose-600 font-medium">{d.kpis.accountsPayable}</span>
@@ -184,7 +184,7 @@ export default function Dashboard() {
         {/* Document Flow */}
         <Card className={themeChrome.documentFlowCard}>
           <CardContent className="p-5">
-            <h3 className={`${NEXOR_SECTION_LABEL} mb-4`}>{d.documentFlowTitle}</h3>
+            <h3 className={`${theme.sectionLabel} mb-4`}>{d.documentFlowTitle}</h3>
             <div className="flex items-center justify-between gap-1 flex-wrap">
               {documentFlow.map((step, idx) => (
                 <div key={step.label} className="flex items-center gap-2 flex-1 min-w-0">
@@ -192,7 +192,7 @@ export default function Dashboard() {
                     onClick={() =>
                       navigate(step.path, 'state' in step && step.state ? { state: step.state } : undefined)
                     }
-                    className={`w-full group flex items-center gap-2.5 px-4 py-3 rounded-xl border transition-all duration-200 ${NEXOR_FLOW_STEP[idx % NEXOR_FLOW_STEP.length]}`}
+                    className={`w-full group flex items-center gap-2.5 px-4 py-3 rounded-xl border transition-all duration-200 ${theme.flowStep[idx % theme.flowStep.length]}`}
                   >
                     <step.icon className="w-5 h-5 flex-shrink-0 transition-colors" />
                     <span className="text-xs font-semibold truncate">{step.label}</span>
@@ -208,13 +208,13 @@ export default function Dashboard() {
 
         {/* Quick Actions Grid */}
         <div>
-          <h3 className={`${NEXOR_SECTION_LABEL} mb-4`}>{d.quickAccess}</h3>
+          <h3 className={`${theme.sectionLabel} mb-4`}>{d.quickAccess}</h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {quickActions.map((action) => (
               <button
                 key={action.label}
                 onClick={() => navigate(action.path)}
-                className={`${NEXOR_TONE_TILE[action.tone as NexorTone]} border p-5 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 group text-left`}
+                className={`${theme.toneTile[action.tone as NexorTone]} border p-5 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 group text-left`}
               >
                 <action.icon className="w-6 h-6 mb-3 transition-transform group-hover:scale-105" />
                 <span className="text-sm font-medium">{action.label}</span>
@@ -225,7 +225,7 @@ export default function Dashboard() {
 
         {/* Financial Charts — lazy chunk so recharts doesn't block the KPI paint */}
         <div>
-          <h3 className={`${NEXOR_SECTION_LABEL} mb-4`}>{d.financialAnalysis}</h3>
+          <h3 className={`${theme.sectionLabel} mb-4`}>{d.financialAnalysis}</h3>
           <Suspense fallback={<div className="h-64 rounded-xl bg-muted/50 border border-border animate-pulse" />}>
             <DashboardChartsSection />
           </Suspense>
@@ -277,7 +277,7 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={() => navigate('/chart-of-accounts')}
-            className={NEXOR_FEATURE_SHORTCUT_BTN}
+            className={theme.toolbar.feature}
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 group-hover:bg-primary/25 transition-colors">
               <BookOpen className="w-4 h-4 text-primary" />

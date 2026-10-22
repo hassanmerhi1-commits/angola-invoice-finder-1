@@ -3781,7 +3781,11 @@ function windowFrameOptions(chrome) {
 
 function applyNativeWindowTheme(themeId = readStoredColorTheme()) {
   const chrome = chromeForTheme(themeId);
-  try { nativeTheme.themeSource = chrome.source; } catch (_) { /* ignore */ }
+  try {
+    if (nativeTheme.themeSource !== chrome.source) {
+      nativeTheme.themeSource = chrome.source;
+    }
+  } catch (_) { /* ignore */ }
   for (const win of BrowserWindow.getAllWindows()) {
     try { win.setBackgroundColor(chrome.background); } catch (_) { /* ignore */ }
     try {

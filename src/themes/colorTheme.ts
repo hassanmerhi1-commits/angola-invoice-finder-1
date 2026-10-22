@@ -60,11 +60,16 @@ function syncDocumentWindowChrome(theme: ColorThemeId) {
     document.head.appendChild(meta);
   }
   meta.setAttribute('content', chrome.background);
-  try {
-    void window.electronAPI?.app?.setColorTheme?.(theme);
-  } catch {
-    /* browser / older desktop */
-  }
+  // Paint CSS first. Native caption restyle is deferred so the click is not frozen.
+  const applyNative = () => {
+    try {
+      void window.electronAPI?.app?.setColorTheme?.(theme);
+    } catch {
+      /* browser / older desktop */
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(applyNative);
+  else applyNative();
 }
 
 export function applyColorTheme(theme: ColorThemeId = resolveColorTheme()) {
@@ -101,4 +106,9 @@ export function useColorThemeId(): ColorThemeId {
   const [theme, setTheme] = useState<ColorThemeId>(() => resolveColorTheme());
   useEffect(() => subscribeColorTheme(setTheme), []);
   return theme;
+}
+
+/** Live preset — use this instead of module-level themeChrome / tile copies. */
+export function useThemePreset() {
+  return getThemePreset(useColorThemeId());
 }
