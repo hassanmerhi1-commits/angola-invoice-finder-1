@@ -187,7 +187,7 @@
     --destructive: 0 68% 52%;
     --destructive-foreground: 0 0% 100%;
     --border: 217 20% 18%;
-    --input: 221 42% 10%;
+    --input: 217 18% 22%;
     --ring: 193 73% 38%;
     --radius: 0.75rem;
 
@@ -550,6 +550,13 @@
   }
   [data-color-theme='frost'] .nexor-stat-card {
     @apply border-white/80 bg-white/70 backdrop-blur-xl shadow-none;
+  }
+  [data-color-theme='ink'] input:not([type='checkbox']):not([type='radio']):not([type='hidden']),
+  [data-color-theme='ink'] textarea,
+  [data-color-theme='ink'] [data-radix-select-trigger] {
+    background-color: hsl(var(--secondary));
+    border-color: hsl(var(--border));
+    color: hsl(var(--foreground));
   }
   [data-color-theme='ink'] [data-sonner-toast],
   [data-color-theme='frost'] [data-sonner-toast] {

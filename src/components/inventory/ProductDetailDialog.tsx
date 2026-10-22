@@ -112,8 +112,8 @@ function Field({
   className?: string;
 }) {
   return (
-    <div className={cn('min-w-0 space-y-1', className)}>
-      <Label className="text-[11px] font-medium text-muted-foreground">{label}</Label>
+    <div className={cn('min-w-0 space-y-1.5', className)}>
+      <Label className="text-[11px] font-medium text-muted-foreground leading-none">{label}</Label>
       {children}
     </div>
   );
@@ -129,7 +129,7 @@ function Section({
   className?: string;
 }) {
   return (
-    <section className={cn('rounded-lg border bg-card p-3', className)}>
+    <section className={cn('overflow-visible rounded-lg border bg-card p-3', className)}>
       <h3 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </h3>
@@ -148,15 +148,16 @@ function StatBox({
   hint?: string;
 }) {
   return (
-    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 min-w-0">
-      <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
-      <p className="mt-0.5 text-sm font-semibold tabular-nums truncate">{value}</p>
+    <div className="min-w-0 rounded-md border border-border bg-muted/60 px-2.5 py-2">
+      <p className="text-[10px] leading-tight text-muted-foreground">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{value}</p>
       {hint ? <p className="text-[10px] text-muted-foreground tabular-nums">{hint}</p> : null}
     </div>
   );
 }
 
-const fieldControl = 'h-8 text-sm';
+const fieldControl =
+  'h-9 min-h-9 w-full px-2.5 py-0 leading-8 text-sm bg-muted/60 border-border text-foreground placeholder:text-muted-foreground';
 
 function resolveProductSupplierId(
   product: Product | null | undefined,
@@ -251,10 +252,10 @@ export function ProductDetailDialog({
       forceCloseRef.current = false;
       return;
     }
-    void refreshSuppliers();
+    const supplierTimer = window.setTimeout(() => { void refreshSuppliers(); }, 0);
     if (!product?.id) {
       setLoadedProduct(null);
-      return;
+      return () => window.clearTimeout(supplierTimer);
     }
     let cancelled = false;
     (async () => {
@@ -277,6 +278,7 @@ export function ProductDetailDialog({
     })();
     return () => {
       cancelled = true;
+      window.clearTimeout(supplierTimer);
     };
   }, [open, product?.id, product?.stock, scopeBranchId, refreshSuppliers, onProductLoaded]);
 
@@ -398,15 +400,17 @@ export function ProductDetailDialog({
   const [copySearch, setCopySearch] = useState('');
 
   const copyPool = useMemo(() => {
+    if (!open || copySearch.trim().length < 2) return [];
     const pool = copyCatalog.length > 0 ? copyCatalog : catalogProducts;
     return pool.filter((p) => p.isActive !== false);
-  }, [copyCatalog, catalogProducts]);
+  }, [open, copySearch, copyCatalog, catalogProducts]);
 
-  const usedSkuKeys = useMemo(() => {
+  const collectUsedSkuKeys = useCallback(() => {
+    const pool = copyCatalog.length > 0 ? copyCatalog : catalogProducts;
     const keys = new Set<string>();
-    for (const p of copyPool) keys.add(normalizeSearchText(p.sku));
+    for (const p of pool) keys.add(normalizeSearchText(p.sku));
     return keys;
-  }, [copyPool]);
+  }, [copyCatalog, catalogProducts]);
 
   useEffect(() => {
     if (!open) {
@@ -438,7 +442,7 @@ export function ProductDetailDialog({
       const next = {
         ...buildFormFromProduct(copySource),
         id: '',
-        sku: suggestCopySku(copySource.sku, usedSkuKeys),
+        sku: suggestCopySku(copySource.sku, collectUsedSkuKeys()),
         barcode: '',
         stock: 0,
         barcodes: [
@@ -499,7 +503,7 @@ export function ProductDetailDialog({
     buildFormFromProduct,
     defaultSupplierName,
     scopeBranchId,
-    usedSkuKeys,
+    collectUsedSkuKeys,
     activeCategories,
     language,
   ]);
@@ -530,6 +534,10 @@ export function ProductDetailDialog({
   }, [loadedProduct, open, buildFormFromProduct]);
 
   const [formDirty, setFormDirty] = useState(false);
+  const isBlankCreate = !formData.id
+    && !String(formData.sku || '').trim()
+    && !String(formData.name || '').trim()
+    && !String(formData.barcode || '').trim();
   const set = (field: string, value: any) => {
     setFormDirty(true);
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -559,16 +567,21 @@ export function ProductDetailDialog({
     formSnapshotRef.current = '';
     formInitKeyRef.current = '';
     apiHydratedIdRef.current = null;
+    forceCloseRef.current = false;
+    setFormDirty(false);
+    if (typeof document !== 'undefined' && document.body.style.pointerEvents === 'none') {
+      document.body.style.pointerEvents = '';
+    }
     onOpenChange(false);
   }, [onOpenChange]);
 
   const requestClose = useCallback(() => {
-    if (!forceCloseRef.current && isFormDirty) {
-      setDiscardCloseOpen(true);
+    if (forceCloseRef.current || isBlankCreate || !isFormDirty) {
+      closeDialog();
       return;
     }
-    closeDialog();
-  }, [isFormDirty, closeDialog]);
+    setDiscardCloseOpen(true);
+  }, [isBlankCreate, isFormDirty, closeDialog]);
 
   const handleDialogOpenChange = useCallback(
     (next: boolean) => {
@@ -688,7 +701,7 @@ export function ProductDetailDialog({
       const next = {
         ...buildFormFromProduct(src),
         id: '',
-        sku: suggestCopySku(src.sku, usedSkuKeys),
+        sku: suggestCopySku(src.sku, collectUsedSkuKeys()),
         barcode: '',
         stock: 0,
         barcodes: [
@@ -703,7 +716,7 @@ export function ProductDetailDialog({
       formSnapshotRef.current = JSON.stringify(next);
       setFormData(next);
     },
-    [buildFormFromProduct, usedSkuKeys],
+    [buildFormFromProduct, collectUsedSkuKeys],
   );
 
   const handleSave = async (asNew = false) => {
@@ -740,7 +753,7 @@ export function ProductDetailDialog({
     const sourceSku = String(copiedFrom?.sku || product?.sku || effectiveProduct?.sku || '').trim();
     const willCreate = asNew || saveAsNew || !product?.id;
     if (willCreate && sourceSku && skuTrim.toUpperCase() === sourceSku.toUpperCase()) {
-      const suggested = suggestCopySku(sourceSku, usedSkuKeys);
+      const suggested = suggestCopySku(sourceSku, collectUsedSkuKeys());
       set('sku', suggested);
       toast.error(t.productFormUi.skuMustChange.replace('{sku}', sourceSku));
       return;
@@ -824,6 +837,14 @@ export function ProductDetailDialog({
         className="z-[60] flex max-h-[92dvh] w-[min(96vw,72rem)] max-w-6xl flex-col gap-0 overflow-hidden p-0 [&>button[data-dialog-close]]:hidden"
         overlayClassName="z-[60]"
         onOpenAutoFocus={e => e.preventDefault()}
+        onEscapeKeyDown={(e) => {
+          e.preventDefault();
+          requestClose();
+        }}
+        onPointerDownOutside={(e) => {
+          e.preventDefault();
+          requestClose();
+        }}
       >
         <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 border-b px-5 py-3 pr-5">
           <div className="min-w-0">
@@ -873,7 +894,7 @@ export function ProductDetailDialog({
                   value={copySearch}
                   onChange={(e) => setCopySearch(e.target.value)}
                   placeholder={t.productFormUi.copyFromPlaceholder}
-                  className="h-7 text-xs"
+                  className={fieldControl}
                   autoComplete="off"
                 />
               </>
@@ -928,7 +949,7 @@ export function ProductDetailDialog({
         )}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" onWheel={(e) => e.stopPropagation()}>
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(17rem,21rem)_minmax(0,1fr)_minmax(15rem,19rem)]">
+          <div className="grid grid-cols-1 gap-3 min-[1120px]:grid-cols-[minmax(18rem,22rem)_minmax(22rem,1fr)_minmax(16rem,20rem)]">
             <Section title={t.productDetailUi.sectionIdentity}>
               <div className="grid grid-cols-2 gap-2.5">
                 <Field label={`${t.productDetailUi.code} *`}>
@@ -1025,23 +1046,23 @@ export function ProductDetailDialog({
             </Section>
 
             <Section title={t.productDetailUi.sectionPrices}>
-              <table className="w-full text-sm">
+              <table data-plain-table="true" className="w-full min-w-[22rem] text-sm">
                 <thead>
                   <tr className="text-[11px] text-muted-foreground">
-                    <th className="pb-2 pr-2 text-left font-medium">{t.productDetailUi.priceLevel}</th>
-                    <th className="pb-2 px-1 text-right font-medium">{t.productDetailUi.exVatShort}</th>
-                    <th className="pb-2 px-1 text-right font-medium">{t.productDetailUi.incVatShort}</th>
-                    <th className="pb-2 pl-1 text-right font-medium">
+                    <th className="w-8 pb-2 pr-2 text-left font-medium">{t.productDetailUi.priceLevel}</th>
+                    <th className="min-w-[5.5rem] pb-2 px-1 text-right font-medium">{t.productDetailUi.exVatShort}</th>
+                    <th className="min-w-[5.5rem] pb-2 px-1 text-right font-medium">{t.productDetailUi.incVatShort}</th>
+                    <th className="min-w-[5.5rem] pb-2 pl-1 text-right font-medium">
                       {t.productDetailUi.pctOverPrice1}
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td className="py-1 pr-2 text-xs font-medium whitespace-nowrap">P1</td>
-                    <td className="py-1 px-1"><NumericInput value={formData.price} onValueChange={updatePrice} className={fieldControl} /></td>
-                    <td className="py-1 px-1"><NumericInput value={formData.priceIVA} onValueChange={updatePriceFromIVA} className={cn(fieldControl, 'font-medium')} /></td>
-                    <td className="py-1 pl-1">
+                    <td className="py-1.5 pr-2 text-xs font-medium whitespace-nowrap">P1</td>
+                    <td className="py-1.5 px-1"><NumericInput value={formData.price} onValueChange={updatePrice} className={fieldControl} /></td>
+                    <td className="py-1.5 px-1"><NumericInput value={formData.priceIVA} onValueChange={updatePriceFromIVA} className={cn(fieldControl, 'font-medium')} /></td>
+                    <td className="py-1.5 pl-1">
                       <NumericInput value={markupForLevel(1)} onValueChange={(v) => updateMarkupForLevel(1, v)} className={fieldControl} />
                       <p className="mt-0.5 text-[10px] text-muted-foreground text-right">{t.productDetailUi.markupOnCost}</p>
                     </td>
@@ -1050,16 +1071,16 @@ export function ProductDetailDialog({
                     const key = `price${lvl}` as 'price2' | 'price3' | 'price4';
                     return (
                       <tr key={lvl}>
-                        <td className="py-1 pr-2 text-xs font-medium">P{lvl}</td>
-                        <td className="py-1 px-1">
+                        <td className="py-1.5 pr-2 text-xs font-medium">P{lvl}</td>
+                        <td className="py-1.5 px-1">
                           <NumericInput value={formData[key]} onValueChange={(v) => setTierPrice(lvl, v)} className={fieldControl} />
                         </td>
-                        <td className="py-1 px-1">
-                          <div className={cn(fieldControl, 'flex items-center justify-end rounded-md border bg-muted/50 px-2 font-mono text-xs tabular-nums')}>
+                        <td className="py-1.5 px-1">
+                          <div className={cn(fieldControl, 'flex items-center justify-end rounded-md border font-mono text-xs tabular-nums')}>
                             {incVat(formData[key])}
                           </div>
                         </td>
-                        <td className="py-1 pl-1">
+                        <td className="py-1.5 pl-1">
                           <NumericInput value={markupForLevel(lvl)} onValueChange={(v) => updateMarkupForLevel(lvl, v)} className={fieldControl} />
                         </td>
                       </tr>
@@ -1218,7 +1239,7 @@ export function ProductDetailDialog({
     </Dialog>
 
     <AlertDialog open={discardCloseOpen} onOpenChange={setDiscardCloseOpen}>
-      <AlertDialogContent>
+      <AlertDialogContent className="z-[80]" overlayClassName="z-[80]">
         <AlertDialogHeader>
           <AlertDialogTitle>{t.common.confirmDiscardTitle}</AlertDialogTitle>
           <AlertDialogDescription>{t.common.confirmDiscardDescription}</AlertDialogDescription>
