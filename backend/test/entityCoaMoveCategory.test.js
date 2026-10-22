@@ -117,4 +117,46 @@ describe('supplier COA category move', () => {
     assert.equal(String(code).startsWith('3211'), true);
     assert.equal(String(code).length, 8);
   });
+
+  it('moves a cash leaf under a cash category with a compact child code', async () => {
+    const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
+    const parent45 = randomUUID();
+    const catId = randomUUID();
+    const leafId = randomUUID();
+    const leafCode = `45${suffix.replace(/\D/g, '').slice(0, 2) || '88'}`;
+
+    await harness.withClient(async (client) => {
+      const existing45 = await client.query(`SELECT id FROM chart_of_accounts WHERE code = '45' LIMIT 1`);
+      const id45 = existing45.rows[0]?.id || parent45;
+      if (!existing45.rows[0]) {
+        await client.query(
+          `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+           VALUES ($1, '45', 'CAIXA', 'asset', 'debit', NULL, 1, 1, 1)`,
+          [id45],
+        );
+      }
+      const catCode = `459${suffix.slice(0, 1)}`;
+      await client.query(
+        `INSERT INTO chart_of_accounts
+         (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, $2, 'Caixa Soyo', 'asset', 'debit', $3, 2, 1, 1)`,
+        [catId, catCode, id45],
+      );
+      await client.query(
+        `INSERT INTO chart_of_accounts
+         (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, $2, 'Caixa extra', 'asset', 'debit', $3, 2, 0, 1)`,
+        [leafId, leafCode, id45],
+      );
+
+      const moved = await moveEntityLeafToParent(client, {
+        accountId: leafId,
+        parentCode: catCode,
+      });
+      assert.equal(moved.moved, true);
+      assert.equal(moved.oldCode, leafCode);
+      assert.equal(moved.newCode, `${catCode}1`);
+    });
+  });
 });

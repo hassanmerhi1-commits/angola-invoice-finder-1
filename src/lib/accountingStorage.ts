@@ -18,7 +18,7 @@ import {
 import { format } from 'date-fns';
 import { isElectronMode, dbGetAll, dbInsert, dbUpdate, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
 import { api, ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
-import { isThinClientMode, isServerDatabaseHost } from '@/lib/api/config';
+import { isThinClientMode, isServerDatabaseHost, allowsLocalLedgerWrites, cityLedgerOfflineError } from '@/lib/api/config';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 
 function newUuid(): string {
@@ -336,6 +336,7 @@ function persistLocalBankAccountMirror(account: BankAccount): void {
 /** Push local-only caixas/banks into Postgres so expense pickers stop looking empty. */
 let treasuryPushInFlight: Promise<void> | null = null;
 async function pushLocalTreasuryToServer(localCaixas: Caixa[], localBanks: BankAccount[]): Promise<void> {
+  if (!allowsLocalLedgerWrites()) return;
   if (!(await shouldLoadCaixasFromServerApi())) return;
   if (treasuryPushInFlight) return treasuryPushInFlight;
   treasuryPushInFlight = (async () => {
@@ -512,15 +513,21 @@ export async function getCaixas(
         serverList = serverList.map((c) => healCaixaDisplay(c, branchLabel));
       }
 
-      const localScoped = allBranches
-        ? localAll
-        : branchKey
-          ? filterCaixasForBranch(localAll, branchKey, branchLabel)
-          : localAll;
-      const list = mergeCaixasById(serverList, localScoped);
+      const list = allowsLocalLedgerWrites()
+        ? mergeCaixasById(
+            serverList,
+            allBranches
+              ? localAll
+              : branchKey
+                ? filterCaixasForBranch(localAll, branchKey, branchLabel)
+                : localAll,
+          )
+        : sortTreasuryCaixas(serverList);
 
-      // Heal split-brain: push local-only registers into Postgres in background.
-      void pushLocalTreasuryToServer(localAll, await loadLocalBankAccounts());
+      // Preview only. A city till must not invent a register here and later push it.
+      if (allowsLocalLedgerWrites()) {
+        void pushLocalTreasuryToServer(localAll, await loadLocalBankAccounts());
+      }
 
       if (allBranches) {
         if (list.length > 0) {
@@ -540,8 +547,11 @@ export async function getCaixas(
       return list;
     } catch (e) {
       console.warn('[caixas] server list failed:', e);
+      if (!allowsLocalLedgerWrites()) return [];
     }
   }
+
+  if (!allowsLocalLedgerWrites()) return [];
 
   let caixas = localAll.filter((c) => isListableCaixa(c));
   if (allBranches) return sortTreasuryCaixas(caixas);
@@ -567,10 +577,16 @@ export async function saveCaixa(caixa: Caixa): Promise<void> {
         invalidateCaixaListCache(caixa.branchId, caixa.branchName);
         return;
       }
-      console.warn('[caixas] server update failed:', res.error);
+      throw new Error(res.error);
     } catch (e) {
+      if (!allowsLocalLedgerWrites()) {
+        throw e instanceof Error ? e : cityLedgerOfflineError();
+      }
       console.warn('[caixas] server update failed:', e);
     }
+  }
+  if (!allowsLocalLedgerWrites() && (await shouldLoadCaixasFromServerApi())) {
+    throw cityLedgerOfflineError();
   }
   if (isElectronMode()) {
     await dbInsert('caixas', mapCaixaToDb(caixa));
@@ -613,10 +629,17 @@ export async function createCaixa(
       }
       throw new Error(res.error || 'Failed to create caixa on server');
     } catch (e) {
+      if (!allowsLocalLedgerWrites()) {
+        throw e instanceof Error ? e : cityLedgerOfflineError();
+      }
       if (e instanceof Error && e.message.includes('Failed to create caixa')) throw e;
       console.warn('[caixas] server create failed:', e);
       throw e instanceof Error ? e : new Error('Failed to create caixa on server');
     }
+  }
+
+  if (!allowsLocalLedgerWrites()) {
+    throw cityLedgerOfflineError();
   }
 
   const caixa: Caixa = {
@@ -658,8 +681,8 @@ export async function ensureBranchCaixa(
   if (existing.length > 0) {
     return existing[0];
   }
-  if (opts?.localOnly) {
-    // Create locally only — server sync happens later via openSession / treasury push.
+  if (opts?.localOnly && allowsLocalLedgerWrites()) {
+    // Preview only — a city till must not invent a register on this PC.
     const caixa: Caixa = {
       id: newUuid(),
       branchId,

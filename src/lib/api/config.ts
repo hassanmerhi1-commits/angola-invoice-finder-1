@@ -194,6 +194,43 @@ export function isDemoMode(): boolean {
   return _isDemoMode;
 }
 
+/** Preview-only. A city PC must not invent ledger rows on this machine. */
+export function allowsLocalLedgerWrites(): boolean {
+  return isDemoMode();
+}
+
+export const CITY_LEDGER_OFFLINE_CODE = 'CITY_LEDGER_OFFLINE';
+
+export function cityLedgerOfflineError(message?: string): Error {
+  const err = new Error(message || 'City server is offline. This change was not saved.');
+  err.name = CITY_LEDGER_OFFLINE_CODE;
+  return err;
+}
+
+export function isCityLedgerOfflineError(error: unknown): boolean {
+  if (!error) return false;
+  if (error instanceof Error && error.name === CITY_LEDGER_OFFLINE_CODE) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /CITY_LEDGER_OFFLINE|city server is offline|cidade está offline/i.test(message);
+}
+
+export const BRANCH_CAIXA_GL_MISSING = 'BRANCH_CAIXA_GL_MISSING';
+
+export function isBranchCaixaGlMissingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /BRANCH_CAIXA_GL_MISSING|não tem conta de caixa \(45x\)|has no cash account \(45x\)/i.test(message);
+}
+
+export function branchCaixaGlMissingText(
+  t: { common: { branchCaixaGlMissing: string; branchCaixaGlMissingGeneric: string } },
+  branchName?: string,
+): string {
+  const name = String(branchName || '').trim();
+  return name
+    ? t.common.branchCaixaGlMissing.replace('{name}', name)
+    : t.common.branchCaixaGlMissingGeneric;
+}
+
 function isLoopbackApiBase(url: string | null | undefined): boolean {
   return /127\.0\.0\.1|localhost|\[::1\]/i.test(String(url || ''));
 }

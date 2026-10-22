@@ -19,6 +19,7 @@ import { printHtml } from '@/lib/printHtml';
 import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
 import { api } from '@/lib/api/client';
+import { isBranchCaixaGlMissingError, branchCaixaGlMissingText } from '@/lib/api/config';
 import { cn } from '@/lib/utils';
 import { mapSaleRow } from '@/hooks/useERP';
 import { toast } from 'sonner';
@@ -158,7 +159,11 @@ export function PosEndOfDayReportDialog({
       .then((res) => {
         if (cancelled) return;
         if (res.error || !res.data) {
-          setGlError(res.error || t.posUi.caixa.glUnavailable);
+          setGlError(
+            isBranchCaixaGlMissingError(res.error)
+              ? branchCaixaGlMissingText(t, branch?.name)
+              : (res.error || t.posUi.caixa.glUnavailable),
+          );
           setGlRecon(null);
           return;
         }
@@ -485,7 +490,7 @@ export function PosEndOfDayReportDialog({
                 <Scale className="w-4 h-4" />
                 {glRecon
                   ? t.posUi.caixa.glReconcileTitle.replace('{code}', glRecon.caixaAccountCode)
-                  : t.posUi.caixa.glReconcileTitle.replace('{code}', '451')}
+                  : t.posUi.caixa.glReconcileTitle.replace('{code}', '—')}
               </div>
               {glLoading && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -551,7 +556,7 @@ export function PosEndOfDayReportDialog({
                         )}
                         {Math.abs(glRecon.variances.erpSalesVsGlDebits) > 0.01 && (
                           <div>
-                            {t.posUi.caixa.varianceLabel} (ERP vs 451):{' '}
+                            {t.posUi.caixa.varianceLabel} (ERP vs {glRecon.caixaAccountCode || '—'}):{' '}
                             {glRecon.variances.erpSalesVsGlDebits.toLocaleString(locale)} Kz
                           </div>
                         )}

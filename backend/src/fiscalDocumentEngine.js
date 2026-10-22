@@ -18,7 +18,7 @@ const {
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
 const { resolveBranchFilterId } = require('./lib/branchIdMatch');
 const { isCashPaymentMethod, recordCashRefundOnOpenSession } = require('./lib/caixaCashRefund');
-const { resolveBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('./lib/resolveBranchCaixaGlAccount');
+const { requireBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('./lib/resolveBranchCaixaGlAccount');
 const db = require('./db');
 
 function roundMoney(value) {
@@ -231,7 +231,7 @@ async function processCreditNote(client, data) {
       } catch (_) { /* ignore */ }
       console.warn('[FISCAL] branch caixa link skipped:', linkErr.message);
     }
-    refundAccountCode = await resolveBranchCaixaGlAccountCode(client, {
+    refundAccountCode = await requireBranchCaixaGlAccountCode(client, {
       branchId,
       branchName,
       branchCode,
@@ -457,7 +457,7 @@ async function processDebitNote(client, data) {
         orig.customer_name || customerName || '',
       );
     } else if (orig && isCashPaymentMethod(orig.payment_method)) {
-      debitAccountCode = await resolveBranchCaixaGlAccountCode(client, {
+      debitAccountCode = await requireBranchCaixaGlAccountCode(client, {
         branchId: orig.branch_id || branchId,
       });
     } else {

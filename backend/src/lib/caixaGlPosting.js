@@ -3,7 +3,7 @@
  * Shared by HTTP routes and internal sync from Electron record storage.
  */
 const db = require('../db');
-const { resolveBranchCaixaGlAccount } = require('./caixaReconciliation');
+const { requireBranchCaixaGlAccountCode } = require('./resolveBranchCaixaGlAccount');
 const { createJournalEntry } = require('../accounting');
 
 const EXPENSE_GL_ACCOUNTS = {
@@ -94,8 +94,7 @@ async function postCaixaGlMovement(params) {
       }
     }
 
-    const caixa = await resolveBranchCaixaGlAccount(branchId);
-    const caixaCode = caixa.code;
+    const caixaCode = await requireBranchCaixaGlAccountCode(client, { branchId });
 
     const lines = direction === 'out'
       ? [

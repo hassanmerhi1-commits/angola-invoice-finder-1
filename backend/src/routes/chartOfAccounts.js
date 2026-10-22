@@ -354,7 +354,7 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Move a supplier leaf under 321 / 3211 / … without dropping its journal UUID.
+  // Move a leaf under a category without dropping its journal UUID.
   router.post('/move-entity-leaf', requirePermission('accounting_create', 'purchase_create', 'admin_settings'), async (req, res) => {
     try {
       const { moveEntityLeafToParent } = require('../lib/entityCoaAccounts');
@@ -375,14 +375,14 @@ module.exports = function(broadcastTable) {
         id: result.id,
         action: 'update',
         description: result.moved
-          ? `Fornecedor movido: ${result.oldCode} → ${result.newCode} (${result.parentCode})`
-          : `Fornecedor já está em ${result.parentCode}`,
+          ? `Conta movida: ${result.oldCode} → ${result.newCode} (${result.parentCode})`
+          : `Conta já está em ${result.parentCode}`,
         newValues: result,
       });
       res.json(result);
     } catch (error) {
       console.error('[CHART OF ACCOUNTS move-entity-leaf]', error);
-      res.status(400).json({ error: error.message || 'Failed to move supplier account' });
+      res.status(400).json({ error: error.message || 'Failed to move account' });
     }
   });
 

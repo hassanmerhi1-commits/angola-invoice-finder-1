@@ -6,7 +6,6 @@
 const {
   resolveBranchCaixaGlAccountCode,
   linkOrphanBranchCaixaAccounts,
-  GLOBAL_PETTY_CASH_CODE,
 } = require('./resolveBranchCaixaGlAccount');
 
 const CAIXA_PARENT_CODE = '45';
@@ -56,7 +55,7 @@ async function findBranchCaixaAccount(client, branchId, branchName) {
     branchId,
     branchName,
   });
-  if (!code || code === GLOBAL_PETTY_CASH_CODE) return null;
+  if (!code) return null;
   const result = await queryDb(
     client,
     `SELECT id, code, name, branch_id

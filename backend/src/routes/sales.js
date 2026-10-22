@@ -332,12 +332,17 @@ module.exports = function(broadcastTable) {
         : /column .*client_id.*does not exist/i.test(raw)
           ? 'Esquema desatualizado: falta sales.client_id. Atualize o backend do servidor (sync-nexor-backend) e reinicie o NEXOR.'
         : raw;
-      const status = /stock insuficiente/i.test(errorMessage)
+      const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      const missingCaixa = isBranchCaixaMissingError(error) || isBranchCaixaMissingError({ message: errorMessage });
+      const status = missingCaixa || /stock insuficiente/i.test(errorMessage)
         ? 409
         : isPaymentMethodConstraintError(error) || isPaymentMethodConstraintError(first)
           ? 503
           : 500;
-      res.status(status).json({ error: errorMessage });
+      res.status(status).json({
+        error: errorMessage,
+        ...(missingCaixa ? { code: BRANCH_CAIXA_GL_MISSING } : {}),
+      });
     } finally {
       client.release();
     }

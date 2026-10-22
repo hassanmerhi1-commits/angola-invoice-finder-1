@@ -69,6 +69,18 @@ function isSupplierCategoryParent(code) {
     || (c.startsWith(SUPPLIER_PARENT_CODE) && c.length > SUPPLIER_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
 }
 
+/** 311 itself or a compact header under it (3111, 31111). */
+function isClientCategoryParent(code) {
+  const c = String(code || '').trim();
+  return c === CLIENT_PARENT_CODE
+    || (c.startsWith(CLIENT_PARENT_CODE) && c.length > CLIENT_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
+}
+
+function isEightDigitEntityLeaf(code) {
+  const c = String(code || '').trim();
+  return c.length >= ENTITY_ACCOUNT_CODE_LENGTH && /^3[12]/.test(c);
+}
+
 function normalizeEntityName(value) {
   return cleanText(value)
     .replace(/[.,]/g, ' ')
@@ -611,27 +623,30 @@ async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
   ).catch(() => {});
 }
 
+async function assertNotMovingIntoSelf(client, leafId, newParentId) {
+  let current = newParentId;
+  const seen = new Set();
+  while (current) {
+    if (String(current) === String(leafId)) {
+      throw new Error('Cannot move an account into itself or one of its children');
+    }
+    if (seen.has(String(current))) break;
+    seen.add(String(current));
+    const row = await client.query(
+      'SELECT parent_id FROM chart_of_accounts WHERE id = $1 LIMIT 1',
+      [current],
+    );
+    current = row.rows?.[0]?.parent_id || null;
+  }
+}
+
 /**
- * Move a supplier leaf (8-digit 32x) under a category parent (321 / 3211 / …).
- * Keeps the same COA id so journal lines stored by UUID stay valid; recodes the
- * leaf and rewrites rows that stored the old PGC code.
+ * Move a leaf under a category parent. Supplier/client 8-digit leaves keep that
+ * numbering. Other tabs get the next compact child (452 → 4511 under 451).
+ * The COA id stays so journal lines stored by UUID remain valid.
  */
 async function moveEntityLeafToParent(client, opts) {
-  const parentCode = cleanText(opts?.parentCode) || SUPPLIER_PARENT_CODE;
-  if (!isSupplierCategoryParent(parentCode)) {
-    throw new Error(`Parent ${parentCode} is not a supplier category under 321`);
-  }
-
-  const parent = await client.query(
-    `SELECT id, code, level FROM chart_of_accounts
-      WHERE code = $1 AND is_active IS NOT FALSE
-      LIMIT 1`,
-    [parentCode],
-  );
-  if (!parent.rows?.[0]) {
-    throw new Error(`Category ${parentCode} not found`);
-  }
-
+  const requestedParent = cleanText(opts?.parentCode);
   let leaf = null;
   if (opts?.accountId) {
     const r = await client.query(
@@ -658,22 +673,58 @@ async function moveEntityLeafToParent(client, opts) {
       leaf = r.rows?.[0] || null;
     }
   }
-  if (!leaf) throw new Error('Supplier account not found');
+  if (!leaf) throw new Error('Account not found');
   if (leaf.is_header === true || leaf.is_header === 1) {
-    throw new Error('Cannot move a category header — pick a supplier account');
+    throw new Error('Cannot move a category header — pick an account');
   }
-  if (!isEntityLedgerCode(leaf.code, SUPPLIER_GROUP_CODE)) {
-    throw new Error('Only supplier ledger accounts can be moved');
+  if (String(leaf.code || '').trim() === '45') {
+    throw new Error('Cannot move the cash parent (45)');
   }
+
+  const supplierLeaf = isEntityLedgerCode(leaf.code, SUPPLIER_GROUP_CODE);
+  const clientLeaf = isEntityLedgerCode(leaf.code, CLIENT_GROUP_CODE);
+  const entityLeaf = isEightDigitEntityLeaf(leaf.code) || supplierLeaf || clientLeaf;
+  const parentCode = requestedParent
+    || (supplierLeaf ? SUPPLIER_PARENT_CODE : clientLeaf ? CLIENT_PARENT_CODE : '');
+  if (!parentCode) throw new Error('parentCode is required');
+
+  if (supplierLeaf && !isSupplierCategoryParent(parentCode)) {
+    throw new Error(`Parent ${parentCode} is not a supplier category under 321`);
+  }
+  if (clientLeaf && !isClientCategoryParent(parentCode)) {
+    throw new Error(`Parent ${parentCode} is not a customer category under 311`);
+  }
+
+  const parent = await client.query(
+    `SELECT id, code, level FROM chart_of_accounts
+      WHERE code = $1 AND is_active IS NOT FALSE
+      LIMIT 1`,
+    [parentCode],
+  );
+  if (!parent.rows?.[0]) {
+    throw new Error(`Category ${parentCode} not found`);
+  }
+  if (String(leaf.id) === String(parent.rows[0].id)) {
+    throw new Error('Cannot move an account into itself');
+  }
+  await assertNotMovingIntoSelf(client, leaf.id, parent.rows[0].id);
+
   if (String(leaf.parent_id || '') === String(parent.rows[0].id)) {
     return { id: leaf.id, oldCode: leaf.code, newCode: leaf.code, parentCode, moved: false };
   }
 
+  const used = await client.query('SELECT code FROM chart_of_accounts');
+  const usedCodes = (used.rows || []).map((r) => r.code).filter((c) => c !== leaf.code);
   const siblings = await client.query(
     `SELECT code FROM chart_of_accounts WHERE parent_id = $1 AND is_header IS NOT TRUE`,
     [parent.rows[0].id],
   );
-  const newCode = nextEntityAccountCode(parentCode, (siblings.rows || []).map((r) => r.code));
+  const newCode = entityLeaf
+    ? nextEntityAccountCode(parentCode, (siblings.rows || []).map((r) => r.code))
+    : nextCompactChildCode(parentCode, usedCodes);
+  if (usedCodes.includes(newCode)) {
+    throw new Error(`Code ${newCode} is already in use`);
+  }
   const newLevel = (parseInt(parent.rows[0].level, 10) || 2) + 1;
   const oldParentId = leaf.parent_id;
 
@@ -729,6 +780,7 @@ module.exports = {
   nextCompactChildCode,
   isCompactEntityCode,
   isSupplierCategoryParent,
+  isClientCategoryParent,
   ensureSupplierSubAccount,
   ensureClientSubAccount,
   resolveEntityAccountCode,

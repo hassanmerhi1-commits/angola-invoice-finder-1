@@ -1,7 +1,7 @@
 /**
  * Resolve FC freight payment source to GL accounts and update caixa registers.
  */
-const { resolveBranchCaixaGlAccountCode } = require('./resolveBranchCaixaGlAccount');
+const { requireBranchCaixaGlAccountCode } = require('./resolveBranchCaixaGlAccount');
 const { resolveBankGlForTreasury, BANK_PARENT_CODE } = require('./bankGlAccounts');
 
 const BANK_GL = BANK_PARENT_CODE;
@@ -51,7 +51,7 @@ async function resolveFreightTreasuryGl(client, inv) {
     );
     const cx = cxRes.rows[0];
     const cxBranch = cx?.branch_id ? String(cx.branch_id) : branchId;
-    const glCode = await resolveBranchCaixaGlAccountCode(client, { branchId: cxBranch });
+    const glCode = await requireBranchCaixaGlAccountCode(client, { branchId: cxBranch });
     const label = [cx?.branch_name, cx?.name].filter(Boolean).join(' — ') || cx?.name || 'Caixa';
     return {
       paymentSource: 'caixa',
@@ -74,7 +74,7 @@ async function resolveFreightTreasuryGl(client, inv) {
     };
   }
 
-  const fallbackGl = await resolveBranchCaixaGlAccountCode(client, { branchId });
+  const fallbackGl = await requireBranchCaixaGlAccountCode(client, { branchId });
   return {
     paymentSource: 'caixa',
     accountCode: fallbackGl,

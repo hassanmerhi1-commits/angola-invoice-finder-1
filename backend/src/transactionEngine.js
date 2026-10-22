@@ -34,7 +34,7 @@ const {
 } = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
 const { normalizeSqlDate } = require('./lib/dateSql');
-const { resolveBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
+const { requireBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
 const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
 const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
 const { runInSavepoint, runOptionalInSavepoint } = require('./lib/pgSavepoint');
@@ -2669,7 +2669,7 @@ async function processSale(client, saleData) {
       await client.query(`UPDATE sales SET due_date = $1 WHERE id = $2`, [saleDueDate, saleId]);
     }
   } else if (paymentMethod === 'cash') {
-    debitAccountCode = await resolveBranchCaixaGlAccountCode(client, {
+    debitAccountCode = await requireBranchCaixaGlAccountCode(client, {
       branchId,
       branchName: branchNameForGl,
       saleId,
@@ -3491,7 +3491,7 @@ async function processPayment(client, paymentData) {
 
   let cashAccountCode;
   if (wantsCaixa) {
-    cashAccountCode = await resolveBranchCaixaGlAccountCode(client, { branchId: treasuryBranchId });
+    cashAccountCode = await requireBranchCaixaGlAccountCode(client, { branchId: treasuryBranchId });
   } else {
     cashAccountCode = await resolveBankGlForTreasury(client, {
       bankAccountId: bankAccountId || bankAccount,
@@ -3500,13 +3500,16 @@ async function processPayment(client, paymentData) {
   }
   const preferredCash = await findAccountByCode(client, cashAccountCode);
   if (!preferredCash) {
-    const fallbackCode = wantsCaixa ? ACC.CASH : ACC.BANK;
-    const fallback = await findAccountByCode(client, fallbackCode)
-      || await findAccountByCode(client, ACC.CASH);
-    if (!fallback) {
-      throw new Error(`Conta de tesouraria não encontrada no plano de contas (${cashAccountCode} / ${ACC.CASH})`);
+    if (wantsCaixa) {
+      throw new Error(
+        `Não foi lançado. A conta de caixa ${cashAccountCode} não existe no plano de contas. Crie a caixa desta filial e tente de novo.`,
+      );
     }
-    cashAccountCode = fallback.code || fallbackCode;
+    const fallback = await findAccountByCode(client, ACC.BANK);
+    if (!fallback) {
+      throw new Error(`Conta de tesouraria não encontrada no plano de contas (${cashAccountCode} / ${ACC.BANK})`);
+    }
+    cashAccountCode = fallback.code || ACC.BANK;
   }
   const entityAccountCode = await getEntityAccountCode(client, entityType, entityId, resolvedEntityName);
 

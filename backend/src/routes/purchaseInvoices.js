@@ -375,6 +375,10 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
       }
     } catch (error) {
       console.error('[PURCHASE INVOICES] resolve-freight-treasury:', error);
+      const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      if (isBranchCaixaMissingError(error)) {
+        return res.status(409).json({ error: error.message, code: BRANCH_CAIXA_GL_MISSING });
+      }
       res.status(500).json({ error: error.message || 'Failed to resolve freight treasury' });
     }
   });
@@ -577,6 +581,10 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
             ? 'Já existe uma fatura de compra com este número de fatura do fornecedor para o mesmo fornecedor.'
             : 'Já existe uma fatura de compra com este número nesta filial.',
         });
+      }
+      const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      if (isBranchCaixaMissingError(error)) {
+        return res.status(409).json({ error: error.message, code: BRANCH_CAIXA_GL_MISSING });
       }
       res.status(500).json({ error: msg || 'Failed to save purchase invoice' });
     } finally {

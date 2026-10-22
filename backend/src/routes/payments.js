@@ -113,6 +113,10 @@ module.exports = function(broadcastTable) {
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[PAYMENTS ERROR]', error);
+      const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      if (isBranchCaixaMissingError(error)) {
+        return res.status(409).json({ error: error.message, code: BRANCH_CAIXA_GL_MISSING });
+      }
       res.status(500).json({ error: error.message || 'Failed to create payment' });
     } finally {
       client.release();

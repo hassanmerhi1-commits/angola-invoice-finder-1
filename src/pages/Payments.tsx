@@ -19,6 +19,7 @@ import type { Client, Supplier } from '@/types/erp';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
+import { isBranchCaixaGlMissingError, branchCaixaGlMissingText } from '@/lib/api/config';
 import { formatDisplayDate } from '@/lib/formatDisplayDate';
 import {
   Plus, Search, RefreshCw, CreditCard, Receipt,
@@ -511,7 +512,11 @@ export default function Payments() {
       }
       closeNewDialog();
     } catch (err: any) {
-      toast.error(err.message || t.paymentsUi.recordFailed);
+      toast.error(
+        isBranchCaixaGlMissingError(err)
+          ? branchCaixaGlMissingText(t, currentBranch?.name)
+          : (err.message || t.paymentsUi.recordFailed),
+      );
       console.error('[PAYMENTS] Create failed:', err);
     }
   };

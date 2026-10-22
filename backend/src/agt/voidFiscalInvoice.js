@@ -7,7 +7,7 @@ const { createJournalEntry } = require('../accounting');
 const { restoreStockAtCurrentCost, auditLog, validatePeriod } = require('../transactionEngine');
 const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { transmitVoid } = require('./connector');
-const { resolveBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('../lib/resolveBranchCaixaGlAccount');
+const { requireBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('../lib/resolveBranchCaixaGlAccount');
 const { isCashPaymentMethod } = require('../lib/caixaCashRefund');
 const { resolveSaleJournalAmounts } = require('../lib/saleJournalAmounts');
 
@@ -101,7 +101,7 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
     const payMethod = String(paymentMethod || '').toLowerCase();
     if (isCashPaymentMethod(paymentMethod)) {
       await linkOrphanBranchCaixaAccounts(client);
-      cashAccountCode = await resolveBranchCaixaGlAccountCode(client, {
+      cashAccountCode = await requireBranchCaixaGlAccountCode(client, {
         branchId,
         branchName: sale.branch_name,
         branchCode: sale.branch_code,

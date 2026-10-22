@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 
 const {
   resolveBranchCaixaGlAccountCode,
+  requireBranchCaixaGlAccountCode,
   linkOrphanBranchCaixaAccounts,
+  BRANCH_CAIXA_GL_MISSING,
 } = require('../src/lib/resolveBranchCaixaGlAccount');
 
 test('resolveBranchCaixaGlAccountCode prefers branch_id then sale journal', async (t) => {
@@ -67,7 +69,7 @@ test('resolveBranchCaixaGlAccountCode matches by name even when branch_id is sta
   assert.equal(code, '458');
 });
 
-test('resolveBranchCaixaGlAccountCode falls back to 451 when nothing matches', async () => {
+test('resolveBranchCaixaGlAccountCode returns null when nothing matches', async () => {
   const client = {
     engine: 'postgres',
     query(sql, params) {
@@ -85,6 +87,51 @@ test('resolveBranchCaixaGlAccountCode falls back to 451 when nothing matches', a
     saleId: '',
   });
 
+  assert.equal(code, null);
+});
+
+test('requireBranchCaixaGlAccountCode throws a clear reason', async () => {
+  const client = {
+    engine: 'postgres',
+    query(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ');
+      if (normalized.includes('FROM branches WHERE id = $1')) {
+        return { rows: [{ id: 'b-soyo', name: 'SOYO 04', code: 'SY04' }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    () => requireBranchCaixaGlAccountCode(client, { branchId: 'b-soyo' }),
+    (err) => {
+      assert.equal(err.code, BRANCH_CAIXA_GL_MISSING);
+      assert.match(String(err.message), /SOYO 04/);
+      assert.match(String(err.message), /não tem conta de caixa \(45x\)/);
+      return true;
+    },
+  );
+});
+
+test('resolveBranchCaixaGlAccountCode accepts 451 when it belongs to the branch', async () => {
+  const client = {
+    engine: 'postgres',
+    query(sql) {
+      const normalized = String(sql).replace(/\s+/g, ' ');
+      if (normalized.includes('FROM branches WHERE id = $1')) {
+        return { rows: [{ id: 'b-sede', name: 'Sede', code: 'SD' }] };
+      }
+      if (normalized.includes('JOIN branches b ON b.id = $1') && normalized.includes('chart_of_accounts coa')) {
+        return { rows: [{ code: '451' }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const code = await resolveBranchCaixaGlAccountCode(client, {
+    branchId: 'b-sede',
+    branchName: 'Sede',
+  });
   assert.equal(code, '451');
 });
 

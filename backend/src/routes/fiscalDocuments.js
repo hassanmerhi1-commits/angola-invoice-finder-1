@@ -246,6 +246,10 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch (_) { /* tx may already be aborted */ }
       console.error('[FISCAL credit-notes create]', err);
+      const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      if (isBranchCaixaMissingError(err)) {
+        return res.status(409).json({ error: err.message, code: BRANCH_CAIXA_GL_MISSING });
+      }
       res.status(400).json({ error: err.message || 'Failed to create credit note' });
     } finally {
       client.release();
@@ -336,6 +340,10 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       res.status(201).json(full);
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch (_) { /* tx may already be aborted */ }
+      const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      if (isBranchCaixaMissingError(err)) {
+        return res.status(409).json({ error: err.message, code: BRANCH_CAIXA_GL_MISSING });
+      }
       res.status(400).json({ error: err.message || 'Failed to create debit note' });
     } finally {
       client.release();

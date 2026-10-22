@@ -500,12 +500,11 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       // "open" shift (that ignored the new drawer count and brought old cash back).
       // Crash recovery lives in refresh()/cache on POS mount, not here.
 
-      // Local-first register metadata (avoid Tailscale round-trips before POS unlocks).
+      // Register must already exist on the city. Do not invent a box on this PC.
       const cx =
         caixa
         ?? (await ensureBranchCaixa(branchId, branchName || branchId, {
           ensureIfEmpty: true,
-          localOnly: true,
         }));
       setCaixa(cx);
 

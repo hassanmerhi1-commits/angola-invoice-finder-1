@@ -4,6 +4,28 @@
  */
 
 const GLOBAL_PETTY_CASH_CODE = '451';
+const BRANCH_CAIXA_GL_MISSING = 'BRANCH_CAIXA_GL_MISSING';
+
+function branchCaixaMissingMessage(scope = {}) {
+  const name = String(scope.branchName || '').trim();
+  if (name) {
+    return `Não foi lançado. A filial ${name} não tem conta de caixa (45x) no plano de contas. Crie a caixa desta filial e tente de novo.`;
+  }
+  return 'Não foi lançado. Esta filial não tem conta de caixa (45x) no plano de contas. Crie a caixa desta filial e tente de novo.';
+}
+
+function branchCaixaMissingError(scope = {}) {
+  const err = new Error(branchCaixaMissingMessage(scope));
+  err.code = BRANCH_CAIXA_GL_MISSING;
+  err.name = BRANCH_CAIXA_GL_MISSING;
+  return err;
+}
+
+function isBranchCaixaMissingError(error) {
+  if (!error) return false;
+  if (error.code === BRANCH_CAIXA_GL_MISSING || error.name === BRANCH_CAIXA_GL_MISSING) return true;
+  return /não tem conta de caixa \(45x\)|has no cash account \(45x\)/i.test(String(error.message || error));
+}
 
 function isPgPoolClient(dbOrClient) {
   return Boolean(dbOrClient && typeof dbOrClient.release === 'function');
@@ -122,7 +144,7 @@ async function resolveByBranchId(client, branchId) {
      FROM chart_of_accounts coa
      JOIN branches b ON b.id = $1
      WHERE coa.is_active = true AND coa.is_header = false
-       AND coa.code LIKE '45%' AND coa.code NOT IN ('45', '451')
+       AND coa.code LIKE '45%' AND coa.code <> '45'
        AND (coa.branch_id = $1 OR ${nameMatch})
      ORDER BY CASE WHEN coa.branch_id = $1 THEN 0 ELSE 1 END,
               ${prefixRank},
@@ -147,7 +169,7 @@ async function resolveFromSaleJournal(client, saleId) {
        AND coa.is_active = true
        AND coa.is_header = false
        AND coa.code LIKE '45%'
-       AND coa.code NOT IN ('45', '451')
+       AND coa.code <> '45'
      ORDER BY jel.debit_amount DESC, LENGTH(coa.code) DESC, coa.code
      LIMIT 1`,
     [String(saleId)],
@@ -182,7 +204,7 @@ async function resolveByBranchName(client, branchName, branchCode) {
     client,
     `SELECT code FROM chart_of_accounts
      WHERE is_active = true AND is_header = false
-       AND code LIKE '45%' AND code NOT IN ('45', '451')
+       AND code LIKE '45%' AND code <> '45'
        AND (${clauses.join(' OR ')})
      ORDER BY LENGTH(code) DESC, code
      LIMIT 1`,
@@ -194,7 +216,7 @@ async function resolveByBranchName(client, branchName, branchCode) {
 /**
  * @param {object} client - pg client or db
  * @param {{ branchId?: string, branchName?: string, branchCode?: string, saleId?: string }} scope
- * @returns {Promise<string>} GL account code (45x or 451 fallback)
+ * @returns {Promise<string|null>} Branch 45x code, or null when none exists
  */
 async function resolveBranchCaixaGlAccountCode(client, scope = {}) {
   const branchId = scope.branchId != null ? String(scope.branchId).trim() : '';
@@ -221,13 +243,28 @@ async function resolveBranchCaixaGlAccountCode(client, scope = {}) {
 
   console.warn(
     `[branchCaixa] No branch caixa for branchId=${branchId || '(none)'}`
-    + ` name=${branchName || '(none)'} saleId=${saleId || '(none)'} — using ${GLOBAL_PETTY_CASH_CODE}`,
+    + ` name=${branchName || '(none)'} saleId=${saleId || '(none)'} — refusing 451 fallback`,
   );
-  return GLOBAL_PETTY_CASH_CODE;
+  return null;
+}
+
+async function requireBranchCaixaGlAccountCode(client, scope = {}) {
+  const code = await resolveBranchCaixaGlAccountCode(client, scope);
+  if (code) return code;
+  let branchName = scope.branchName != null ? String(scope.branchName).trim() : '';
+  if (!branchName && scope.branchId) {
+    const branch = await loadBranchRow(client, scope.branchId);
+    if (branch) branchName = String(branch.name || '').trim();
+  }
+  throw branchCaixaMissingError({ ...scope, branchName });
 }
 
 module.exports = {
   resolveBranchCaixaGlAccountCode,
+  requireBranchCaixaGlAccountCode,
   linkOrphanBranchCaixaAccounts,
+  branchCaixaMissingError,
+  isBranchCaixaMissingError,
+  BRANCH_CAIXA_GL_MISSING,
   GLOBAL_PETTY_CASH_CODE,
 };

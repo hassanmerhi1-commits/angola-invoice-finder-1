@@ -4,7 +4,7 @@
 const db = require('../db');
 const {
   resolveBranchCaixaGlAccountCode,
-  GLOBAL_PETTY_CASH_CODE,
+  branchCaixaMissingError,
 } = require('./resolveBranchCaixaGlAccount');
 
 function roundMoney(value) {
@@ -45,6 +45,7 @@ async function resolveBranchCaixaGlAccount(branchId, scope = {}) {
     branchName: scope.branchName,
     saleId: scope.saleId,
   });
+  if (!code) return null;
   const account = await db.query(
     `SELECT id, code, name, opening_balance, account_nature
      FROM chart_of_accounts
@@ -52,15 +53,7 @@ async function resolveBranchCaixaGlAccount(branchId, scope = {}) {
      LIMIT 1`,
     [code],
   );
-  if (account.rows[0]) return account.rows[0];
-
-  return {
-    id: null,
-    code: GLOBAL_PETTY_CASH_CODE,
-    name: 'Caixa',
-    opening_balance: 0,
-    account_nature: 'debit',
-  };
+  return account.rows[0] || null;
 }
 
 async function sumErpCashSales(branchId, date, shiftOpenedAt) {
@@ -182,6 +175,9 @@ async function buildCaixaReconciliation(input) {
   }
 
   const account = await resolveBranchCaixaGlAccount(branchId);
+  if (!account) {
+    throw branchCaixaMissingError({ branchId });
+  }
   const erpCashSalesTotal = await sumErpCashSales(branchId, date, shiftOpenedAt);
   const erpCashRefundsTotal = await sumErpCashRefunds(branchId, date, shiftOpenedAt);
   const erpNetCashTotal = roundMoney(erpCashSalesTotal - erpCashRefundsTotal);

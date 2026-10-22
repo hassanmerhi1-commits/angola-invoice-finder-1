@@ -49,6 +49,7 @@ import {
 } from '@/lib/posShiftSaleIssues';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+import { isCityLedgerOfflineError, isBranchCaixaGlMissingError, branchCaixaGlMissingText } from '@/lib/api/config';
 import { readNexorPosNewSaleFlag, NEXOR_POS_NEW_SALE_NAV_STATE } from '@/lib/nexorPosNewSale';
 import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
@@ -717,7 +718,9 @@ export default function POS() {
     } catch (error) {
       console.error('Failed to complete sale:', error);
       const detail = error instanceof Error ? error.message : String(error);
-      const friendly = /authentication required|não autenticad|unauthorized|401|invalid.*(token|session)|expired.*(token|session)|token.*expired|sess(ã|a)o.*expir/i.test(detail)
+      const friendly = isBranchCaixaGlMissingError(detail)
+        ? branchCaixaGlMissingText(t, currentBranch?.name)
+        : /authentication required|não autenticad|unauthorized|401|invalid.*(token|session)|expired.*(token|session)|token.*expired|sess(ã|a)o.*expir/i.test(detail)
         ? t.posUi.checkoutAuthRequired
         : /stock insuficiente|chk_products_stock_nonneg/i.test(detail)
           ? t.documentFormUi.insufficientStockToCompleteSaleInvoice
@@ -746,7 +749,7 @@ export default function POS() {
       });
     } catch (err) {
       console.error('[POS] Failed to open caixa:', err);
-      toast.error(t.posUi.caixa.openError);
+      toast.error(isCityLedgerOfflineError(err) ? t.common.cityLedgerOffline : t.posUi.caixa.openError);
     } finally {
       setOpeningCaixa(false);
     }

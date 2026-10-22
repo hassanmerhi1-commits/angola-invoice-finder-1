@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api/client';
 import { useTranslation } from '@/i18n';
+import { isBranchCaixaGlMissingError, branchCaixaGlMissingText } from '@/lib/api/config';
 
 export function useVoidInvoice() {
   const { t } = useTranslation();
@@ -26,7 +27,9 @@ export function useVoidInvoice() {
       options?.onSuccess?.();
       return res.data;
     } catch (err) {
-      const message = err instanceof Error ? err.message : t.voidInvoiceUi.failed;
+      const message = isBranchCaixaGlMissingError(err)
+        ? branchCaixaGlMissingText(t)
+        : err instanceof Error ? err.message : t.voidInvoiceUi.failed;
       toast.error(message, { id: toastId });
       throw err;
     } finally {

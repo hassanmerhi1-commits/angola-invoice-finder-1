@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { api, isAuthFailureMessage } from '@/lib/api/client';
+import { isCityLedgerOfflineError } from '@/lib/api/config';
 import { CLIENTS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import {
   Search, Edit2, Trash2, RefreshCw,
@@ -531,26 +532,45 @@ export default function ChartOfAccounts() {
     setIsDialogOpen(true);
   };
 
-  const openCreateSupplierCategoryDialog = () => {
-    setActiveTab('fornecedores');
+  const openCreateCategoryDialog = (tabKey = activeTab) => {
+    const tab = tabKey === 'fornecedores-categoria' ? 'fornecedores' : tabKey;
+    if (CATEGORY_TABS.some((item) => item.key === tab)) {
+      setActiveTab(tab);
+    }
     setEditingAccount(null);
     setIsAddingInlineParent(false);
     setInlineParentName('');
     setInlineParentCode('');
-    const parent = accounts.find((a) => a.code === '321' && a.is_active !== false)
-      || accounts.find((a) => a.code === '32' && a.is_active !== false);
+    const selected = accounts.find((a) => a.id === selectedAccountId);
+    const tabConfig = CATEGORY_TABS.find((item) => item.key === tab);
+    const defaults = TAB_ACCOUNT_DEFAULTS[tab] || { accountType: 'asset' as AccountType, preferredParentCodes: [] };
+    const selectedAsParent = selected
+      && selected.is_header
+      && selected.is_active !== false
+      && (!tabConfig || tabConfig.filter(selected))
+      ? selected
+      : null;
+    const parent = selectedAsParent
+      || defaults.preferredParentCodes
+        .map((code) => accounts.find((a) => a.code === code && a.is_active !== false))
+        .find(Boolean)
+      || (selected?.parent_id
+        ? accounts.find((a) => a.id === selected.parent_id && a.is_active !== false)
+        : null);
     const children = parent
       ? accounts.filter((a) => a.parent_id === parent.id && a.is_active !== false)
       : [];
     setFormData({
-      code: parent ? buildSuggestedChildCode(parent.code, children.map((c) => c.code), true, accounts.map((a) => a.code)) : '3211',
+      code: parent
+        ? buildSuggestedChildCode(parent.code, children.map((c) => c.code), true, accounts.map((a) => a.code))
+        : '',
       name: '',
       description: '',
       nif: '',
-      account_type: 'liability',
-      account_nature: 'credit',
+      account_type: parent?.account_type || defaults.accountType,
+      account_nature: parent ? parent.account_nature : getDefaultNature(defaults.accountType),
       parent_id: parent?.id || '',
-      level: (parent?.level ?? 2) + 1,
+      level: (parent?.level ?? 1) + (parent ? 1 : 0),
       is_header: true,
       opening_balance: 0,
       branch_id: '',
@@ -605,8 +625,8 @@ export default function ChartOfAccounts() {
         openCreateParentDialog();
         return;
       }
-      if (action === 'account:fornecedores-categoria') {
-        openCreateSupplierCategoryDialog();
+      if (action === 'account:categoria' || action === 'account:fornecedores-categoria') {
+        openCreateCategoryDialog(action === 'account:fornecedores-categoria' ? 'fornecedores' : activeTab);
         return;
       }
       const tab = chartNewActionTab(action);
@@ -664,7 +684,7 @@ export default function ChartOfAccounts() {
         toast.error(t.chartOfAccountsUi.deleteHasTransactions);
         return;
       }
-      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.deleteError));
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : isCityLedgerOfflineError(error) ? t.common.cityLedgerOffline : (raw || t.chartOfAccountsUi.deleteError));
     }
   };
 
@@ -706,10 +726,9 @@ export default function ChartOfAccounts() {
       if (editingAccount) {
         const oldParent = editingAccount.parent_id || '';
         const newParent = formData.parent_id || '';
-        const isSupplierLeaf = String(editingAccount.code || '').startsWith('32')
-          && String(editingAccount.code || '').length >= ENTITY_ACCOUNT_CODE_LENGTH
-          && !editingAccount.is_header;
-        if (isSupplierLeaf && newParent && newParent !== oldParent) {
+        const isLeaf = !editingAccount.is_header
+          && String(editingAccount.code || '').trim() !== CASH_PARENT_CODE;
+        if (isLeaf && newParent && newParent !== oldParent) {
           const parent = accounts.find((a) => a.id === newParent);
           if (parent) {
             const moved = await api.chartOfAccounts.moveEntityLeaf({
@@ -737,7 +756,7 @@ export default function ChartOfAccounts() {
       setIsDialogOpen(false);
     } catch (error: any) {
       const raw = String(error?.message || '');
-      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.saveError));
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : isCityLedgerOfflineError(error) ? t.common.cityLedgerOffline : (raw || t.chartOfAccountsUi.saveError));
     } finally {
       setIsSubmitting(false);
     }
@@ -828,7 +847,7 @@ export default function ChartOfAccounts() {
       toast.success(`${code} — ${name}`);
     } catch (error: any) {
       const raw = String(error?.message || '');
-      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.saveError));
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : isCityLedgerOfflineError(error) ? t.common.cityLedgerOffline : (raw || t.chartOfAccountsUi.saveError));
     } finally {
       setCreatingInlineParent(false);
     }
@@ -852,44 +871,70 @@ export default function ChartOfAccounts() {
 
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const selectedAccountInCurrentTab = selectedAccount && currentTabConfig.filter(selectedAccount) ? selectedAccount : null;
-  const selectedSupplierLeaf = selectedAccountInCurrentTab
-    && String(selectedAccountInCurrentTab.code || '').startsWith('32')
-    && String(selectedAccountInCurrentTab.code || '').length >= ENTITY_ACCOUNT_CODE_LENGTH
+  const selectedMovableLeaf = selectedAccountInCurrentTab
     && !selectedAccountInCurrentTab.is_header
+    && String(selectedAccountInCurrentTab.code || '').trim() !== CASH_PARENT_CODE
     ? selectedAccountInCurrentTab
     : null;
-  const supplierCategoryOptions = accounts
-    .filter((a) => a.is_active !== false && (
-      a.code === '321'
-      || (a.code.startsWith('321') && a.code.length > 3 && a.code.length < ENTITY_ACCOUNT_CODE_LENGTH)
-    ))
-    .sort((a, b) => compareAccountCodes(a.code, b.code));
+  const accountsById = useMemo(() => new Map(accounts.map((a) => [coaIdKey(a.id), a])), [accounts]);
+  const categoryOptions = useMemo(() => {
+    if (!selectedMovableLeaf) return [];
+    const code = String(selectedMovableLeaf.code || '');
+    if (code.startsWith('32')) {
+      return accounts
+        .filter((a) => a.is_active !== false && (
+          a.code === '321'
+          || (a.is_header && a.code.startsWith('321') && a.code.length > 3 && a.code.length < ENTITY_ACCOUNT_CODE_LENGTH)
+        ))
+        .sort((a, b) => compareAccountCodes(a.code, b.code));
+    }
+    if (code.startsWith('31')) {
+      return accounts
+        .filter((a) => a.is_active !== false && (
+          a.code === '311'
+          || (a.is_header && a.code.startsWith('311') && a.code.length > 3 && a.code.length < ENTITY_ACCOUNT_CODE_LENGTH)
+        ))
+        .sort((a, b) => compareAccountCodes(a.code, b.code));
+    }
+    return accounts
+      .filter((a) => {
+        if (a.is_active === false || !a.is_header || a.id === selectedMovableLeaf.id) return false;
+        if (!currentTabConfig.filter(a)) return false;
+        return !ancestorIdsOf(a, accountsById).includes(selectedMovableLeaf.id);
+      })
+      .sort((a, b) => compareAccountCodes(a.code, b.code));
+  }, [accounts, accountsById, currentTabConfig, selectedMovableLeaf]);
 
   const openMoveDialog = () => {
-    if (!selectedSupplierLeaf) return;
-    const currentParent = accounts.find((a) => a.id === selectedSupplierLeaf.parent_id);
-    setMoveParentCode(currentParent?.code || '321');
+    if (!selectedMovableLeaf) return;
+    const currentParent = accounts.find((a) => a.id === selectedMovableLeaf.parent_id);
+    setMoveParentCode(currentParent?.code || categoryOptions[0]?.code || '');
     setIsMoveOpen(true);
   };
 
   const handleMoveToCategory = async () => {
-    if (!selectedSupplierLeaf || !moveParentCode) return;
+    if (!selectedMovableLeaf || !moveParentCode) return;
     setIsMoving(true);
     try {
       const result = await api.chartOfAccounts.moveEntityLeaf({
-        accountId: selectedSupplierLeaf.id,
+        accountId: selectedMovableLeaf.id,
         parentCode: moveParentCode,
       });
       if (result.error) throw new Error(result.error);
       await refetch();
-      window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+      const movedCode = String(result.data?.newCode || selectedMovableLeaf.code || '');
+      if (movedCode.startsWith('32')) {
+        window.dispatchEvent(new CustomEvent(SUPPLIERS_CHANGED_EVENT, { detail: {} }));
+      } else if (movedCode.startsWith('31')) {
+        window.dispatchEvent(new CustomEvent(CLIENTS_CHANGED_EVENT, { detail: {} }));
+      }
       toast.success(
         t.chartOfAccountsUi.movedToCategory.replace('{code}', result.data?.newCode || moveParentCode),
       );
       setIsMoveOpen(false);
     } catch (error: any) {
       const raw = String(error?.message || '');
-      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.moveFailed));
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : isCityLedgerOfflineError(error) ? t.common.cityLedgerOffline : (raw || t.chartOfAccountsUi.moveFailed));
     } finally {
       setIsMoving(false);
     }
@@ -922,7 +967,7 @@ export default function ChartOfAccounts() {
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab} onClick={() => selectedAccountInCurrentTab && openEditDialog(selectedAccountInCurrentTab)}>
           <Edit2 className="w-3 h-3" /> {t.common.edit}
         </Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedSupplierLeaf} onClick={openMoveDialog}>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedMovableLeaf} onClick={openMoveDialog}>
           <FolderPlus className="w-3 h-3" /> {t.chartOfAccountsUi.moveToCategory}
         </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccountInCurrentTab}
@@ -1242,7 +1287,7 @@ export default function ChartOfAccounts() {
                 })} />
                 <Label htmlFor="is_header" className="text-sm">{t.chartOfAccountsUi.headerAccountLabel}</Label>
               </div>
-              {formData.is_header && accounts.find((a) => a.id === formData.parent_id)?.code === '321' && (
+              {formData.is_header && !!formData.parent_id && (
                 <p className="col-span-2 text-[11px] text-muted-foreground">{t.chartOfAccountsUi.categoryCreateHint}</p>
               )}
             </div>
@@ -1274,9 +1319,9 @@ export default function ChartOfAccounts() {
             <DialogTitle>{t.chartOfAccountsUi.moveToCategoryTitle}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">{t.chartOfAccountsUi.moveToCategoryHint}</p>
-          {selectedSupplierLeaf && (
+          {selectedMovableLeaf && (
             <p className="text-sm font-medium">
-              {selectedSupplierLeaf.code} — {resolveAccountDisplayName(selectedSupplierLeaf, language, t)}
+              {selectedMovableLeaf.code} — {resolveAccountDisplayName(selectedMovableLeaf, language, t)}
             </p>
           )}
           <div className="space-y-2">
@@ -1286,7 +1331,7 @@ export default function ChartOfAccounts() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {supplierCategoryOptions.map((acc) => (
+                {categoryOptions.map((acc) => (
                   <SelectItem key={acc.code} value={acc.code}>
                     {acc.code} — {resolveAccountDisplayName(acc, language, t)}
                   </SelectItem>

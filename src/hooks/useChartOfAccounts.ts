@@ -7,6 +7,7 @@ import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
 import { compareAccountCodes } from '@/lib/coaTreeBalances';
 import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
 import { useTranslation } from '@/i18n';
+import { allowsLocalLedgerWrites, cityLedgerOfflineError } from '@/lib/api/config';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 
 const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts_v3';
@@ -318,7 +319,9 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       else scheduleCoaRefresh(300);
       return created;
     } catch (err) {
-      if (!isOfflineError(err)) throw err;
+      if (!isOfflineError(err) || !allowsLocalLedgerWrites()) {
+        throw isOfflineError(err) ? cityLedgerOfflineError() : err;
+      }
 
       const localAccounts = loadLocalAccounts(t);
       if (localAccounts.some(account => account.code === data.code)) {
@@ -365,7 +368,9 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       else scheduleCoaRefresh(300);
       return updated;
     } catch (err) {
-      if (!isOfflineError(err)) throw err;
+      if (!isOfflineError(err) || !allowsLocalLedgerWrites()) {
+        throw isOfflineError(err) ? cityLedgerOfflineError() : err;
+      }
 
       const localAccounts = loadLocalAccounts(t);
       const index = localAccounts.findIndex(account => account.id === id);
@@ -407,7 +412,9 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
         return next;
       });
     } catch (err) {
-      if (!isOfflineError(err)) throw err;
+      if (!isOfflineError(err) || !allowsLocalLedgerWrites()) {
+        throw isOfflineError(err) ? cityLedgerOfflineError() : err;
+      }
 
       const localAccounts = loadLocalAccounts(t);
       if (localAccounts.some(account => account.parent_id === id)) {

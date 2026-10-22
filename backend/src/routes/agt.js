@@ -262,6 +262,10 @@ module.exports = function(broadcastTable) {
 
       res.json(result);
     } catch (error) {
+      const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      if (isBranchCaixaMissingError(error)) {
+        return res.status(409).json({ error: error.message, code: BRANCH_CAIXA_GL_MISSING });
+      }
       const status = /não encontrada/i.test(error.message) ? 404 : 400;
       res.status(status).json({ error: error.message });
     }

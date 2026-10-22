@@ -5,6 +5,7 @@ export type ChartNewAction =
   | 'account:parent'
   | 'account:clientes'
   | 'account:fornecedores'
+  | 'account:categoria'
   | 'account:fornecedores-categoria'
   | 'account:caixa'
   | 'account:bancos'
@@ -21,7 +22,7 @@ export const CHART_NEW_ACCOUNT_ACTIONS: ChartNewAction[] = [
   'account:parent',
   'account:clientes',
   'account:fornecedores',
-  'account:fornecedores-categoria',
+  'account:categoria',
   'account:caixa',
   'account:bancos',
   'account:ativos',
@@ -34,5 +35,7 @@ export const CHART_NEW_ACCOUNT_ACTIONS: ChartNewAction[] = [
 
 export function chartNewActionTab(action: ChartNewAction): string | null {
   if (!action.startsWith('account:')) return null;
-  return action.slice('account:'.length);
+  const tab = action.slice('account:'.length);
+  if (tab === 'categoria' || tab.endsWith('-categoria')) return null;
+  return tab;
 }

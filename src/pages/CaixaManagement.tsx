@@ -5,6 +5,7 @@ import { useTranslation } from '@/i18n';
 import { useAuth, mapSaleRow } from '@/hooks/useERP';
 import { useUsers } from '@/hooks/useUsers';
 import { api } from '@/lib/api/client';
+import { isCityLedgerOfflineError, isBranchCaixaGlMissingError, branchCaixaGlMissingText } from '@/lib/api/config';
 import type { Sale } from '@/types/erp';
 import { 
   getCaixas,
@@ -178,7 +179,11 @@ export default function CaixaManagement() {
     const branchId = apiBranchId || userBranch?.id || currentBranch?.id;
     const branchName = userBranch?.name || currentBranch?.name || t.branchUi.headOffice;
     if (!treasuryAllBranches && branchId) {
-      await ensureBranchCaixa(branchId, branchName);
+      try {
+        await ensureBranchCaixa(branchId, branchName);
+      } catch (error) {
+        console.warn('[caixa] ensure on load failed:', error);
+      }
     }
     // Honor 30s caixa cache on revisit — invalidate only after mutations.
     setCaixas(await getCaixas(branchId, branchName, { allBranches: treasuryAllBranches }));
@@ -355,6 +360,14 @@ export default function CaixaManagement() {
       setIsCreateDialogOpen(false);
       setFormData(initialFormData);
       void loadData();
+    }).catch((error) => {
+      toast({
+        title: t.caixaUi.toastErrorTitle,
+        description: isCityLedgerOfflineError(error)
+          ? t.common.cityLedgerOffline
+          : (error instanceof Error && error.message ? error.message : t.common.loadFailed),
+        variant: 'destructive',
+      });
     });
   };
 
@@ -362,17 +375,25 @@ export default function CaixaManagement() {
   const handleEditCaixa = () => {
     if (!selectedCaixa) return;
     
-    saveCaixa({
+    void saveCaixa({
       ...selectedCaixa,
       name: formData.name,
       pettyLimit: formData.pettyLimit,
       dailyLimit: formData.dailyLimit,
       requiresApproval: formData.requiresApproval,
+    }).then(() => {
+      toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.settingsUpdated });
+      setIsEditDialogOpen(false);
+      void loadData();
+    }).catch((error) => {
+      toast({
+        title: t.caixaUi.toastErrorTitle,
+        description: isCityLedgerOfflineError(error)
+          ? t.common.cityLedgerOffline
+          : (error instanceof Error && error.message ? error.message : t.common.loadFailed),
+        variant: 'destructive',
+      });
     });
-
-    toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.settingsUpdated });
-    setIsEditDialogOpen(false);
-    loadData();
   };
 
   // Open session
@@ -498,8 +519,10 @@ export default function CaixaManagement() {
 
     if (!glResult.ok) {
       toast({
-        title: t.caixaUi.toastSuccessTitle,
-        description: `${t.caixaUi.transactionRecorded} — AVISO GL: ${glResult.error}`,
+        title: t.caixaUi.toastErrorTitle,
+        description: isBranchCaixaGlMissingError(glResult.error)
+          ? branchCaixaGlMissingText(t, selectedCaixa.branchName)
+          : glResult.error,
         variant: 'destructive',
       });
     } else {

@@ -10,6 +10,7 @@ import { generateId } from '@/lib/utils';
 
 import { Account } from '@/types/accounting';
 import { api } from '@/lib/api/client';
+import { allowsLocalLedgerWrites, cityLedgerOfflineError } from '@/lib/api/config';
 
 const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts_v2';
 const LEGACY_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts';
@@ -137,7 +138,7 @@ function ensureEssentialAccounts(accounts: Account[]): Account[] {
     changed = true;
   }
   
-  if (changed) {
+  if (changed && allowsLocalLedgerWrites()) {
     saveAccountsLocal(accounts);
   }
   return accounts;
@@ -193,6 +194,7 @@ export async function ensureBranchCaixaAccounts(
   const usingApi = accounts !== null;
 
   if (!accounts) {
+    if (!allowsLocalLedgerWrites()) return false;
     accounts = loadAccountsLocal();
   }
 
@@ -245,13 +247,15 @@ export async function ensureBranchCaixaAccounts(
 
     if (usingApi) {
       const ok = await tryApiCreateAccount(newAccount);
-      if (ok) {
-        const reloaded = await tryLoadAccountsFromApi();
-        if (reloaded) accounts = reloaded;
-      }
+      if (!ok) continue;
+      const reloaded = await tryLoadAccountsFromApi();
+      if (reloaded) accounts = reloaded;
+      changed = true;
+      continue;
     }
 
-    // Update parent children count
+    if (!allowsLocalLedgerWrites()) continue;
+
     const parentIdx = accounts.findIndex(a => a.id === parent.id);
     if (parentIdx >= 0) {
       accounts[parentIdx] = { ...accounts[parentIdx], children_count: (accounts[parentIdx].children_count || 0) + 1 };
@@ -261,7 +265,7 @@ export async function ensureBranchCaixaAccounts(
     console.log(`[CoA Engine] Created branch caixa account ${code} — Caixa - ${branch.name}`);
   }
 
-  if (changed) {
+  if (changed && allowsLocalLedgerWrites()) {
     saveAccountsLocal(accounts);
   }
   return changed;
@@ -324,6 +328,10 @@ export async function ensureSupplierAccount(
     console.warn('[CoA Engine] ensure-supplier failed, falling back:', e);
   }
 
+  if (!allowsLocalLedgerWrites()) {
+    throw cityLedgerOfflineError();
+  }
+
   // Fallback: localStorage only (offline / old city without ensure-supplier).
   const localAccounts = loadAccountsLocal();
   const normalizedName = supplierName.trim().toLowerCase();
@@ -380,6 +388,7 @@ export async function ensureClientAccount(clientId: string, clientName: string, 
   const usingApi = accounts !== null;
   
   if (!accounts) {
+    if (!allowsLocalLedgerWrites()) throw cityLedgerOfflineError();
     accounts = loadAccountsLocal();
   }
   
@@ -393,7 +402,10 @@ export async function ensureClientAccount(clientId: string, clientName: string, 
   if (existing) return existing.code;
   
   const parent = accounts.find(a => a.code === '311');
-  if (!parent) return '311001';
+  if (!parent) {
+    if (!allowsLocalLedgerWrites()) throw cityLedgerOfflineError();
+    return '311001';
+  }
   
   const children = accounts.filter(a => a.code.startsWith('311') && a.code.length > 3 && !a.is_header);
   const nextSeq = children.length + 1;
@@ -422,8 +434,12 @@ export async function ensureClientAccount(clientId: string, clientName: string, 
   };
   
   if (usingApi) {
-    await tryApiCreateAccount(newAccount);
+    const ok = await tryApiCreateAccount(newAccount);
+    if (!ok && !allowsLocalLedgerWrites()) throw cityLedgerOfflineError();
+    if (ok) return code;
   }
+
+  if (!allowsLocalLedgerWrites()) throw cityLedgerOfflineError();
   
   const parentIdx = accounts.findIndex(a => a.id === parent.id);
   if (parentIdx >= 0) {
@@ -448,6 +464,7 @@ export async function updateCoABalancesFromJournal(lines: { accountCode: string;
   const usingApi = accounts !== null;
   
   if (!accounts) {
+    if (!allowsLocalLedgerWrites()) return;
     accounts = loadAccountsLocal();
   }
   
@@ -490,7 +507,9 @@ export async function updateCoABalancesFromJournal(lines: { accountCode: string;
   
   if (changed) {
     rollUpParentBalances(accounts);
-    saveAccountsLocal(accounts);
+    if (allowsLocalLedgerWrites()) {
+      saveAccountsLocal(accounts);
+    }
     
     // Update parent balances via API too
     if (usingApi) {

@@ -17,6 +17,7 @@ import { DebitNoteCreateDialog } from '@/components/fiscal/DebitNoteCreateDialog
 import { TransportDocumentCreateDialog, type TransportCreatePayload } from '@/components/fiscal/TransportDocumentCreateDialog';
 import { TransportDocumentPrintDialog } from '@/components/fiscal/TransportDocumentPrintDialog';
 import { api } from '@/lib/api/client';
+import { isBranchCaixaGlMissingError, branchCaixaGlMissingText } from '@/lib/api/config';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -352,7 +353,9 @@ export default function FiscalDocuments() {
       toast({
         variant: 'destructive',
         title: t.common.error,
-        description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
+        description: isBranchCaixaGlMissingError(err)
+          ? branchCaixaGlMissingText(t, saleBranch.name)
+          : err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
       });
       throw err;
     } finally {
@@ -412,7 +415,9 @@ export default function FiscalDocuments() {
       toast({
         variant: 'destructive',
         title: t.common.error,
-        description: err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
+        description: isBranchCaixaGlMissingError(err)
+          ? branchCaixaGlMissingText(t, currentBranch.name)
+          : err instanceof Error ? err.message : t.fiscalDocumentsUi.documentIssuedSuccess,
       });
       throw err;
     } finally {
