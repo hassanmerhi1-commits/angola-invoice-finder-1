@@ -37,7 +37,11 @@ export const en = {
     desktopShellDesc: "This till will keep the city screen even if the server is later offline. You only do this once.",
     desktopShellDescManual: "Download and run the installer, then reopen NEXOR. You only do this once.",
     desktopShellAction: "Update this till",
-    desktopShellDownloading: "Downloading…",
+    desktopShellDownloading: "Downloading… {percent}%",
+    desktopShellReady: "Download finished. Install now — NEXOR will close and the installer will open.",
+    desktopShellInstall: "Install now",
+    desktopShellSave: "Save installer",
+    desktopShellBusy: "The file is still in use. Wait until the download reaches 100%, then press Install now. Do not use Settings while this is downloading.",
     actions: "Actions",
     status: "Status",
     date: "Date",
@@ -802,6 +806,10 @@ export const en = {
     salePriceKz: "Sale price (Kz) *",
     minStock: "Minimum stock",
     maxStock: "Maximum stock",
+    newCategory: "New category",
+    newCategoryPlaceholder: "e.g. Soft drinks",
+    createCategory: "Create",
+    categoryCreateFailed: "Could not create the category. Check your connection or try again.",
   },
 
   productDetailUi: {
@@ -3691,6 +3699,7 @@ export const en = {
       downloadUpdate: "Download update",
       downloadFromGitHub: "Download from GitHub",
       checkForUpdates: "Check for updates",
+      fileBusy: "The installer is still being used by another program. Wait for the till banner download to finish, then press Install. Do not start a second download from Settings.",
     },
     serverUpdate: {
       title: "Update NEXOR",

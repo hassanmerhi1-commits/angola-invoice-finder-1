@@ -38,7 +38,7 @@ interface AdvancedDataGridProps {
   branches?: any[];
   allBranchProducts?: Record<string, Product[]>;
   reservedQty?: Record<string, number>;
-  /** Rows already sorted by name from API — skip initial O(n log n) sort. */
+  /** Rows already sorted by SKU (numeric) from API — skip the initial sort. */
   preSorted?: boolean;
 }
 
@@ -96,7 +96,7 @@ export function AdvancedDataGrid({
     { key: 'category', label: t.inventoryGridUi.category, minWidth: 120 },
     { key: 'supplierName', label: t.inventoryGridUi.supplierName, minWidth: 120 },
   ]), [t, isHeadOffice]);
-  const [sortColumn, setSortColumn] = useState<string>('name');
+  const [sortColumn, setSortColumn] = useState<string>('sku');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [simpleFilters, setSimpleFilters] = useState<Record<string, { type: 'all' | 'blanks' | 'nonblanks' | 'value'; value?: string }>>({});
   const [customFilters, setCustomFilters] = useState<Record<string, CustomFilterState>>({});
@@ -160,12 +160,8 @@ export function AdvancedDataGrid({
     Object.keys(customFilters).length > 0;
 
   const filteredProducts = useMemo(() => {
-    const needsCopy =
-      hasActiveFilters ||
-      !preSorted ||
-      sortColumn !== 'name' ||
-      sortDirection !== 'asc';
-    let result = needsCopy ? [...products] : products;
+    // Always copy so we can sort by SKU even when the API/cache is still name-ordered.
+    let result = [...products];
 
     // Simple filters (blanks, nonblanks, exact value)
     Object.entries(simpleFilters).forEach(([key, filter]) => {
@@ -197,20 +193,19 @@ export function AdvancedDataGrid({
       });
     });
 
-    if (needsCopy || sortColumn !== 'name' || sortDirection !== 'asc') {
-      result.sort((a, b) => {
-        const aVal = getCellRawValue(a, sortColumn);
-        const bVal = getCellRawValue(b, sortColumn);
-        const col = COLUMNS.find(c => c.key === sortColumn);
-        if (col?.type === 'number') {
-          return sortDirection === 'asc' ? aVal.num - bVal.num : bVal.num - aVal.num;
-        }
-        return sortDirection === 'asc' ? aVal.str.localeCompare(bVal.str) : bVal.str.localeCompare(aVal.str);
-      });
-    }
+    result.sort((a, b) => {
+      const aVal = getCellRawValue(a, sortColumn);
+      const bVal = getCellRawValue(b, sortColumn);
+      const col = COLUMNS.find(c => c.key === sortColumn);
+      if (col?.type === 'number') {
+        return sortDirection === 'asc' ? aVal.num - bVal.num : bVal.num - aVal.num;
+      }
+      const cmp = aVal.str.localeCompare(bVal.str, undefined, { numeric: true, sensitivity: 'base' });
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
 
     return result;
-  }, [products, simpleFilters, customFilters, sortColumn, sortDirection, reservedQty, hasActiveFilters, preSorted, COLUMNS]);
+  }, [products, simpleFilters, customFilters, sortColumn, sortDirection, reservedQty, hasActiveFilters, COLUMNS]);
 
   const handleSort = (column: string) => {
     if (sortColumn === column) {

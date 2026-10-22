@@ -606,15 +606,30 @@ function unblockWindowsDownload(filePath) {
   }
 }
 
+function isFileBusyError(err) {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || err || '');
+  return ['EBUSY', 'EPERM', 'EACCES'].includes(code)
+    || /being used by another process|used by another program/i.test(msg);
+}
+
 async function copyInstallerToTemp(installerPath, version) {
   const safeVersion = String(version || 'update').replace(/[^\w.-]+/g, '_');
-  const tempPath = path.join(app.getPath('temp'), `NEXOR-ERP-${safeVersion}-x64.exe`);
-  try {
-    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-  } catch (_) {}
-  await fs.promises.copyFile(installerPath, tempPath);
-  unblockWindowsDownload(tempPath);
-  return tempPath;
+  const tempPath = path.join(app.getPath('temp'), `NEXOR-ERP-${safeVersion}-${Date.now()}-x64.exe`);
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      await fs.promises.copyFile(installerPath, tempPath);
+      unblockWindowsDownload(tempPath);
+      return tempPath;
+    } catch (err) {
+      lastErr = err;
+      if (!isFileBusyError(err) || attempt === 6) break;
+      console.warn(`[AutoUpdater] temp copy busy, retry ${attempt}/6:`, err?.message || err);
+      await sleepMs(750 * attempt);
+    }
+  }
+  throw lastErr || new Error('Could not copy installer');
 }
 
 /** Launch installer after this process exits — avoids file locks and silent /S failures. */
@@ -4770,8 +4785,10 @@ ipcMain.handle('app:version', () => app.getVersion());
 
 function sendUpdaterStatus(payload) {
   if (payload.status !== 'downloading' || payload.progress === undefined) {
-    const key = `${payload.status}:${payload.version || ''}`;
-    if (lastSentUpdaterStatusKey === key) return;
+    const key = `${payload.status}:${payload.version || ''}:${payload.buildId || ''}:${payload.error || ''}`;
+    // Always emit "downloaded" so the till install dialog can open after a city-shell fetch
+    // (same 1.3.8 version would otherwise be treated as a duplicate).
+    if (payload.status !== 'downloaded' && lastSentUpdaterStatusKey === key) return;
     lastSentUpdaterStatusKey = key;
   }
   sendToAllWindows('updater:status', payload);
@@ -4802,12 +4819,16 @@ ipcMain.handle('updater:getDiagnostics', async () => {
     remoteVersion,
     remoteCheckError,
     packaged: app.isPackaged,
-    hasCityUiCache: true,
+    hasCityUiCache: cityUiCache.hasCityUiCache(cityUiCacheRoot()),
     shellBuildId: readShellBuildId(),
   };
 });
 ipcMain.handle('updater:download', async () => runUpdateDownload());
 ipcMain.handle('updater:downloadCityShell', async () => {
+  if (httpDownloadInProgress) {
+    return { success: false, error: 'A download is already in progress' };
+  }
+  httpDownloadInProgress = true;
   try {
     const city = resolveCityServerUrl()
       || (isServerMode ? `http://127.0.0.1:${readServerListenPort()}` : '');
@@ -4821,10 +4842,21 @@ ipcMain.handle('updater:downloadCityShell', async () => {
       sendUpdaterStatus({ status: 'not-available' });
       return { success: true, alreadyCurrent: true, buildId: info.buildId };
     }
+    const cached = await validatePendingUpdate(readPendingUpdateMeta());
+    if (cached && isSameShellBuild(cached.buildId, info.buildId) && fs.existsSync(cached.installerPath)) {
+      pendingHttpInstallerPath = cached.installerPath;
+      sendUpdaterStatus({
+        status: 'downloaded',
+        version: info.appVersion || '1.3.8',
+        buildId: info.buildId,
+      });
+      return { success: true, version: info.appVersion || '1.3.8', buildId: info.buildId, source: 'cached' };
+    }
     const destDir = getUpdaterPendingDir();
     fs.mkdirSync(destDir, { recursive: true });
-    const destPath = path.join(destDir, path.basename(String(info.file || 'NEXOR-ERP-1.3.8-x64.exe')));
-    sendUpdaterStatus({ status: 'downloading', progress: 0 });
+    const destName = `NEXOR-ERP-1.3.8-${String(info.buildId || 'city').slice(0, 12)}-x64.exe`;
+    const destPath = path.join(destDir, destName);
+    sendUpdaterStatus({ status: 'downloading', progress: 0, buildId: info.buildId });
     await downloadFileResilient(`${city.replace(/\/$/, '')}/api/desktop-shell/file`, destPath, {
       expectedSize: Number(info.size) || 0,
       onProgress: (percent) => {
@@ -4841,12 +4873,18 @@ ipcMain.handle('updater:downloadCityShell', async () => {
       sha512: info.sha512,
       downloadedAt: new Date().toISOString(),
     });
-    sendUpdaterStatus({ status: 'downloaded', version: info.appVersion || '1.3.8' });
+    sendUpdaterStatus({
+      status: 'downloaded',
+      version: info.appVersion || '1.3.8',
+      buildId: info.buildId,
+    });
     return { success: true, version: info.appVersion || '1.3.8', buildId: info.buildId, source: 'city' };
   } catch (err) {
     const message = err?.message || String(err);
     sendUpdaterStatus({ status: 'error', error: message });
     return { success: false, error: message };
+  } finally {
+    httpDownloadInProgress = false;
   }
 });
 ipcMain.handle('updater:getState', async () => {
@@ -4855,6 +4893,9 @@ ipcMain.handle('updater:getState', async () => {
   return { status: 'downloaded', version: meta.version };
 });
 ipcMain.handle('updater:install', async () => {
+  if (httpDownloadInProgress) {
+    return { success: false, error: 'A download is already in progress' };
+  }
   await restorePendingUpdate();
   if (pendingHttpInstallerPath && fs.existsSync(pendingHttpInstallerPath)) {
     const meta = readPendingUpdateMeta();

@@ -676,7 +676,7 @@ async function listProductsForBranchInventoryGrid(branchKey) {
               SELECT 1 FROM branch_skus bs
               WHERE bs.sku_lower = LOWER(TRIM(p.sku))
             )
-          ORDER BY name`;
+          ORDER BY sku`;
   const result = await db.query(query, params);
   // Prefer the local-branch product row over any orphan/foreign metadata row for the same SKU.
   return dedupeRowsBySkuFast(result.rows, branchKey, mainBranchIds);
@@ -1156,6 +1156,19 @@ async function enrichRowsWithSellingPrices(rows, priceBySkuPreloaded) {
   return enrichInventoryGridSellingPrices(rows, priceBySku);
 }
 
+function compareSkuAsc(a, b) {
+  return String(a?.sku || '').localeCompare(String(b?.sku || ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+function sortRowsBySkuAsc(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return rows || [];
+  rows.sort(compareSkuAsc);
+  return rows;
+}
+
 function mergeFastPickerRowsIntoGrid(gridRows, fastRows) {
   const bySku = new Map();
   for (const row of gridRows) {
@@ -1236,7 +1249,7 @@ async function loadInventoryGridBaseRows(branchId, consolidated, { repair = fals
   if (supplierBySku) {
     rows = enrichRowsWithPurchaseSuppliers(rows, supplierBySku);
   }
-  return { rows, cacheable };
+  return { rows: sortRowsBySkuAsc(rows), cacheable };
 }
 
 async function listProductsForBranch(branchKey, lightList) {

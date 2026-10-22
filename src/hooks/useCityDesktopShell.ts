@@ -15,15 +15,24 @@ function sameBuild(a?: string | null, b?: string | null) {
   return !!left && !!right && left === right;
 }
 
+function isBusyError(message: string) {
+  return /being used by another|used by another program|EBUSY|EPERM|EACCES|in progress/i.test(message);
+}
+
 export function useCityDesktopShell() {
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.isElectron;
   const [needed, setNeeded] = useState(false);
   const [readyOnCity, setReadyOnCity] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [readyToInstall, setReadyToInstall] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState('NEXOR-ERP-1.3.8-x64.exe');
   const canUseCityIpc = typeof window !== 'undefined'
     && typeof (window as any).electronAPI?.updater?.downloadCityShell === 'function';
+
+  const fileUrl = () => `${getApiUrl().replace(/\/$/, '')}/api/desktop-shell/file`;
 
   const refresh = useCallback(async () => {
     if (!isElectron) return;
@@ -57,36 +66,102 @@ export function useCityDesktopShell() {
     };
   }, [isElectron, refresh]);
 
+  useEffect(() => {
+    if (!isElectron) return undefined;
+    const updater = (window as any).electronAPI?.updater;
+    if (!updater?.onStatus) return undefined;
+    const unsubscribe = updater.onStatus((data: { status?: string; progress?: number }) => {
+      if (!data || typeof data !== 'object') return;
+      if (data.status === 'downloading') {
+        setDownloading(true);
+        setProgress(Math.max(0, Math.min(100, Math.round(Number(data.progress) || 0))));
+      }
+      if (data.status === 'downloaded') {
+        setDownloading(false);
+        setProgress(100);
+        setReadyToInstall(true);
+      }
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [isElectron]);
+
+  const openInstallerDownload = useCallback(() => {
+    const url = fileUrl();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.rel = 'noreferrer';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, [fileName]);
+
+  const startInstall = useCallback(async () => {
+    setError(null);
+    setInstalling(true);
+    try {
+      const result = await (window as any).electronAPI?.updater?.install?.();
+      if (result?.success) return;
+      const message = String(result?.error || 'Install failed');
+      if (isBusyError(message)) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        const retry = await (window as any).electronAPI?.updater?.install?.();
+        if (retry?.success) return;
+        throw new Error(retry?.error || message);
+      }
+      throw new Error(message);
+    } catch (err) {
+      setInstalling(false);
+      const message = err instanceof Error ? err.message : 'Install failed';
+      setError(isBusyError(message)
+        ? message
+        : message);
+      throw err;
+    }
+  }, []);
+
   const startDownload = useCallback(async () => {
     setError(null);
     setDownloading(true);
+    setProgress(0);
     try {
       if (canUseCityIpc) {
         const result = await (window as any).electronAPI.updater.downloadCityShell();
         if (!result?.success) throw new Error(result?.error || 'Download failed');
-        setNeeded(false);
+        if (result.alreadyCurrent) {
+          setNeeded(false);
+          return;
+        }
+        setReadyToInstall(true);
+        setProgress(100);
+        try {
+          await startInstall();
+        } catch {
+          /* banner keeps Install now */
+        }
         return;
       }
-      const base = getApiUrl().replace(/\/$/, '');
-      const a = document.createElement('a');
-      a.href = `${base}/api/desktop-shell/file`;
-      a.download = fileName;
-      a.rel = 'noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      openInstallerDownload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Download failed');
     } finally {
       setDownloading(false);
     }
-  }, [canUseCityIpc, fileName]);
+  }, [canUseCityIpc, openInstallerDownload, startInstall]);
 
   return {
     needed: isElectron && needed && readyOnCity,
     downloading,
+    readyToInstall,
+    installing,
+    progress,
     error,
     canUseCityIpc,
     startDownload,
+    startInstall,
+    openInstallerDownload,
   };
 }

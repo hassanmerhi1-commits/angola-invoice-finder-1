@@ -37,10 +37,10 @@ import { cn } from '@/lib/utils';
 import { useBranchContext } from '@/contexts/BranchContext';
 import { ALLOWED_VAT_RATES, parseTaxRateOrNull } from '@/lib/taxUtils';
 import {
-  mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
   defaultProductCategoryName,
 } from '@/lib/inventoryFoodCategories';
+import { ProductCategoryField } from '@/components/inventory/ProductCategoryField';
 
 import {
   enrichProductSupplier,
@@ -245,11 +245,6 @@ export function ProductDetailDialog({
     }
     return base;
   }, [suppliers, effectiveProduct]);
-  const categorySelectOptions = useMemo(
-    () => mergeInventoryFoodCategorySelectOptions(activeCategories, language),
-    [activeCategories, language]
-  );
-
   useEffect(() => {
     if (!open) {
       setLoadedProduct(null);
@@ -921,14 +916,12 @@ export function ProductDetailDialog({
                   <Input value={formData.name} onChange={(e) => set('name', e.target.value)} className={fieldControl} />
                 </Field>
                 <Field label={t.inventory.category}>
-                  <Select value={resolveProductCategoryName(formData.category, activeCategories, language)} onValueChange={(v) => set('category', v)}>
-                    <SelectTrigger className={fieldControl}><SelectValue /></SelectTrigger>
-                    <SelectContent className="z-[80] max-h-[min(60vh,320px)] bg-popover border shadow-lg">
-                      {categorySelectOptions.map((c) => (
-                        <SelectItem key={c.key} value={c.name}>{c.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <ProductCategoryField
+                    value={formData.category}
+                    onChange={(v) => set('category', v)}
+                    triggerClassName={fieldControl}
+                    contentClassName="z-[80] bg-popover border shadow-lg"
+                  />
                 </Field>
                 <Field label={t.productFormUi.supplierLabel}>
                   <Select

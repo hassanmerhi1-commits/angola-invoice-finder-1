@@ -25,10 +25,10 @@ import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { ALLOWED_VAT_RATES } from '@/lib/taxUtils';
 import {
-  mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
   defaultProductCategoryName,
 } from '@/lib/inventoryFoodCategories';
+import { ProductCategoryField } from '@/components/inventory/ProductCategoryField';
 
 interface ProductFormDialogProps {
   open: boolean;
@@ -60,10 +60,6 @@ export function ProductFormDialog({
   const { t, language } = useTranslation();
   
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
-  const categorySelectOptions = useMemo(
-    () => mergeInventoryFoodCategorySelectOptions(activeCategories, language),
-    [activeCategories, language]
-  );
 
   const [formData, setFormData] = useState({
     name: '',
@@ -244,30 +240,10 @@ export function ProductFormDialog({
 
               <div>
                 <Label htmlFor="category">{t.inventory.category}</Label>
-                <Select
-                  value={resolveProductCategoryName(formData.category, activeCategories, language)}
-                  onValueChange={(value) => setFormData({ ...formData, category: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[min(60vh,320px)]">
-                    {categorySelectOptions.map((opt) => {
-                      const cat = activeCategories.find((c) => c.id === opt.key);
-                      return (
-                        <SelectItem key={opt.key} value={opt.name}>
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="w-3 h-3 rounded-full shrink-0"
-                              style={{ backgroundColor: cat?.color || '#6b7280' }}
-                            />
-                            {opt.label}
-                          </div>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
+                <ProductCategoryField
+                  value={formData.category}
+                  onChange={(value) => setFormData({ ...formData, category: value })}
+                />
               </div>
 
               <div>

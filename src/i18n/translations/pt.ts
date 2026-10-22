@@ -39,7 +39,11 @@ export const pt: TranslationKeys = {
     desktopShellDesc: "Esta caixa fica com o ecrã da cidade mesmo se o servidor ficar offline. Só faz isto uma vez.",
     desktopShellDescManual: "Transfira e execute o instalador, depois reabra o NEXOR. Só faz isto uma vez.",
     desktopShellAction: "Actualizar esta caixa",
-    desktopShellDownloading: "A transferir…",
+    desktopShellDownloading: "A transferir… {percent}%",
+    desktopShellReady: "Transferência concluída. Instale agora — o NEXOR fecha e o instalador abre.",
+    desktopShellInstall: "Instalar agora",
+    desktopShellSave: "Guardar instalador",
+    desktopShellBusy: "O ficheiro ainda está ocupado. Espere chegar aos 100% e prima Instalar agora. Não use Definições enquanto isto transfere.",
     actions: "Acções",
     status: "Estado",
     date: "Data",
@@ -804,6 +808,10 @@ export const pt: TranslationKeys = {
     salePriceKz: "Preço de Venda (Kz) *",
     minStock: "Stock Mínimo",
     maxStock: "Stock Máximo",
+    newCategory: "Nova categoria",
+    newCategoryPlaceholder: "Ex: Refrigerantes",
+    createCategory: "Criar",
+    categoryCreateFailed: "Não foi possível criar a categoria. Verifique a ligação ou tente novamente.",
   },
 
   productDetailUi: {
@@ -3694,6 +3702,7 @@ export const pt: TranslationKeys = {
       downloadUpdate: "Transferir actualização",
       downloadFromGitHub: "Transferir do GitHub",
       checkForUpdates: "Verificar actualizações",
+      fileBusy: "O instalador ainda está a ser usado por outro programa. Espere a transferência do banner da caixa terminar e prima Instalar. Não inicie outra transferência em Definições.",
     },
     serverUpdate: {
       title: "Actualizar NEXOR",

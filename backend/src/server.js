@@ -398,9 +398,28 @@ app.get('/api/desktop-shell/file', (req, res) => {
     ensureDesktopShellCached().catch((err) => console.warn('[desktop-shell]', err.message));
     return res.status(503).json({ ok: false, error: 'Desktop installer is not on this city server yet' });
   }
+  const stat = fs.statSync(cached.filePath);
+  const fileName = String(cached.meta.file || 'NEXOR-ERP-1.3.8-x64.exe').replace(/"/g, '');
   res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${cached.meta.file}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
   res.setHeader('X-NEXOR-BuildId', cached.meta.buildId);
+  res.setHeader('Accept-Ranges', 'bytes');
+  const range = String(req.headers.range || '');
+  const match = range.match(/^bytes=(\d+)-(\d*)$/i);
+  if (match) {
+    const start = Number.parseInt(match[1], 10);
+    const end = match[2] ? Number.parseInt(match[2], 10) : stat.size - 1;
+    if (!Number.isFinite(start) || start < 0 || start >= stat.size || end < start || end >= stat.size) {
+      res.setHeader('Content-Range', `bytes */${stat.size}`);
+      return res.status(416).end();
+    }
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+    res.setHeader('Content-Length', String(end - start + 1));
+    fs.createReadStream(cached.filePath, { start, end }).pipe(res);
+    return;
+  }
+  res.setHeader('Content-Length', String(stat.size));
   fs.createReadStream(cached.filePath).pipe(res);
 });
 

@@ -90,7 +90,12 @@ export function mergeFilialGridsIntoConsolidated(grids: Product[][]): Product[] 
       });
     }
   }
-  return Array.from(bySku.values());
+  return Array.from(bySku.values()).sort((a, b) =>
+    String(a.sku || '').localeCompare(String(b.sku || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    }),
+  );
 }
 
 async function fetchFilialGridDirect(branchId: string): Promise<Product[]> {
