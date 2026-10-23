@@ -86,8 +86,12 @@ async function generateSequenceNumber(client, documentType, prefix) {
     );
     return `${prefix}-${yr}-00001`;
   } catch (e) {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    return `${prefix}${today}${String(Date.now() % 10000).padStart(4, '0')}`;
+    const err = new Error(
+      'Não foi possível atribuir o número do documento. A sequência fiscal não está disponível. A operação foi recusada.',
+    );
+    err.code = 'DOCUMENT_SEQUENCE_UNAVAILABLE';
+    err.cause = e;
+    throw err;
   }
 }
 

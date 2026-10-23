@@ -247,8 +247,12 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       try { await client.query('ROLLBACK'); } catch (_) { /* tx may already be aborted */ }
       console.error('[FISCAL credit-notes create]', err);
       const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      const { isSequenceUnavailableError, DOCUMENT_SEQUENCE_UNAVAILABLE } = require('../accounting');
       if (isBranchCaixaMissingError(err)) {
         return res.status(409).json({ error: err.message, code: BRANCH_CAIXA_GL_MISSING });
+      }
+      if (isSequenceUnavailableError(err)) {
+        return res.status(409).json({ error: err.message, code: DOCUMENT_SEQUENCE_UNAVAILABLE });
       }
       res.status(400).json({ error: err.message || 'Failed to create credit note' });
     } finally {
@@ -341,8 +345,12 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch (_) { /* tx may already be aborted */ }
       const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
+      const { isSequenceUnavailableError, DOCUMENT_SEQUENCE_UNAVAILABLE } = require('../accounting');
       if (isBranchCaixaMissingError(err)) {
         return res.status(409).json({ error: err.message, code: BRANCH_CAIXA_GL_MISSING });
+      }
+      if (isSequenceUnavailableError(err)) {
+        return res.status(409).json({ error: err.message, code: DOCUMENT_SEQUENCE_UNAVAILABLE });
       }
       res.status(400).json({ error: err.message || 'Failed to create debit note' });
     } finally {

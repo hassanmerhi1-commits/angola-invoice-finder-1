@@ -255,7 +255,15 @@ export function InventoryAdjustmentDialog({
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet) as Record<string, unknown>[];
+        const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][];
+        const headerIdx = rawRows.findIndex((row) => {
+          const cells = (Array.isArray(row) ? row : []).map((cell) => String(cell || '').toLowerCase());
+          return cells.some((cell) => cell === 'código' || cell === 'codigo' || cell === 'code')
+            && cells.some((cell) => cell.includes('contagem') || cell === 'count');
+        });
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+          range: headerIdx >= 0 ? headerIdx : 0,
+        }) as Record<string, unknown>[];
 
         const newAdjustments = new Map<string, number>();
         let matched = 0;

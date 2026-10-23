@@ -11,6 +11,7 @@ import {
   invalidateElectronApiBaseCache,
   isDemoMode,
   isThinClientMode,
+  isServerDatabaseHost,
   waitForEmbeddedBackendHealth,
   clearStaleClientConfigIfServerMachine,
 } from './config';
@@ -1245,13 +1246,15 @@ export const api = {
       // Enqueue the sale into the offline outbox and return an immediate optimistic
       // receipt stub. Shared by the "known offline" short-circuit and the network-error fallback.
       const queueOfflineSale = async () => {
+        if (isServerDatabaseHost()) return null;
         const soldAt =
           String(body.createdAt || body.created_at || '').trim()
           || new Date().toISOString();
         body.createdAt = soldAt;
         body.created_at = soldAt;
-        const queued = await enqueueOfflineSale(body);
-        if (!queued) return null;
+        if (hasOutbox) {
+          await enqueueOfflineSale(body);
+        }
         const stub = {
           id: body.clientRequestId,
           invoice_number: body.invoiceNumber || `OFF-${String(body.clientRequestId).slice(0, 8)}`,
@@ -1321,7 +1324,7 @@ export const api = {
 
       // Already known to be offline: don't make the cashier wait for a 25s network
       // timeout — queue the sale right away so the receipt prints instantly.
-      if (hasOutbox && isOfflineModeActive()) {
+      if (isOfflineModeActive() && !isServerDatabaseHost()) {
         const queuedResult = await queueOfflineSale();
         if (queuedResult) return queuedResult;
       }
@@ -1355,7 +1358,7 @@ export const api = {
       }
 
       const result = await apiFetch<any>('/sales', { method: 'POST', body: JSON.stringify(body) });
-      if (result.error && hasOutbox && isNetworkErrorMessage(result.error)) {
+      if (result.error && isNetworkErrorMessage(result.error)) {
         const queuedResult = await queueOfflineSale();
         if (queuedResult) return queuedResult;
       }

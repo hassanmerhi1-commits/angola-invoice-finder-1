@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
-import { pt } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -92,42 +91,71 @@ export function InventoryCountSheetDialog({
     }, 250);
   };
 
+  const reportDate = format(new Date(), 'dd/MM/yyyy');
+  const asOfLabel = t.countSheetUi.asOfDate.replace('{date}', reportDate);
+  const qtyLocale = language === 'pt' ? 'pt-AO' : 'en-GB';
+
+  const formatSheetQty = (qty: number) =>
+    qty.toLocaleString(qtyLocale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const columnHeaders = [
+    t.countSheetUi.colCode,
+    t.countSheetUi.colDescription,
+    ...(includeBarcode ? [t.inventory.barcode] : []),
+    t.countSheetUi.colQty,
+    t.countSheetUi.colCount,
+    t.countSheetUi.colDiff,
+  ];
+
   const handleExportExcel = () => {
     if (!ensureReady()) return;
 
-    const data = filteredProducts.map((p) => {
-      const row: Record<string, string | number> = {
-        [t.countSheetUi.colCode]: p.sku,
-        [t.countSheetUi.colDescription]: p.name,
-      };
-      if (includeBarcode) {
-        row[t.inventory.barcode] = p.barcode || '';
-      }
-      row[t.countSheetUi.colQty] = hideSystemStock ? '' : readProductStock(p);
-      row[t.countSheetUi.colCount] = '';
-      row[t.countSheetUi.colDiff] = '';
-      return row;
-    });
+    const qtyCol = includeBarcode ? 'D' : 'C';
+    const countCol = includeBarcode ? 'E' : 'D';
+    const headerRow = 2;
 
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Contagem');
-
-    ws['!cols'] = [
-      { wch: 12 },
-      { wch: 45 },
-      ...(includeBarcode ? [{ wch: 16 }] : []),
-      { wch: 8 },
-      { wch: 12 },
-      { wch: 8 },
+    const aoa: (string | number)[][] = [
+      [t.countSheetUi.reportTitle, ...Array(Math.max(0, columnHeaders.length - 2)).fill(''), asOfLabel],
+      columnHeaders,
+      ...filteredProducts.map((p, index) => {
+        const excelRow = headerRow + 1 + index;
+        const qty = hideSystemStock ? '' : readProductStock(p);
+        return [
+          p.sku || '',
+          String(p.name || '').toUpperCase(),
+          ...(includeBarcode ? [p.barcode || ''] : []),
+          qty,
+          '',
+          hideSystemStock ? '' : `=IF(${countCol}${excelRow}="","",${countCol}${excelRow}-${qtyCol}${excelRow})`,
+        ];
+      }),
     ];
 
-    const dateStr = format(new Date(), 'yyyy-MM-dd');
-    XLSX.writeFile(wb, `${t.countSheetUi.filePrefix}_${branch?.code || 'geral'}_${dateStr}.xlsx`);
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const lastCol = String.fromCharCode(64 + columnHeaders.length);
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(0, columnHeaders.length - 2) } }];
+    if (ws.A1) ws.A1.s = { font: { bold: true, sz: 14 } };
+    for (let i = 0; i < filteredProducts.length; i += 1) {
+      const addr = `${qtyCol}${headerRow + 1 + i}`;
+      const cell = ws[addr];
+      if (cell && typeof cell.v === 'number') cell.z = '#,##0.00';
+    }
+    ws['!cols'] = [
+      { wch: 14 },
+      { wch: 48 },
+      ...(includeBarcode ? [{ wch: 16 }] : []),
+      { wch: 10 },
+      { wch: 12 },
+      { wch: 10 },
+    ];
+    ws['!ref'] = `A1:${lastCol}${headerRow + filteredProducts.length}`;
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, t.countSheetUi.reportTitle.slice(0, 31));
+    XLSX.writeFile(wb, `${t.countSheetUi.filePrefix}_${branch?.code || 'geral'}_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
   };
 
   const generatePrintContent = () => {
-    const dateStr = format(new Date(), 'dd.MM.yyyy', { locale: language === 'pt' ? pt : undefined });
     const branchName = branch?.name || t.countSheetUi.general;
     const barcodeHeader = includeBarcode
       ? `<th class="col-barcode">${t.inventory.barcode}</th>`
@@ -138,30 +166,35 @@ export function InventoryCountSheetDialog({
       <html>
       <head>
         <meta charset="UTF-8">
-        <title>${t.countSheetUi.sheetTitle.replace('{branch}', branchName)}</title>
+        <title>${t.countSheetUi.reportTitle}</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: Arial, sans-serif; font-size: 11px; line-height: 1.2; padding: 10mm; background: white; }
+          body { font-family: Calibri, Arial, sans-serif; font-size: 11px; line-height: 1.25; padding: 12mm; background: white; color: #111; }
+          .title-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+          .title-row h1 { font-size: 18px; font-weight: 600; }
+          .title-row .as-of { font-size: 12px; }
           table { width: 100%; border-collapse: collapse; }
-          th, td { border: 1px solid #000; padding: 4px 6px; text-align: left; }
-          th { background: #fff; font-weight: bold; font-size: 10px; }
-          td { font-size: 10px; }
-          .col-codigo { width: 90px; }
+          th, td { border: 1px solid #9aa7b5; padding: 4px 8px; text-align: left; }
+          th { background: #d6e3f0; font-weight: 600; font-size: 11px; }
+          td { font-size: 11px; }
+          .col-codigo { width: 110px; }
           .col-barcode { width: 110px; }
-          .col-qtd, .col-contagem, .col-diff { width: 50px; text-align: center; }
-          .branch-header { text-align: center; font-weight: bold; font-size: 11px; text-transform: uppercase; }
-          .header-row th { border-bottom: 2px solid #000; }
-          .signature-section { margin-top: 40px; display: flex; justify-content: space-between; font-size: 10px; }
+          .col-qtd, .col-contagem, .col-diff { width: 72px; text-align: right; }
+          .signature-section { margin-top: 36px; display: flex; justify-content: space-between; font-size: 10px; }
           .signature-line { border-top: 1px solid #000; padding-top: 3px; min-width: 180px; }
           @media print { body { padding: 8mm; } }
         </style>
       </head>
       <body>
+        <div class="title-row">
+          <h1>${t.countSheetUi.reportTitle}</h1>
+          <div class="as-of">${asOfLabel}</div>
+        </div>
         <table>
           <thead>
-            <tr class="header-row">
+            <tr>
               <th class="col-codigo">${t.countSheetUi.colCode}</th>
-              <th class="col-descricao branch-header">${branchName.toUpperCase()}</th>
+              <th class="col-descricao">${t.countSheetUi.colDescription}</th>
               ${barcodeHeader}
               <th class="col-qtd">${t.countSheetUi.colQty}</th>
               <th class="col-contagem">${t.countSheetUi.colCount}</th>
@@ -174,7 +207,7 @@ export function InventoryCountSheetDialog({
                 <td class="col-codigo">${p.sku || ''}</td>
                 <td class="col-descricao">${String(p.name || '').toUpperCase()}</td>
                 ${includeBarcode ? `<td class="col-barcode">${p.barcode || ''}</td>` : ''}
-                <td class="col-qtd">${hideSystemStock ? '' : readProductStock(p)}</td>
+                <td class="col-qtd">${hideSystemStock ? '' : formatSheetQty(readProductStock(p))}</td>
                 <td class="col-contagem"></td>
                 <td class="col-diff"></td>
               </tr>
@@ -185,9 +218,7 @@ export function InventoryCountSheetDialog({
           <div>
             <div class="signature-line">${countedBy || '_________________________'}</div>
           </div>
-          <div style="text-align: right;">
-            ${branch?.name || ''}, aos ${dateStr}
-          </div>
+          <div style="text-align: right;">${branchName}</div>
         </div>
       </body>
       </html>

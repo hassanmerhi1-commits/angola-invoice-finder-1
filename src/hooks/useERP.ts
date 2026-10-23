@@ -1081,7 +1081,9 @@ export function useSales(
       saftHash: apiResult.data.saft_hash || apiResult.data.saftHash || undefined,
       atcud: apiResult.data.atcud || undefined,
       agtCode: apiResult.data.agt_code || apiResult.data.agtCode || undefined,
-      createdAt: apiResult.data.created_at || new Date().toISOString(),
+      createdAt: apiResult.data.created_at || apiResult.data.createdAt || new Date().toISOString(),
+      pendingSync: apiResult.data.pendingSync === true || apiResult.data.pending_sync === true,
+      clientRequestId: apiResult.data.clientRequestId || apiResult.data.client_request_id || clientRequestId,
     };
 
     console.log(`[POS] Sale ${sale.invoiceNumber} processed via backend API ✓`);

@@ -11,6 +11,7 @@ import {
 } from '@/lib/thermalPrinter';
 import { recordSalePrint } from '@/lib/recordPrintAudit';
 import { isOfflineSaleStub, offlineSalePrintWarning } from '@/lib/saleOfflineGuard';
+import { isFiscalHashMissingError } from '@/lib/saleFiscalHash';
 import { usePosProducts } from '@/hooks/usePosProducts';
 import { usePosCaixa } from '@/hooks/usePosCaixa';
 import { processSalePayment, getExpenses } from '@/lib/accountingStorage';
@@ -726,13 +727,16 @@ export default function POS() {
           toast.error(t.receiptUi.autoPrintError);
         } catch (printError) {
           console.warn('[POS] Auto thermal print failed:', printError);
+          const unsigned = isFiscalHashMissingError(printError);
           recordShiftIssue({
             kind: 'print',
             saleId: sale.id,
             invoiceNumber: sale.invoiceNumber,
-            message: printError instanceof Error ? printError.message : t.receiptUi.autoPrintError,
+            message: unsigned
+              ? t.receiptUi.unsignedPrintBlocked
+              : printError instanceof Error ? printError.message : t.receiptUi.autoPrintError,
           });
-          toast.error(t.receiptUi.autoPrintError);
+          toast.error(unsigned ? t.receiptUi.unsignedPrintBlocked : t.receiptUi.autoPrintError);
         }
       })();
 

@@ -71,12 +71,24 @@ export async function getOfflinePendingSummary(): Promise<{
 }> {
   const raw = await fetchRawPendingSummary();
   const acked = readAckedOutboxKeys();
-  if (acked.size === 0) return raw;
-  const items = raw.items.filter((item) => !itemIsAcked(item, acked));
-  if (raw.items.length > 0) {
+  const { readPendingSalesCache } = await import('@/lib/sync/pendingSalesCache');
+  const cacheRows = readPendingSalesCache();
+  const cacheItems: OfflinePendingItem[] = cacheRows.map((row) => ({
+    id: String(row.clientRequestId || row.client_request_id || row.id || ''),
+    eventType: 'sale.created',
+    status: 'pending',
+    createdAt: String(row.createdAt || row.created_at || '') || null,
+    clientRequestId: String(row.clientRequestId || row.client_request_id || ''),
+    invoiceNumber: String(row.invoiceNumber || row.invoice_number || ''),
+  })).filter((item) => item.id);
+  const merged = [...raw.items, ...cacheItems.filter((item) => (
+    !raw.items.some((existing) => existing.id === item.id || existing.clientRequestId === item.clientRequestId)
+  ))];
+  const items = merged.filter((item) => !itemIsAcked(item, acked));
+  if (merged.length > 0) {
     return { count: items.length, items };
   }
-  return { count: Math.max(0, raw.count - acked.size), items };
+  return { count: Math.max(0, raw.count + cacheRows.length - acked.size), items };
 }
 
 const ACKED_OUTBOX_KEY = 'nexor:outbox-acked-keys:v1';

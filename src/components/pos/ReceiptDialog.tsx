@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import { taxBreakdownFromItems, IVA_EXEMPTION_REASON } from '@/lib/taxUtils';
 import { softwareValidationLine } from '@/lib/companySettings';
 import { useTranslation } from '@/i18n';
+import { isFiscalHashMissingError } from '@/lib/saleFiscalHash';
 
 interface ReceiptDialogProps {
   open: boolean;
@@ -81,7 +82,11 @@ export function ReceiptDialog({
         toast.error(t.receiptUi.printError);
       }
     } catch (error) {
-      toast.error(`${t.receiptUi.printError}: ${(error as Error).message}`);
+      toast.error(
+        isFiscalHashMissingError(error)
+          ? t.receiptUi.unsignedPrintBlocked
+          : `${t.receiptUi.printError}: ${(error as Error).message}`,
+      );
     } finally {
       setIsPrinting(false);
     }

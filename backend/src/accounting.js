@@ -75,6 +75,29 @@ function formatSequenceNumber(prefix, yr, seqNum, scope, perBranch) {
   return `${prefix}-${yr}-${n}`;
 }
 
+const DOCUMENT_SEQUENCE_UNAVAILABLE = 'DOCUMENT_SEQUENCE_UNAVAILABLE';
+
+function sequenceUnavailableError(documentType, cause) {
+  const err = new Error(
+    'Não foi possível atribuir o número do documento. A sequência fiscal não está disponível. A operação foi recusada.',
+  );
+  err.code = DOCUMENT_SEQUENCE_UNAVAILABLE;
+  err.name = DOCUMENT_SEQUENCE_UNAVAILABLE;
+  err.documentType = documentType;
+  if (cause) err.cause = cause;
+  return err;
+}
+
+function isSequenceUnavailableError(error) {
+  if (!error) return false;
+  if (error.code === DOCUMENT_SEQUENCE_UNAVAILABLE || error.name === DOCUMENT_SEQUENCE_UNAVAILABLE) {
+    return true;
+  }
+  return /sequência fiscal não está disponível|document sequence.*(unavailable|failed)/i.test(
+    String(error.message || error),
+  );
+}
+
 /**
  * Generate a unique document number from document_sequences (with row-level locking).
  * @param {{ branchId?: string, branchCode?: string }} scope
@@ -126,17 +149,12 @@ async function generateSequenceNumber(client, documentType, prefix, scope = {}) 
         await client.query(`RELEASE SAVEPOINT ${savepointName}`);
       } catch (rollbackError) {
         console.error('[ACCOUNTING] Failed to recover sequence savepoint:', rollbackError.message);
-        throw e;
+        throw sequenceUnavailableError(documentType, e);
       }
     }
 
-    console.warn(`[ACCOUNTING] document_sequences unavailable for ${documentType}:`, e.message);
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const yr = new Date().getFullYear();
-    if (cfg.perBranch) {
-      return `${prefix}-${normalizedScope.branchCode}-${yr}-${String(Date.now() % 10000).padStart(4, '0')}`;
-    }
-    return `${prefix}${today}${String(Date.now() % 10000).padStart(4, '0')}`;
+    console.error(`[ACCOUNTING] document_sequences unavailable for ${documentType}:`, e.message);
+    throw sequenceUnavailableError(documentType, e);
   }
 }
 
@@ -158,12 +176,8 @@ async function peekSequenceNumber(client, documentType, prefix, scope = {}) {
       ? parseInt(seqResult.rows[0].current_number, 10) + 1
       : 1;
     return formatSequenceNumber(prefix, yr, nextNum, normalizedScope, cfg.perBranch);
-  } catch {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    if (cfg.perBranch) {
-      return `${prefix}-${normalizedScope.branchCode}-${yr}-00001`;
-    }
-    return `${prefix}${today}0001`;
+  } catch (e) {
+    throw sequenceUnavailableError(documentType, e);
   }
 }
 
@@ -784,6 +798,9 @@ module.exports = {
   findAccountByCode,
   generateSequenceNumber,
   peekSequenceNumber,
+  sequenceUnavailableError,
+  isSequenceUnavailableError,
+  DOCUMENT_SEQUENCE_UNAVAILABLE,
   allocateUniqueSaleInvoiceNumber,
   bumpSequenceFromExistingSales,
   isUniqueViolation,

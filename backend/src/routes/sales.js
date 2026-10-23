@@ -2,7 +2,7 @@
 const express = require('express');
 const db = require('../db');
 const { processSale } = require('../transactionEngine');
-const { peekSequenceNumber } = require('../accounting');
+const { peekSequenceNumber, isSequenceUnavailableError, DOCUMENT_SEQUENCE_UNAVAILABLE } = require('../accounting');
 const { enqueueSaleCreated } = require('../sync/outbox');
 const { signSaleInvoice } = require('../agt/signSale');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
@@ -10,6 +10,11 @@ const { dateRangeSql } = require('../lib/dateRangeFilter');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requirePermission } = require('../middleware/requirePermission');
 const { attachUserBranchScope, resolveListBranchId, resolveWriteBranchId } = require('../middleware/branchScope');
+
+function isRealSaftHash(hash) {
+  const value = String(hash || '').trim();
+  return value.length >= 4 && value !== '0' && value !== '----';
+}
 
 function isPaymentMethodConstraintError(err) {
   const msg = String(err?.message || err || '');
@@ -255,28 +260,19 @@ module.exports = function(broadcastTable) {
             + `paid=${req.body?.amountPaid ?? req.body?.amount_paid ?? '?'}`,
           );
           await commitSaleCreation(client, sale, req.body);
-          // Sign after commit so PKCS#12 I/O cannot abort the sale. Wait briefly
-          // so POS/print can put the real 4-char hash on the receipt; on timeout
-          // keep signing in the background and let the client poll GET /sales/:id.
+          // Sign after commit so PKCS#12 I/O cannot abort the sale. Wait for the
+          // hash before answering POS — print is blocked until this is on the sale.
           let saftHash = sale.saft_hash || sale.saftHash || null;
-          if (!sale.duplicate) {
-            const signPromise = signSaleInvoice(sale.id)
-              .then((result) => {
-                saftHash = result?.shortHash || saftHash;
-                return result;
-              })
-              .catch((e) => {
-                console.warn('[AGT SIGN]', e.message);
-                return null;
-              });
-            const timedOut = await Promise.race([
-              signPromise.then(() => false),
-              new Promise((resolve) => setTimeout(() => resolve(true), 2500)),
-            ]);
-            if (timedOut) {
-              signPromise.then(() => broadcastTable('sales')).catch(() => {});
+          if (!sale.duplicate && !isRealSaftHash(saftHash)) {
+            try {
+              const signed = await signSaleInvoice(sale.id);
+              saftHash = signed?.shortHash || saftHash;
+            } catch (e) {
+              console.warn('[AGT SIGN]', e.message);
             }
           }
+          sale.saft_hash = saftHash || sale.saft_hash || null;
+          sale.saftHash = saftHash || sale.saftHash || null;
           setImmediate(() => {
             const { enqueueWebhookEvent } = require('../lib/webhooks');
             enqueueWebhookEvent('sale.created', {
@@ -301,6 +297,7 @@ module.exports = function(broadcastTable) {
             saftHash,
             atcud: sale.atcud || '0',
             duplicate: !!sale.duplicate,
+            unsigned: !isRealSaftHash(saftHash),
           });
         } catch (error) {
           try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
@@ -334,7 +331,8 @@ module.exports = function(broadcastTable) {
         : raw;
       const { isBranchCaixaMissingError, BRANCH_CAIXA_GL_MISSING } = require('../lib/resolveBranchCaixaGlAccount');
       const missingCaixa = isBranchCaixaMissingError(error) || isBranchCaixaMissingError({ message: errorMessage });
-      const status = missingCaixa || /stock insuficiente/i.test(errorMessage)
+      const sequenceMissing = isSequenceUnavailableError(error) || isSequenceUnavailableError({ message: errorMessage });
+      const status = missingCaixa || sequenceMissing || /stock insuficiente/i.test(errorMessage)
         ? 409
         : isPaymentMethodConstraintError(error) || isPaymentMethodConstraintError(first)
           ? 503
@@ -342,6 +340,7 @@ module.exports = function(broadcastTable) {
       res.status(status).json({
         error: errorMessage,
         ...(missingCaixa ? { code: BRANCH_CAIXA_GL_MISSING } : {}),
+        ...(sequenceMissing ? { code: DOCUMENT_SEQUENCE_UNAVAILABLE } : {}),
       });
     } finally {
       client.release();
