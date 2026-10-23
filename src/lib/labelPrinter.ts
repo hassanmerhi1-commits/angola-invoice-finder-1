@@ -35,8 +35,8 @@ function generateEAN13CheckDigit(code: string): string {
   return code + checkDigit;
 }
 
-// Generate barcode SVG using Code128
-function generateBarcodeSVG(code: string): string {
+/** Real Code 128B SVG a gun can read. Not decorative bars. */
+export function generateBarcodeSVG(code: string): string {
   // Simple Code 128B encoding
   const CODE128_START_B = 104;
   const CODE128_STOP = 106;

@@ -13,8 +13,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Printer } from 'lucide-react';
 import { printHtml } from '@/lib/printHtml';
+import { generateBarcodeSVG } from '@/lib/labelPrinter';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 interface ShelfLabelPrintDialogProps {
   open: boolean;
@@ -53,14 +62,16 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
     const labelsHtml = products.flatMap(product => {
       const taxRate = product.taxRate || 0;
       const priceWithIVA = product.price * (1 + taxRate / 100);
+      const barcodeValue = String(product.barcode || product.sku || '').trim();
+      const barcodeSvg = barcodeValue ? generateBarcodeSVG(barcodeValue) : '';
       const labels: string[] = [];
 
       for (let c = 0; c < copies; c++) {
         labels.push(`
           <div class="label" style="width:${labelWidthMM}mm; height:${labelHeightMM}mm;">
-            <div class="product-name">${product.name}</div>
-            <div class="sku">${product.sku || ''}</div>
-            ${showBarcode && product.barcode ? `<div class="barcode">||||| ${product.barcode} |||||</div>` : ''}
+            <div class="product-name">${escapeHtml(product.name)}</div>
+            <div class="sku">${escapeHtml(product.sku || '')}</div>
+            ${showBarcode && barcodeSvg ? `<div class="barcode">${barcodeSvg}<div class="barcode-text">${escapeHtml(barcodeValue)}</div></div>` : ''}
             <div class="prices">
             <div class="price-main">${priceWithIVA.toLocaleString(locale, { minimumFractionDigits: 2 })} Kz</div>
               ${showBasePrice ? `<div class="price-base">${t.inventoryUi.shelfLabelExVat} ${product.price.toLocaleString(locale, { minimumFractionDigits: 2 })} Kz</div>` : ''}
@@ -114,11 +125,18 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
             margin-top: 0.5mm;
           }
           .barcode {
-            font-family: monospace;
-            font-size: 7pt;
             text-align: center;
-            letter-spacing: 1px;
-            margin: 1mm 0;
+            margin: 0.5mm 0;
+          }
+          .barcode svg {
+            display: block;
+            width: 100%;
+            height: ${labelSize === 'small' ? '8mm' : '11mm'};
+          }
+          .barcode-text {
+            font-family: "Courier New", monospace;
+            font-size: 6pt;
+            letter-spacing: 0.4px;
           }
           .prices { margin-top: auto; }
           .price-main {
@@ -236,7 +254,19 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
             <div className="border border-dashed border-border p-2 bg-background rounded text-center" style={{ maxWidth: '180px' }}>
               <div className="text-xs font-bold truncate">{products[0]?.name || t.common.product}</div>
               <div className="text-[10px] text-muted-foreground">{products[0]?.sku || 'SKU'}</div>
-              {showBarcode && <div className="text-[10px] font-mono my-0.5">||||| {products[0]?.barcode || '0000000'} |||||</div>}
+              {showBarcode && (
+                <div className="my-1">
+                  <div
+                    className="[&_svg]:mx-auto [&_svg]:h-8 [&_svg]:w-full"
+                    dangerouslySetInnerHTML={{
+                      __html: generateBarcodeSVG(String(products[0]?.barcode || products[0]?.sku || '0').trim()),
+                    }}
+                  />
+                  <div className="text-[10px] font-mono">
+                    {products[0]?.barcode || products[0]?.sku || ''}
+                  </div>
+                </div>
+              )}
               <div className="text-sm font-bold mt-1">
                 {((products[0]?.price || 0) * (1 + (products[0]?.taxRate || 0) / 100)).toLocaleString(locale, { minimumFractionDigits: 2 })} Kz
               </div>
