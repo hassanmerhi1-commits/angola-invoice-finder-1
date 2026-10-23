@@ -10,6 +10,7 @@
 
 export const ENTITY_ACCOUNT_CODE_LENGTH = 8;
 export const SUPPLIER_PARENT_CODE = '321';
+export const CASH_PARENT_CODE = '45';
 
 type CodeLike = {
   code?: string | null;
@@ -58,6 +59,19 @@ export function isSupplierCategoryParent(code: string): boolean {
   const c = String(code || '').trim();
   return c === SUPPLIER_PARENT_CODE
     || (c.startsWith(SUPPLIER_PARENT_CODE) && c.length > SUPPLIER_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
+}
+
+/** 45 itself or a compact header under it (451, 4511), same shape as 321 → 3211. */
+export function isCashCategoryParent(code: string): boolean {
+  const c = String(code || '').trim();
+  return c === CASH_PARENT_CODE
+    || (c.startsWith(CASH_PARENT_CODE) && c.length > CASH_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
+}
+
+/** Any tab: 43, 431, 4311, 71, 7111… can parent an 8-digit child. */
+export function isCompactCategoryParent(code: string): boolean {
+  const c = String(code || '').trim();
+  return /^\d+$/.test(c) && c.length >= 2 && c.length < ENTITY_ACCOUNT_CODE_LENGTH;
 }
 
 export function findSupplierLeafAccount<T extends CodeLike>(

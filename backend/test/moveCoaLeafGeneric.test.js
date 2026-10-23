@@ -1,7 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { moveEntityLeafToParent, nextCompactChildCode } = require('../src/lib/entityCoaAccounts');
+const {
+  moveEntityLeafToParent,
+  nextCompactChildCode,
+  nextEntityAccountCode,
+  isCashCategoryParent,
+  isCompactCategoryParent,
+} = require('../src/lib/entityCoaAccounts');
 
 function mockClient(rowsByMatch) {
   const updates = [];
@@ -28,6 +34,25 @@ function mockClient(rowsByMatch) {
 test('nextCompactChildCode fills the first free child', () => {
   assert.equal(nextCompactChildCode('45', ['45', '451', '452']), '453');
   assert.equal(nextCompactChildCode('458', ['45', '458']), '4581');
+  assert.equal(nextCompactChildCode('451', ['451', '4511']), '4512');
+});
+
+test('cash 4511 is a category parent and children are 45110001', () => {
+  assert.equal(isCashCategoryParent('45'), true);
+  assert.equal(isCashCategoryParent('4511'), true);
+  assert.equal(isCashCategoryParent('45110001'), false);
+  assert.equal(nextEntityAccountCode('4511', ['45', '4511'], ['4511']), '45110001');
+});
+
+test('banks and expenses nest the same way as suppliers', () => {
+  assert.equal(isCompactCategoryParent('43'), true);
+  assert.equal(isCompactCategoryParent('4311'), true);
+  assert.equal(isCompactCategoryParent('43110001'), false);
+  assert.equal(isCompactCategoryParent('7111'), true);
+  assert.equal(nextEntityAccountCode('4311', ['43', '4311'], ['4311']), '43110001');
+  assert.equal(nextEntityAccountCode('7111', ['71', '7111'], ['7111']), '71110001');
+  assert.equal(nextCompactChildCode('43', ['43', '431']), '432');
+  assert.equal(nextCompactChildCode('71', ['71', '711']), '712');
 });
 
 test('moveEntityLeafToParent recodes a cash leaf under a cash category', async () => {

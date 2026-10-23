@@ -10,6 +10,8 @@ const CLIENT_GROUP_CODE = '31';
 const CLIENT_PARENT_CODE = '311';
 const SUPPLIER_GROUP_CODE = '32';
 const SUPPLIER_PARENT_CODE = '321';
+const CASH_GROUP_CODE = '45';
+const CASH_PARENT_CODE = '45';
 const ENTITY_ACCOUNT_CODE_LENGTH = 8;
 
 function cleanText(value) {
@@ -42,13 +44,16 @@ function isActiveFlag(value) {
   return value !== false && value !== 0 && value !== '0' && value !== 'false';
 }
 
-/** Compact 3211 / 3112 slot — used by old supplier leaves and new category headers. */
+/** Compact 3211 / 3112 / 4511 slot — used by old leaves and new category headers. */
 function isCompactEntityCode(code) {
   const c = String(code || '').trim();
   if (c.startsWith(SUPPLIER_PARENT_CODE) && c.length > SUPPLIER_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH) {
     return true;
   }
   if (c.startsWith(CLIENT_PARENT_CODE) && c.length > CLIENT_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH) {
+    return true;
+  }
+  if (c.startsWith(CASH_PARENT_CODE) && c !== CASH_PARENT_CODE && c.length < ENTITY_ACCOUNT_CODE_LENGTH) {
     return true;
   }
   return false;
@@ -76,9 +81,22 @@ function isClientCategoryParent(code) {
     || (c.startsWith(CLIENT_PARENT_CODE) && c.length > CLIENT_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
 }
 
+/** 45 itself or a compact header under it (451, 4511). */
+function isCashCategoryParent(code) {
+  const c = String(code || '').trim();
+  return c === CASH_PARENT_CODE
+    || (c.startsWith(CASH_PARENT_CODE) && c.length > CASH_PARENT_CODE.length && c.length < ENTITY_ACCOUNT_CODE_LENGTH);
+}
+
+/** Any tab: 43, 4311, 71, 7111… can parent an 8-digit child. */
+function isCompactCategoryParent(code) {
+  const c = String(code || '').trim();
+  return /^\d+$/.test(c) && c.length >= 2 && c.length < ENTITY_ACCOUNT_CODE_LENGTH;
+}
+
 function isEightDigitEntityLeaf(code) {
   const c = String(code || '').trim();
-  return c.length >= ENTITY_ACCOUNT_CODE_LENGTH && /^3[12]/.test(c);
+  return c.length >= ENTITY_ACCOUNT_CODE_LENGTH && /^(3[12]|45)/.test(c);
 }
 
 function normalizeEntityName(value) {
@@ -518,8 +536,8 @@ async function recodeOccupyingLeaf(client, row) {
     ? CLIENT_PARENT_CODE
     : code.startsWith(SUPPLIER_PARENT_CODE)
       ? SUPPLIER_PARENT_CODE
-      : code.startsWith('45')
-        ? '45'
+      : code.startsWith(CASH_PARENT_CODE)
+        ? CASH_PARENT_CODE
         : code.slice(0, Math.max(1, code.length - 1));
   if (row.parent_id) {
     const parent = await client.query(
@@ -574,19 +592,19 @@ async function claimChartAccountCode(client, opts) {
     [code],
   );
   const row = existing.rows?.[0];
-  if (!row) return { action: 'insert' };
+  if (!row) return { action: 'insert', code };
 
   const header = isTruthyFlag(row.is_header);
   const active = isActiveFlag(row.is_active);
   const nifLeaf = /NIF\s*:/i.test(String(row.description || ''));
   const compactLeaf = (
     (isCompactEntityCode(row.code) && (!header || nifLeaf))
-    || (!header && String(row.code || '').length < ENTITY_ACCOUNT_CODE_LENGTH && String(row.code || '').trim() !== '45')
+    || (!header && String(row.code || '').length < ENTITY_ACCOUNT_CODE_LENGTH && String(row.code || '').trim() !== CASH_PARENT_CODE)
   );
 
   if (wantHeader && compactLeaf) {
     const recoded = await recodeOccupyingLeaf(client, row);
-    return { action: 'insert', recoded };
+    return { action: 'insert', code, recoded };
   }
 
   if (wantHeader && header) {
@@ -602,17 +620,49 @@ async function claimChartAccountCode(client, opts) {
     }
   }
 
-  const used = await client.query('SELECT code FROM chart_of_accounts');
-  const parent = code.startsWith(SUPPLIER_PARENT_CODE) ? SUPPLIER_PARENT_CODE
-    : code.startsWith(CLIENT_PARENT_CODE) ? CLIENT_PARENT_CODE
-      : code.startsWith('45') ? '45'
-        : code.slice(0, Math.max(1, code.length - 1));
-  const suggestion = nextCompactChildCode(parent, (used.rows || []).map((r) => r.code));
+  const used = await client.query('SELECT code, is_header FROM chart_of_accounts');
+  const usedCodes = (used.rows || []).map((r) => String(r.code || '').trim());
+  const headerCodes = (used.rows || [])
+    .filter((r) => isTruthyFlag(r.is_header))
+    .map((r) => String(r.code || '').trim());
+  const parent = inferParentFromLeafCode(code, usedCodes);
+  if (!wantHeader && code.length >= ENTITY_ACCOUNT_CODE_LENGTH) {
+    return {
+      action: 'insert',
+      code: nextEntityAccountCode(parent, usedCodes, headerCodes),
+    };
+  }
+  const suggestion = nextCompactChildCode(parent, usedCodes);
   const err = new Error(`A conta ${code} já existe (${row.name}). Tente ${suggestion}.`);
   err.code = 'CODE_EXISTS';
   err.existing = { code: row.code, name: row.name };
   err.suggestion = suggestion;
   throw err;
+}
+
+function inferParentFromLeafCode(code, existingCodes) {
+  const value = String(code || '').trim();
+  const compact = (existingCodes || [])
+    .map((item) => String(item || '').trim())
+    .filter((item) => item && value.startsWith(item) && item.length < value.length && item.length < ENTITY_ACCOUNT_CODE_LENGTH)
+    .sort((a, b) => b.length - a.length);
+  if (compact[0]) return compact[0];
+  if (value.startsWith(SUPPLIER_PARENT_CODE)) return SUPPLIER_PARENT_CODE;
+  if (value.startsWith(CLIENT_PARENT_CODE)) return CLIENT_PARENT_CODE;
+  if (value.startsWith(CASH_PARENT_CODE)) return CASH_PARENT_CODE;
+  return value.slice(0, Math.max(1, value.length - 1));
+}
+
+async function promoteToCategoryHeader(client, parentId) {
+  if (!parentId) return;
+  await client.query(
+    `UPDATE chart_of_accounts
+        SET is_header = true, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+        AND is_header IS NOT TRUE
+        AND LENGTH(CAST(code AS TEXT)) < $2`,
+    [parentId, ENTITY_ACCOUNT_CODE_LENGTH],
+  ).catch(() => {});
 }
 
 async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
@@ -685,15 +735,17 @@ async function moveEntityLeafToParent(client, opts) {
   if (leaf.is_header === true || leaf.is_header === 1) {
     throw new Error('Cannot move a category header — pick an account');
   }
-  if (String(leaf.code || '').trim() === '45') {
+  if (String(leaf.code || '').trim() === CASH_PARENT_CODE) {
     throw new Error('Cannot move the cash parent (45)');
   }
 
   const supplierLeaf = isEntityLedgerCode(leaf.code, SUPPLIER_GROUP_CODE);
   const clientLeaf = isEntityLedgerCode(leaf.code, CLIENT_GROUP_CODE);
+  const cashLeaf = String(leaf.code || '').startsWith(CASH_PARENT_CODE)
+    && String(leaf.code || '').trim() !== CASH_PARENT_CODE;
   const entityLeaf = isEightDigitEntityLeaf(leaf.code) || supplierLeaf || clientLeaf;
   const parentCode = requestedParent
-    || (supplierLeaf ? SUPPLIER_PARENT_CODE : clientLeaf ? CLIENT_PARENT_CODE : '');
+    || (supplierLeaf ? SUPPLIER_PARENT_CODE : clientLeaf ? CLIENT_PARENT_CODE : cashLeaf ? CASH_PARENT_CODE : '');
   if (!parentCode) throw new Error('parentCode is required');
 
   if (supplierLeaf && !isSupplierCategoryParent(parentCode)) {
@@ -701,6 +753,9 @@ async function moveEntityLeafToParent(client, opts) {
   }
   if (clientLeaf && !isClientCategoryParent(parentCode)) {
     throw new Error(`Parent ${parentCode} is not a customer category under 311`);
+  }
+  if (cashLeaf && !isCashCategoryParent(parentCode)) {
+    throw new Error(`Parent ${parentCode} is not a cash category under 45`);
   }
 
   const parent = await client.query(
@@ -788,12 +843,17 @@ module.exports = {
   CLIENT_PARENT_CODE,
   SUPPLIER_GROUP_CODE,
   SUPPLIER_PARENT_CODE,
+  CASH_GROUP_CODE,
+  CASH_PARENT_CODE,
   ENTITY_ACCOUNT_CODE_LENGTH,
   nextEntityAccountCode,
   nextCompactChildCode,
   isCompactEntityCode,
   isSupplierCategoryParent,
   isClientCategoryParent,
+  isCashCategoryParent,
+  isCompactCategoryParent,
+  promoteToCategoryHeader,
   ensureSupplierSubAccount,
   ensureClientSubAccount,
   resolveEntityAccountCode,

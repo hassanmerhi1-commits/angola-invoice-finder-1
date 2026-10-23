@@ -48,7 +48,7 @@ import {
   isBranchCaixaLeaf,
   isReservedCashCode,
 } from '@/lib/chartOfAccountsEngine';
-import { nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
+import { isCashCategoryParent, isCompactCategoryParent, nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
 
 // Category tabs
 // Angola PGC (novo com IVA) — no-dot numbering. Tabs map to PGC class/main codes:
@@ -92,6 +92,9 @@ const TAB_ACCOUNT_DEFAULTS: Record<string, { accountType: AccountType; preferred
 const ENTITY_ACCOUNT_CODE_LENGTH = 8;
 const isEntityRegistryParent = (code: string) =>
   /^3[12]/.test(code) && code.length >= 3 && code.length < ENTITY_ACCOUNT_CODE_LENGTH;
+
+const isNestableCategoryParent = (account: Pick<Account, 'code' | 'is_header'>) =>
+  !!account.is_header || isCompactCategoryParent(account.code);
 
 // No-dot child codes: a child of "31" becomes "311", "312", … (next free numeric suffix).
 // Leaf entries under an entity registry are zero-padded to an 8-digit code; headers stay compact.
@@ -441,9 +444,7 @@ export default function ChartOfAccounts() {
       selectedAccount
       && tabConfig.filter(selectedAccount)
       && (
-        selectedAccount.is_header
-        || isEntityRegistryParent(selectedAccount.code)
-        || selectedAccount.code === CASH_PARENT_CODE
+        isNestableCategoryParent(selectedAccount)
       )
     );
 
@@ -470,7 +471,9 @@ export default function ChartOfAccounts() {
 
     if (tabKey === 'caixa' && !nextForm.is_header) {
       const cashParent = accounts.find((a) => a.code === CASH_PARENT_CODE && a.is_active !== false);
-      const selectedHeader = selectedAccount?.is_header && tabConfig.filter(selectedAccount) ? selectedAccount : null;
+      const selectedHeader = selectedAccount && isNestableCategoryParent(selectedAccount) && tabConfig.filter(selectedAccount)
+        ? selectedAccount
+        : null;
       const selectedCaixa = selectedAccount && isBranchCaixaLeaf(selectedAccount) ? selectedAccount : null;
       const parent = selectedHeader
         || accounts.find((a) => a.id === nextForm.parent_id)
@@ -534,8 +537,8 @@ export default function ChartOfAccounts() {
     const tabConfig = CATEGORY_TABS.find((item) => item.key === tab);
     const defaults = TAB_ACCOUNT_DEFAULTS[tab] || { accountType: 'asset' as AccountType, preferredParentCodes: [] };
     const selectedAsParent = selected
-      && selected.is_header
       && selected.is_active !== false
+      && isNestableCategoryParent(selected)
       && (!tabConfig || tabConfig.filter(selected))
       ? selected
       : null;
@@ -762,8 +765,12 @@ export default function ChartOfAccounts() {
         return { ...prev, branch_id: branchId };
       }
       const existing = accounts.filter((a) => isBranchCaixaLeaf(a) && a.branch_id === branchId && a.is_active !== false);
-      const cashParent = accounts.find((a) => a.code === CASH_PARENT_CODE && a.is_active !== false);
-      if (!cashParent) {
+      const selectedParent = accounts.find((a) => a.id === prev.parent_id && a.is_active !== false);
+      const cashRoot = accounts.find((a) => a.code === CASH_PARENT_CODE && a.is_active !== false);
+      const parent = (selectedParent && isCashCategoryParent(selectedParent.code))
+        ? selectedParent
+        : cashRoot;
+      if (!parent) {
         return {
           ...prev,
           branch_id: branchId,
@@ -773,9 +780,9 @@ export default function ChartOfAccounts() {
       return {
         ...prev,
         branch_id: branchId,
-        parent_id: cashParent.id,
-        level: (cashParent.level || 1) + 1,
-        code: nextEntityAccountCode(cashParent.code, accounts),
+        parent_id: parent.id,
+        level: (parent.level || 1) + 1,
+        code: nextEntityAccountCode(parent.code, accounts),
         name: branch ? defaultBranchCaixaName(branch.name, existing.length) : prev.name,
         account_type: 'asset',
         account_nature: 'debit',
@@ -805,10 +812,6 @@ export default function ChartOfAccounts() {
     const name = inlineParentName.trim();
     const code = inlineParentCode.trim();
     if (!name || !code) return;
-    if (accounts.some(a => a.code === code && a.is_active !== false)) {
-      toast.error(`${code} — ${t.chartOfAccountsUi.saveError}`);
-      return;
-    }
     const parent = accounts.find(a => a.id === formData.parent_id) || null;
     setCreatingInlineParent(true);
     try {
@@ -873,7 +876,8 @@ export default function ChartOfAccounts() {
       .filter((a) => {
         if (a.is_active === false || a.id === selectedMovableLeaf.id) return false;
         if (tabParents.includes(a.code)) return true;
-        if (!a.is_header || a.code.length >= ENTITY_ACCOUNT_CODE_LENGTH) return false;
+        if (a.code.length >= ENTITY_ACCOUNT_CODE_LENGTH) return false;
+        if (!a.is_header && !isCompactCategoryParent(a.code)) return false;
         if (!currentTabConfig.filter(a)) return false;
         return !ancestorIdsOf(a, accountsById).includes(selectedMovableLeaf.id);
       })

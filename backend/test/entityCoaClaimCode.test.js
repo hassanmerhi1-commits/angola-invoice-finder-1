@@ -13,6 +13,8 @@ const { createSqliteHarness, BACKEND_SRC } = require('./helpers/sqliteHarness');
 describe('supplier COA claim compact codes', () => {
   let harness;
   let nextCompactChildCode;
+  let nextEntityAccountCode;
+  let isCashCategoryParent;
   let claimChartAccountCode;
   let findEntityLeafCode;
   let ensureSupplierSubAccount;
@@ -21,6 +23,8 @@ describe('supplier COA claim compact codes', () => {
     harness = createSqliteHarness();
     ({
       nextCompactChildCode,
+      nextEntityAccountCode,
+      isCashCategoryParent,
       claimChartAccountCode,
       findEntityLeafCode,
       ensureSupplierSubAccount,
@@ -32,6 +36,14 @@ describe('supplier COA claim compact codes', () => {
   it('skips occupied compact slots when suggesting the next category', () => {
     assert.equal(nextCompactChildCode('321', ['3211', '3212', '32100001']), '3213');
     assert.equal(nextCompactChildCode('321', ['32100001']), '3211');
+    assert.equal(nextCompactChildCode('451', ['451', '4511']), '4512');
+  });
+
+  it('numbers a cash child under 4511 like a supplier under 3211', () => {
+    assert.equal(isCashCategoryParent('45'), true);
+    assert.equal(isCashCategoryParent('4511'), true);
+    assert.equal(isCashCategoryParent('45110001'), false);
+    assert.equal(nextEntityAccountCode('4511', ['45', '4511'], ['4511']), '45110001');
   });
 
   it('finds an old compact 3211 supplier leaf by name', async () => {
@@ -134,6 +146,72 @@ describe('supplier COA claim compact codes', () => {
       const claim = await claimChartAccountCode(client, { code: '3212', isHeader: true });
       assert.equal(claim.action, 'reuse');
       assert.equal(claim.row.id, rowId);
+    });
+  });
+
+  it('moves an occupying 4511 cash leaf so a category can use 4511', async () => {
+    const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
+    const name = `Old Caixa ${suffix}`;
+    const leafId = randomUUID();
+    await harness.withClient(async (client) => {
+      const existing45 = await client.query(`SELECT id FROM chart_of_accounts WHERE code = '45' LIMIT 1`);
+      const id45 = existing45.rows[0]?.id || randomUUID();
+      if (!existing45.rows[0]) {
+        await client.query(
+          `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+           VALUES ($1, '45', 'CAIXA', 'asset', 'debit', NULL, 1, 1, 1)`,
+          [id45],
+        );
+      }
+      await client.query(`DELETE FROM chart_of_accounts WHERE code = '4511'`);
+      await client.query(
+        `INSERT INTO chart_of_accounts
+         (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '4511', $2, 'asset', 'debit', $3, 2, 0, 1)`,
+        [leafId, name, id45],
+      );
+      const claim = await claimChartAccountCode(client, { code: '4511', isHeader: true });
+      assert.equal(claim.action, 'insert');
+      assert.equal(claim.recoded?.oldCode, '4511');
+      assert.equal(String(claim.recoded?.newCode || '').length, 8);
+      await client.query(
+        `INSERT INTO chart_of_accounts
+         (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '4511', 'Caixa Soyo', 'asset', 'debit', $2, 2, 1, 1)`,
+        [randomUUID(), id45],
+      );
+    });
+    const leaf = await harness.db.query('SELECT code FROM chart_of_accounts WHERE id = $1', [leafId]);
+    assert.equal(String(leaf.rows[0].code).length, 8);
+    assert.equal(String(leaf.rows[0].code).startsWith('45'), true);
+    assert.notEqual(leaf.rows[0].code, '4511');
+    const header = await harness.db.query(`SELECT name, is_header FROM chart_of_accounts WHERE code = '4511'`);
+    assert.equal(header.rows[0].name, 'Caixa Soyo');
+  });
+
+  it('allocates the next 8-digit cash leaf when 45000001 is already taken', async () => {
+    await harness.withClient(async (client) => {
+      const existing45 = await client.query(`SELECT id FROM chart_of_accounts WHERE code = '45' LIMIT 1`);
+      const id45 = existing45.rows[0]?.id || randomUUID();
+      if (!existing45.rows[0]) {
+        await client.query(
+          `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+           VALUES ($1, '45', 'CAIXA', 'asset', 'debit', NULL, 1, 1, 1)`,
+          [id45],
+        );
+      }
+      await client.query(`DELETE FROM chart_of_accounts WHERE code IN ('45000001', '45000002')`);
+      await client.query(
+        `INSERT INTO chart_of_accounts
+         (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '45000001', 'Caixa 1', 'asset', 'debit', $2, 2, 0, 1)`,
+        [randomUUID(), id45],
+      );
+      const claim = await claimChartAccountCode(client, { code: '45000001', isHeader: false });
+      assert.equal(claim.action, 'insert');
+      assert.equal(claim.code, '45000002');
     });
   });
 

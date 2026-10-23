@@ -5,6 +5,7 @@ const {
   pickNextExtraCaixaCode,
   isBranchCaixaLeafCode,
   defaultBranchCaixaName,
+  compactSequentialCaixaCodes,
 } = require('../src/lib/branchCaixaAccounts');
 
 test('cash leaves are 8-digit under 45, same as 32100001', () => {
@@ -30,4 +31,9 @@ test('any 45x except 45 is a cash leaf code', () => {
 test('default names number extras from 2', () => {
   assert.equal(defaultBranchCaixaName('Benfica'), 'Caixa - Benfica');
   assert.equal(defaultBranchCaixaName('Benfica', 1), 'Caixa - Benfica (2)');
+});
+
+test('compactSequentialCaixaCodes no longer remaps 4511 category trees', async () => {
+  const result = await compactSequentialCaixaCodes({});
+  assert.equal(result.compacted, 0);
 });

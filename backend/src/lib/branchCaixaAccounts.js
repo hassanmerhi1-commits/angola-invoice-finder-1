@@ -1,6 +1,7 @@
 /**
  * Auto-create per-branch Caixa GL sub-accounts under parent 45 (PGC).
- * Numbers are sequential: 451, 452, 453 … 459, then 4510, 4511.
+ * Same as suppliers: categories stay compact (451, 4511), leaves are 8-digit
+ * (45000001, 45110001).
  */
 
 const {
@@ -25,14 +26,6 @@ function pickNextTopLevelCaixaCode(usedCodes) {
 
 function pickNextExtraCaixaCode(_parentCode, usedCodes) {
   return pickNextTopLevelCaixaCode(usedCodes);
-}
-
-function isCompactSequentialCashCode(code, threeDigitFilled) {
-  const value = String(code || '').trim();
-  if (/^45[1-9]$/.test(value)) return true;
-  if (!threeDigitFilled || !/^45\d{2}$/.test(value)) return false;
-  const n = Number(value.slice(2));
-  return Number.isInteger(n) && n >= 10;
 }
 
 function defaultBranchCaixaName(branchName, extraIndex = 0) {
@@ -230,51 +223,11 @@ async function ensureBranchCaixaAccount(dbOrClient, branchId, branchName) {
 }
 
 /**
- * Re-home long/gappy cash codes (4510, 45100002, 4541) onto 451, 452, 453…
- * Existing clean 451–459 stay put. Journals follow account id, not the code.
+ * Old 451/452 remapping ate category headers (4511) and 8-digit children
+ * (45110001). Cash now follows suppliers — leave the tree alone.
  */
-async function compactSequentialCaixaCodes(client) {
-  const parentId = await resolveCaixaParent(client);
-  if (!parentId) return { compacted: 0 };
-
-  const rows = await queryDb(
-    client,
-    `SELECT id, code, parent_id FROM chart_of_accounts
-     WHERE is_active = true
-       AND CAST(code AS TEXT) LIKE '45%'
-       AND CAST(code AS TEXT) <> '45'`,
-  );
-  const accounts = rows.rows || [];
-  const threeDigitFilled = [1, 2, 3, 4, 5, 6, 7, 8, 9].every((n) =>
-    accounts.some((row) => String(row.code || '').trim() === `${CAIXA_PARENT_CODE}${n}`),
-  );
-  const used = new Set(
-    accounts
-      .map((row) => String(row.code || '').trim())
-      .filter((code) => isCompactSequentialCashCode(code, threeDigitFilled)),
-  );
-  used.add(CAIXA_PARENT_CODE);
-
-  const messy = accounts
-    .filter((row) => !isCompactSequentialCashCode(String(row.code || '').trim(), threeDigitFilled))
-    .sort((a, b) => String(a.code || '').localeCompare(String(b.code || ''), undefined, { numeric: true }));
-
-  let compacted = 0;
-  for (const row of messy) {
-    const next = pickNextTopLevelCaixaCode(used);
-    await queryDb(
-      client,
-      `UPDATE chart_of_accounts
-       SET code = $2, parent_id = $3, level = 2, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1`,
-      [row.id, next, parentId],
-    );
-    used.add(next);
-    compacted += 1;
-    console.log(`[branchCaixa] Compacted ${row.code} → ${next}`);
-  }
-  if (compacted > 0) await bumpParentChildrenCount(client, parentId);
-  return { compacted };
+async function compactSequentialCaixaCodes(_client) {
+  return { compacted: 0 };
 }
 
 /**

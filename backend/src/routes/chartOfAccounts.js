@@ -488,14 +488,15 @@ module.exports = function(broadcastTable) {
 
       const {
         claimChartAccountCode,
-        isCompactEntityCode,
         nextEntityAccountCode,
-        isSupplierCategoryParent,
+        isCompactCategoryParent,
+        promoteToCategoryHeader,
         SUPPLIER_PARENT_CODE,
         CLIENT_PARENT_CODE,
+        CASH_PARENT_CODE,
       } = require('../lib/entityCoaAccounts');
 
-      // Leaves are always 8 digits (32100001, 45100001). Categories keep compact codes.
+      // Leaves are always 8 digits (32100001, 45100001, 43110001). Categories keep compact codes.
       if (!wantHeader && String(code).trim().length < 8) {
         let parentCode = '';
         if (parent_id) {
@@ -508,14 +509,16 @@ module.exports = function(broadcastTable) {
         let resolvedParent = parentCode;
         if (parentCode === '32') resolvedParent = SUPPLIER_PARENT_CODE;
         else if (parentCode === '31') resolvedParent = CLIENT_PARENT_CODE;
-        else if (isSupplierCategoryParent(parentCode) || parentCode === CLIENT_PARENT_CODE || parentCode.startsWith('311')) {
+        else if (isCompactCategoryParent(parentCode)) {
           resolvedParent = parentCode;
         } else if (String(code).startsWith('311')) {
           resolvedParent = CLIENT_PARENT_CODE;
         } else if (String(code).startsWith('321')) {
           resolvedParent = SUPPLIER_PARENT_CODE;
-        } else if (String(code).startsWith('45') && !parentCode) {
-          resolvedParent = '45';
+        } else if (String(code).startsWith('45')) {
+          resolvedParent = parentCode || CASH_PARENT_CODE;
+        } else if (isCompactCategoryParent(String(code).replace(/\d$/, ''))) {
+          resolvedParent = String(code).replace(/\d$/, '');
         }
         if (resolvedParent) {
           const used = await db.query(
@@ -531,6 +534,7 @@ module.exports = function(broadcastTable) {
       }
 
       const claim = await claimChartAccountCode(db, { code, isHeader: wantHeader });
+      if (claim.code) code = claim.code;
       if (claim.action === 'reuse' && claim.row?.id) {
         const reused = await db.query(`
           UPDATE chart_of_accounts SET
@@ -547,6 +551,7 @@ module.exports = function(broadcastTable) {
           WHERE id = $9
           RETURNING *
         `, [name, description, account_type, account_nature, parent_id || null, level || 1, wantHeader, opening_balance || 0, claim.row.id]);
+        await promoteToCategoryHeader(db, parent_id);
         await broadcastTable('chart_of_accounts');
         auditErpSafe(req, {
           table: 'chart_of_accounts',
@@ -565,6 +570,7 @@ module.exports = function(broadcastTable) {
         RETURNING *
       `, [code, name, description, account_type, account_nature, parent_id, level || 1, wantHeader, opening_balance || 0, branch_id]);
 
+      await promoteToCategoryHeader(db, parent_id);
       await broadcastTable('chart_of_accounts');
       try {
         await syncCaixaRegisterFromAccount(result.rows[0]);
