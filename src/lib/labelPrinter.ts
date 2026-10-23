@@ -131,13 +131,17 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function barcodeBitString(code: string): string {
+  const pattern = encodeCode128Pattern(code);
+  if (!pattern) return '';
+  return `${'0'.repeat(10)}${pattern}${'0'.repeat(10)}`;
+}
+
 /** Printers always ink an image. CSS backgrounds on empty spans often print blank. */
-export function barcodeImageDataUri(code: string, modulePx = 3, barHeight = 80): string {
+export function barcodeImageDataUri(code: string, modulePx = 4, barHeight = 100): string {
   const raw = String(code || '').trim();
-  const pattern = encodeCode128Pattern(raw);
-  if (!raw || !pattern) return '';
-  const quiet = 10;
-  const bits = `${'0'.repeat(quiet)}${pattern}${'0'.repeat(quiet)}`;
+  const bits = barcodeBitString(raw);
+  if (!raw || !bits) return '';
   const width = bits.length * modulePx;
   const height = barHeight;
   const rowSize = Math.ceil((width * 3) / 4) * 4;
@@ -167,12 +171,32 @@ export function barcodeImageDataUri(code: string, modulePx = 3, barHeight = 80):
   return `data:image/bmp;base64,${bytesToBase64(buf)}`;
 }
 
-/** Black-and-white barcode image a gun can read after print. */
-export function generateBarcodeMarkup(code: string, heightMm = 12): string {
+function barcodePngDataUri(code: string, modulePx = 4, barHeight = 100): string {
+  if (typeof document === 'undefined') return barcodeImageDataUri(code, modulePx, barHeight);
+  const bits = barcodeBitString(code);
+  if (!bits) return '';
+  const canvas = document.createElement('canvas');
+  canvas.width = bits.length * modulePx;
+  canvas.height = barHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return barcodeImageDataUri(code, modulePx, barHeight);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#000000';
+  for (let i = 0; i < bits.length; i++) {
+    if (bits[i] === '1') ctx.fillRect(i * modulePx, 0, modulePx, barHeight);
+  }
+  return canvas.toDataURL('image/png');
+}
+
+/** Black-and-white barcode at a fixed module size — do not stretch to 100% width. */
+export function generateBarcodeMarkup(code: string, heightMm = 16): string {
   const raw = String(code || '').trim();
-  const uri = barcodeImageDataUri(raw);
+  const uri = barcodePngDataUri(raw);
   if (!raw || !uri) return '';
-  return `<img class="nexor-barcode" alt="" src="${uri}" style="display:block;width:100%;height:${heightMm}mm;object-fit:fill;image-rendering:pixelated;image-rendering:crisp-edges"/>`;
+  const bits = barcodeBitString(raw);
+  const widthMm = Math.max(32, bits.length * 0.4);
+  return `<img class="nexor-barcode" alt="" src="${uri}" style="display:block;margin:0 auto;width:${widthMm}mm;max-width:100%;height:${heightMm}mm;object-fit:contain;image-rendering:pixelated;image-rendering:crisp-edges"/>`;
 }
 
 /** Real Code 128B SVG a gun can read. Not decorative bars. */

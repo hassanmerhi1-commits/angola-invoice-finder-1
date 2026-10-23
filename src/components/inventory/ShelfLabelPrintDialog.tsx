@@ -43,8 +43,8 @@ const LABEL_SIZES: Record<LabelSize, { width: number; height: number; label: str
 export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLabelPrintDialogProps) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
-  const [labelSize, setLabelSize] = useState<LabelSize>('medium');
-  const [columns, setColumns] = useState(3);
+  const [labelSize, setLabelSize] = useState<LabelSize>('large');
+  const [columns, setColumns] = useState(2);
   const [showBarcode, setShowBarcode] = useState(true);
   const [showBasePrice, setShowBasePrice] = useState(true);
   const [copies, setCopies] = useState(1);
@@ -64,7 +64,7 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
       const taxRate = product.taxRate || 0;
       const priceWithIVA = product.price * (1 + taxRate / 100);
       const barcodeValue = firstProductBarcode(product.barcode, product.sku);
-      const barcodeSvg = barcodeValue ? generateBarcodeMarkup(barcodeValue, labelSize === 'small' ? 8 : 12) : '';
+      const barcodeSvg = barcodeValue ? generateBarcodeMarkup(barcodeValue, labelSize === 'small' ? 12 : 16) : '';
       if (product.id && barcodeValue) {
         void persistProductBarcode(product.id, barcodeValue);
       }
@@ -110,7 +110,7 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            overflow: hidden;
+            overflow: visible;
             page-break-inside: avoid;
           }
           .product-name {
@@ -134,9 +134,9 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
           }
           .barcode img.nexor-barcode {
             display: block;
-            width: 100%;
-            height: ${labelSize === 'small' ? '9mm' : '13mm'};
-            object-fit: fill;
+            margin: 0 auto;
+            height: ${labelSize === 'small' ? '12mm' : '16mm'};
+            object-fit: contain;
             image-rendering: pixelated;
             image-rendering: crisp-edges;
           }
