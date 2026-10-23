@@ -19,6 +19,7 @@ import {
   type BranchRef,
   type PurchaseInvoice,
 } from '@/lib/purchaseInvoiceStorage';
+import { isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
 import type { CreditNote, TransportDocument } from '@/types/erp';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
 import { timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
@@ -158,10 +159,11 @@ function mapPurchaseInvoiceToDocument(inv: PurchaseInvoice, branchName = ''): ER
     };
   });
 
-  let status: DocumentStatus = 'draft';
+  let status: DocumentStatus = 'confirmed';
   const raw = String(inv.status || '').toLowerCase();
   if (raw === 'cancelled' || raw === 'voided') status = 'cancelled';
-  else if (raw === 'posted' || raw === 'confirmed') status = 'confirmed';
+  else if (raw === 'draft' || raw === 'pending') status = 'draft';
+  else if (raw === 'posted' || raw === 'confirmed' || !raw) status = 'confirmed';
 
   const branchId = inv.branchId || inv.warehouseId || '';
   return {
@@ -320,10 +322,12 @@ export async function getPurchaseInvoicesAsDocuments(
     },
   );
   return sortDocumentsByIssue(
-    invoices.map((inv) => {
-      const bid = inv.branchId || inv.warehouseId || '';
-      return mapPurchaseInvoiceToDocument(inv, branchNames[bid] || inv.branchName || '');
-    }),
+    invoices
+      .filter((inv) => !isPurchaseInvoiceUnposted(inv.status))
+      .map((inv) => {
+        const bid = inv.branchId || inv.warehouseId || '';
+        return mapPurchaseInvoiceToDocument(inv, branchNames[bid] || inv.branchName || '');
+      }),
   );
 }
 

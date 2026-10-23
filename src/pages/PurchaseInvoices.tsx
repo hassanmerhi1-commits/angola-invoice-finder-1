@@ -6,7 +6,7 @@ import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { usePermissions } from '@/hooks/usePermissions';
-import { canEditPurchaseInvoiceDraft, isPurchaseInvoiceDraft } from '@/lib/purchaseInvoiceDraft';
+import { canEditPurchaseInvoiceDraft, isPurchaseInvoiceDraft, isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
 import { localISODate } from '@/lib/workingDayAccess';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { resolveUserBranch, branchIdsEquivalent } from '@/lib/branchAccess';
@@ -195,17 +195,20 @@ function buildPurchaseInvoiceQRCodeString(invoice: PurchaseInvoice, company: Com
   return fields.join('*');
 }
 
+const DRAFT_BADGE_CLASS =
+  'bg-amber-100 text-amber-950 border-amber-600 font-bold uppercase tracking-wide';
+
 const getPurchaseInvoiceStatusBadge = (
   t: any,
   status?: string
 ) => {
-  const labels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
+  const labels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string }> = {
     confirmed: { label: t.purchaseInvoicesUi.statusConfirmed, variant: 'default' },
     cancelled: { label: t.purchaseInvoicesUi.statusCancelled, variant: 'destructive' },
-    draft: { label: t.purchaseInvoicesUi.statusDraft, variant: 'outline' },
-    pending: { label: t.purchaseInvoicesUi.statusPending, variant: 'secondary' },
+    draft: { label: t.purchaseInvoicesUi.statusDraft, variant: 'outline', className: DRAFT_BADGE_CLASS },
+    pending: { label: t.purchaseInvoicesUi.statusPending, variant: 'outline', className: DRAFT_BADGE_CLASS },
   };
-  if (!status) return { label: t.purchaseInvoicesUi.statusDraft, variant: 'outline' as const };
+  if (!status) return { label: t.purchaseInvoicesUi.statusConfirmed, variant: 'default' as const };
   return labels[status] || { label: status, variant: 'outline' as const };
 };
 
@@ -768,7 +771,7 @@ function InvoiceViewPage({
   const [previewQrCodeUrl, setPreviewQrCodeUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!invoice) {
+    if (!invoice || isPurchaseInvoiceUnposted(invoice.status)) {
       setPreviewQrCodeUrl(null);
       return;
     }
@@ -798,6 +801,7 @@ function InvoiceViewPage({
 
   if (!invoice) return null;
 
+  const isDraft = isPurchaseInvoiceUnposted(invoice.status);
   const lines = invoice.lines ?? [];
   const company = getCompanySettings();
   const companyName = company.tradeName || company.name || 'NEXOR ERP';
@@ -837,15 +841,17 @@ function InvoiceViewPage({
     const barcodeValue = invoice.supplierInvoiceNo || invoice.invoiceNumber;
     const barcodeBars = buildBarcodeSvgMarkup(barcodeValue);
     let qrCodeSvg = '<div class="qr-placeholder">QR</div>';
-    try {
-      qrCodeSvg = await QRCode.toString(buildPurchaseInvoiceQRCodeString(invoice, company), {
-        type: 'svg',
-        width: 94,
-        margin: 1,
-        errorCorrectionLevel: 'M',
-      });
-    } catch {
-      qrCodeSvg = '<div class="qr-placeholder">QR</div>';
+    if (!isDraft) {
+      try {
+        qrCodeSvg = await QRCode.toString(buildPurchaseInvoiceQRCodeString(invoice, company), {
+          type: 'svg',
+          width: 94,
+          margin: 1,
+          errorCorrectionLevel: 'M',
+        });
+      } catch {
+        qrCodeSvg = '<div class="qr-placeholder">QR</div>';
+      }
     }
     const issueDate = new Date(invoice.date || invoice.createdAt || Date.now());
     const dueDate = new Date(invoice.paymentDate || invoice.date || Date.now());
@@ -863,7 +869,7 @@ function InvoiceViewPage({
         <td class="num">${money(l.ivaAmount)}</td>
       </tr>
     `).join('');
-    const html = `<html><head><title>FC ${invoice.invoiceNumber}</title>
+    const html = `<html><head><title>${isDraft ? `${t.purchaseInvoicesUi.draftWatermark} ` : ''}FC ${invoice.invoiceNumber}</title>
       <style>
         @page{size:A4;margin:10mm}
         *{box-sizing:border-box}
@@ -913,10 +919,14 @@ function InvoiceViewPage({
         .bank{margin-top:7mm;font-weight:700}
         .footer-msg{text-align:center;margin-top:11mm;font-weight:700;font-size:10px}
         .page-no{text-align:right;margin-top:5mm;font-size:9px;font-weight:700}
+        .draft-mark{position:absolute;inset:18mm 8mm;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:20;overflow:hidden}
+        .draft-mark span{font-size:42mm;font-weight:900;color:rgba(185,28,28,0.18);transform:rotate(-32deg);letter-spacing:8px;text-transform:uppercase;white-space:nowrap}
+        .draft-banner{text-align:center;font-weight:900;font-size:13px;letter-spacing:2px;color:#991b1b;border:2px solid #991b1b;padding:4px 8px;margin:2mm 0 4mm;text-transform:uppercase}
         @media print{body{margin:0}.page{margin:0;min-height:277mm}}
       </style>
     </head><body>
       <div class="page">
+        ${isDraft ? `<div class="draft-mark"><span>${escapeHtml(t.purchaseInvoicesUi.draftWatermark)}</span></div>` : ''}
         <div class="header">
           <div class="logo">${company.logo ? `<img src="${escapeHtml(company.logo)}" alt="${escapeHtml(companyName)}">` : escapeHtml(companyName.slice(0, 2).toUpperCase())}</div>
           <div class="supplier">
@@ -928,14 +938,15 @@ function InvoiceViewPage({
             <div>${escapeHtml(companyLocation)}</div>
           </div>
           <div class="meta">
-            <div class="copy">Original</div>
-            <div class="docno">Factura Compra Nº : ${escapeHtml(invoice.supplierInvoiceNo || invoice.invoiceNumber)}</div>
+            <div class="copy">${isDraft ? escapeHtml(t.purchaseInvoicesUi.draftCopyLabel) : 'Original'}</div>
+            <div class="docno">${isDraft ? escapeHtml(t.purchaseInvoicesUi.draftWatermark) + ' — ' : ''}Factura Compra Nº : ${escapeHtml(invoice.supplierInvoiceNo || invoice.invoiceNumber)}</div>
             <div class="barcode">${barcodeBars}</div>
             <div class="barcode-label">${escapeHtml(barcodeValue)}</div>
-            <div class="qr-code">${qrCodeSvg}</div>
-            <div class="qr-label">QR CODE AGT</div>
+            <div class="qr-code">${isDraft ? `<div class="qr-placeholder">${escapeHtml(t.purchaseInvoicesUi.draftWatermark)}</div>` : qrCodeSvg}</div>
+            <div class="qr-label">${isDraft ? escapeHtml(t.purchaseInvoicesUi.draftNotPosted) : 'QR CODE AGT'}</div>
           </div>
         </div>
+        ${isDraft ? `<div class="draft-banner">${escapeHtml(t.purchaseInvoicesUi.draftBanner)}</div>` : ''}
 
         <div class="customer-box">
           <div>
@@ -1036,7 +1047,10 @@ function InvoiceViewPage({
         </Button>
         <span className="text-orange-600 font-bold">{t.purchaseInvoicesUi.editorTitle}</span>
         <span className="font-mono font-semibold">{invoice.invoiceNumber}</span>
-        <Badge variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}>
+        <Badge
+          variant={getPurchaseInvoiceStatusBadge(t, invoice.status).variant}
+          className={getPurchaseInvoiceStatusBadge(t, invoice.status).className}
+        >
           {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
         </Badge>
         {onContinueDraft && isPurchaseInvoiceDraft(invoice.status) && (
@@ -1074,12 +1088,26 @@ function InvoiceViewPage({
         />
       </div>
       <div className="flex-1 min-h-0 overflow-auto bg-muted/30">
+        {isDraft && (
+          <Alert className="mx-auto mt-3 max-w-[210mm] border-amber-500 bg-amber-50 text-amber-950">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>{t.purchaseInvoicesUi.statusDraft}</AlertTitle>
+            <AlertDescription>{t.purchaseInvoicesUi.draftBanner}</AlertDescription>
+          </Alert>
+        )}
         {loading && lines.length === 0 ? (
           <div className="flex items-center justify-center h-48 text-sm text-muted-foreground">
             {t.common.loading}
           </div>
         ) : (
-          <div className="mx-auto my-4 bg-white text-black border p-6 text-[10px]" style={{ width: '210mm', minHeight: '297mm' }}>
+          <div className="relative mx-auto my-4 overflow-hidden bg-white text-black border p-6 text-[10px]" style={{ width: '210mm', minHeight: '297mm' }}>
+            {isDraft && (
+              <div className="pointer-events-none absolute inset-8 z-10 flex items-center justify-center overflow-hidden">
+                <span className="select-none text-[72px] font-black uppercase tracking-[0.25em] text-red-600/20 -rotate-[32deg] whitespace-nowrap">
+                  {t.purchaseInvoicesUi.draftWatermark}
+                </span>
+              </div>
+            )}
             <div className="grid grid-cols-[32mm_1fr_62mm] gap-6 items-start">
               <div className="w-[28mm] h-[23mm] border border-zinc-400 flex items-center justify-center overflow-hidden text-2xl font-black text-red-900 tracking-tighter text-center">
                 {company.logo ? (
@@ -1097,8 +1125,13 @@ function InvoiceViewPage({
                 <div>{companyLocation}</div>
               </div>
               <div className="text-center text-[9px] leading-tight">
-                <div className="font-bold mb-2">Original</div>
-                <div className="font-bold">Factura Compra Nº : {invoice.supplierInvoiceNo || invoice.invoiceNumber}</div>
+                <div className={cn('font-bold mb-2', isDraft && 'uppercase tracking-wide text-red-800')}>
+                  {isDraft ? t.purchaseInvoicesUi.draftCopyLabel : 'Original'}
+                </div>
+                <div className="font-bold">
+                  {isDraft ? `${t.purchaseInvoicesUi.draftWatermark} — ` : ''}
+                  Factura Compra Nº : {invoice.supplierInvoiceNo || invoice.invoiceNumber}
+                </div>
                 <svg
                   viewBox={`0 0 ${previewBarcodeWidth} 42`}
                   preserveAspectRatio="none"
@@ -1112,15 +1145,17 @@ function InvoiceViewPage({
                 </svg>
                 <div className="font-mono tracking-widest text-[8px]">{previewBarcodeValue}</div>
                 <div className="mx-auto mt-3 h-[23mm] w-[23mm] border border-black bg-white p-1">
-                  {previewQrCodeUrl ? (
+                  {previewQrCodeUrl && !isDraft ? (
                     <img src={previewQrCodeUrl} alt="QR Code AGT" className="h-full w-full object-contain" />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center border border-dashed border-zinc-500 font-bold">
-                      QR
+                    <div className="flex h-full w-full items-center justify-center border border-dashed border-zinc-500 font-bold text-center leading-tight px-1">
+                      {isDraft ? t.purchaseInvoicesUi.draftWatermark : 'QR'}
                     </div>
                   )}
                 </div>
-                <div className="mt-1 text-[7.5px] font-bold">QR CODE AGT</div>
+                <div className="mt-1 text-[7.5px] font-bold">
+                  {isDraft ? t.purchaseInvoicesUi.draftNotPosted : 'QR CODE AGT'}
+                </div>
               </div>
             </div>
 
@@ -1332,6 +1367,7 @@ export default function PurchaseInvoices() {
   const [filterSupplier, setFilterSupplier] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'draft' | 'confirmed' | 'cancelled'>('all');
   const [selectedListInvoiceId, setSelectedListInvoiceId] = useState<string | null>(null);
   const [gridFocusCell, setGridFocusCell] = useState<{ row: number; field: 'quantity' } | null>(null);
   // Form state
@@ -1795,8 +1831,15 @@ export default function PurchaseInvoices() {
     if (filterDateTo) {
       result = result.filter(i => i.date <= filterDateTo);
     }
+    if (filterStatus === 'draft') {
+      result = result.filter(i => isPurchaseInvoiceUnposted(i.status));
+    } else if (filterStatus === 'confirmed') {
+      result = result.filter(i => !isPurchaseInvoiceUnposted(i.status) && i.status !== 'cancelled');
+    } else if (filterStatus === 'cancelled') {
+      result = result.filter(i => i.status === 'cancelled');
+    }
     return result;
-  }, [invoices, searchTerm, filterSupplier, filterDateFrom, filterDateTo]);
+  }, [invoices, searchTerm, filterSupplier, filterDateFrom, filterDateTo, filterStatus]);
 
   const filteredProducts = useMemo(() => {
     if (!searchTerm) return products.slice(0, 300);
@@ -3343,11 +3386,14 @@ export default function PurchaseInvoices() {
       (order.supplierName || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    const postedInvoices = filtered.filter((i) => !isPurchaseInvoiceUnposted(i.status) && i.status !== 'cancelled');
+    const draftCount = filtered.filter((i) => isPurchaseInvoiceUnposted(i.status)).length;
     const invoiceTotals = {
-      count: filtered.length,
-      subtotal: filtered.reduce((s, i) => s + (i.subtotal || 0), 0),
-      iva: filtered.reduce((s, i) => s + (i.ivaTotal || 0), 0),
-      total: filtered.reduce((s, i) => s + (i.total || 0), 0),
+      count: postedInvoices.length,
+      draftCount,
+      subtotal: postedInvoices.reduce((s, i) => s + (i.subtotal || 0), 0),
+      iva: postedInvoices.reduce((s, i) => s + (i.ivaTotal || 0), 0),
+      total: postedInvoices.reduce((s, i) => s + (i.total || 0), 0),
     };
 
     return (
@@ -3458,8 +3504,22 @@ export default function PurchaseInvoices() {
                 <Label className="text-xs text-muted-foreground">{t.purchaseInvoicesUi.filterTo}</Label>
                 <Input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} className="h-9 w-36" />
               </div>
-              {(filterSupplier && filterSupplier !== '__all__' || filterDateFrom || filterDateTo) && (
-                <Button variant="ghost" size="sm" onClick={() => { setFilterSupplier('__all__'); setFilterDateFrom(''); setFilterDateTo(''); }}>
+              <div>
+                <Label className="text-xs text-muted-foreground">{t.purchaseInvoicesUi.filterStatus}</Label>
+                <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as typeof filterStatus)}>
+                  <SelectTrigger className="w-40 h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t.purchaseInvoicesUi.filterAllStatuses}</SelectItem>
+                    <SelectItem value="draft">{t.purchaseInvoicesUi.statusDraft}</SelectItem>
+                    <SelectItem value="confirmed">{t.purchaseInvoicesUi.statusConfirmed}</SelectItem>
+                    <SelectItem value="cancelled">{t.purchaseInvoicesUi.statusCancelled}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {(filterSupplier && filterSupplier !== '__all__' || filterDateFrom || filterDateTo || filterStatus !== 'all') && (
+                <Button variant="ghost" size="sm" onClick={() => { setFilterSupplier('__all__'); setFilterDateFrom(''); setFilterDateTo(''); setFilterStatus('all'); }}>
                   <X className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.clearFilters}
                 </Button>
               )}
@@ -3468,6 +3528,14 @@ export default function PurchaseInvoices() {
             {/* Summary Bar */}
             <div className="flex gap-4 text-xs items-center px-3 py-2 rounded-md bg-muted/50 border border-border/50">
               <span className="text-muted-foreground font-medium">{t.purchaseInvoicesUi.summaryInvoiceCount.replace('{count}', String(invoiceTotals.count))}</span>
+              {invoiceTotals.draftCount > 0 && (
+                <>
+                  <div className="h-4 w-px bg-border" />
+                  <span className="font-semibold text-amber-800">
+                    {t.purchaseInvoicesUi.summaryDraftExcluded.replace('{count}', String(invoiceTotals.draftCount))}
+                  </span>
+                </>
+              )}
               <div className="h-4 w-px bg-border" />
               <span>Sub Total: <strong className="font-mono text-sm">{invoiceTotals.subtotal.toLocaleString(uiLocale)}</strong></span>
               <span className="text-destructive">IVA: <strong className="font-mono text-sm">{invoiceTotals.iva.toLocaleString(uiLocale)}</strong></span>
@@ -3499,6 +3567,7 @@ export default function PurchaseInvoices() {
                         data-nexor-id={inv.id}
                         className={cn(
                           'cursor-pointer hover:bg-accent/50 h-8 transition-colors duration-100',
+                          isPurchaseInvoiceUnposted(inv.status) && 'bg-amber-50/80',
                           selectedListInvoiceId === inv.id && 'nexor-row-selected',
                         )}
                         onClick={() => setSelectedListInvoiceId(inv.id)}
@@ -3514,7 +3583,10 @@ export default function PurchaseInvoices() {
                         <TableCell className="text-right font-mono text-[11px] py-1 font-bold">{inv.total.toLocaleString(uiLocale)}</TableCell>
                         <TableCell className="py-1">
                           <div className="flex flex-wrap gap-1">
-                            <Badge variant={getPurchaseInvoiceStatusBadge(t, inv.status).variant} className="text-[9px] px-1.5 py-0">
+                            <Badge
+                              variant={getPurchaseInvoiceStatusBadge(t, inv.status).variant}
+                              className={cn('text-[9px] px-1.5 py-0', getPurchaseInvoiceStatusBadge(t, inv.status).className)}
+                            >
                               {getPurchaseInvoiceStatusBadge(t, inv.status).label}
                             </Badge>
                             {inv.purchaseReturnsStatus === 'partial' && (
@@ -4153,6 +4225,11 @@ export default function PurchaseInvoices() {
         </div>
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-black tracking-tight text-destructive">{t.purchaseInvoicesUi.editorTitle}</h2>
+          {editingInvoiceRef.current && isPurchaseInvoiceUnposted(editingInvoiceRef.current.status) && (
+            <Badge variant="outline" className={cn('text-[10px]', DRAFT_BADGE_CLASS)}>
+              {t.purchaseInvoicesUi.statusDraft}
+            </Badge>
+          )}
           {nextFcPreview && (
             <span className="text-xs font-mono text-muted-foreground">{nextFcPreview}</span>
           )}

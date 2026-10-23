@@ -852,6 +852,7 @@ export default function Invoices() {
     return sortDocumentsByIssue(
       documents.filter((d) => {
         if (!invoiceFallsOnRange(d, from, to)) return false;
+        if (d.documentType === 'fatura_compra' && (d.status === 'draft' || d.status === 'pending')) return false;
         if (!q) return true;
         const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
         return hay.includes(q);

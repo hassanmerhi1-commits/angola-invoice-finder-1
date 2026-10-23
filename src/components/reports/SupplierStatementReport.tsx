@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { getPurchaseInvoices, type PurchaseInvoice } from '@/lib/purchaseInvoiceStorage';
+import { isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -240,6 +241,7 @@ export default function SupplierStatementReport() {
           if (generation !== fetchGenerationRef.current) return;
 
           for (const inv of purchaseInvoices) {
+            if (isPurchaseInvoiceUnposted(inv.status) || inv.status === 'cancelled') continue;
             if (!invoiceMatchesSupplier(inv, selectedSupplier, supplier)) continue;
             const ref = inv.invoiceNumber;
             if (ref && seenRefs.has(`oi:${ref}`)) continue;

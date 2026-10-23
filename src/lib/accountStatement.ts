@@ -349,7 +349,7 @@ export function buildAccountStatement(opts: {
 
   for (const raw of purchases) {
     const status = str(raw.status).toLowerCase();
-    if (status === 'voided' || status === 'cancelled' || status === 'canceled' || status === 'draft') continue;
+    if (status === 'voided' || status === 'cancelled' || status === 'canceled' || status === 'draft' || status === 'pending') continue;
     const docNumber = str(raw.invoice_number ?? raw.invoiceNumber);
     const docId = str(raw.id);
     const dedupe = docNumber ? `oi:${docNumber}` : `fc:${docId}`;

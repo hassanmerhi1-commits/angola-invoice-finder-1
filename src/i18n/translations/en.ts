@@ -5187,6 +5187,13 @@ export const en = {
     statusCancelled: "Cancelled",
     statusDraft: "Draft",
     statusPending: "Pending",
+    draftWatermark: "DRAFT",
+    draftCopyLabel: "DRAFT — not posted",
+    draftBanner: "This is a draft. Stock and accounts are not updated until it is confirmed.",
+    draftNotPosted: "Not posted — no AGT code",
+    filterStatus: "Status",
+    filterAllStatuses: "All statuses",
+    summaryDraftExcluded: "{count} drafts excluded from totals",
 
     // Status (purchase orders)
     poStatusDraft: "Draft",

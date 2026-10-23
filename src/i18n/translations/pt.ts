@@ -5189,6 +5189,13 @@ export const pt: TranslationKeys = {
     statusCancelled: "Anulado",
     statusDraft: "Rascunho",
     statusPending: "Pendente",
+    draftWatermark: "RASCUNHO",
+    draftCopyLabel: "RASCUNHO — não lançado",
+    draftBanner: "Isto é um rascunho. Stock e contabilidade não são actualizados até ser confirmado.",
+    draftNotPosted: "Não lançado — sem código AGT",
+    filterStatus: "Estado",
+    filterAllStatuses: "Todos os estados",
+    summaryDraftExcluded: "{count} rascunhos fora dos totais",
 
     // Status (encomendas de compra)
     poStatusDraft: "Rascunho",

@@ -13,6 +13,7 @@ import { buildPurchasesPivot, type PurchasesPivotContext } from '@/lib/reports/p
 import PurchasesPivotView from '@/components/reports/PurchasesPivotView';
 import { ReportPicker, type ReportOption } from '@/components/reports/ReportPicker';
 import { ReportStatStrip } from '@/components/reports/ReportStatStrip';
+import { isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
 
 export default function PurchasesAnalysisReport({
   view,
@@ -53,7 +54,7 @@ export default function PurchasesAnalysisReport({
       const d = raw ? String(raw).slice(0, 10) : '';
       return !!d && d >= dateFrom && d <= dateTo;
     };
-    return purchases.filter((p) => String(p.status || '') !== 'draft' && inRange(p.date || p.createdAt));
+    return purchases.filter((p) => !isPurchaseInvoiceUnposted(p.status) && String(p.status || '') !== 'cancelled' && inRange(p.date || p.createdAt));
   }, [purchases, dateFrom, dateTo]);
 
   const totals = useMemo(() => {

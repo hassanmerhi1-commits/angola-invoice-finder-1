@@ -101,7 +101,9 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   const entityLabel = config.entityType === 'customer' ? 'Cliente' : 'Fornecedor';
   const taxSummary = getTaxSummary(doc.lines);
   const goodsTotal = doc.subtotal;
-  const copyLabel = doc.copyLabel || 'Original';
+  const isPurchaseDraft = doc.documentType === 'fatura_compra'
+    && (doc.status === 'draft' || doc.status === 'pending');
+  const copyLabel = isPurchaseDraft ? 'RASCUNHO' : (doc.copyLabel || 'Original');
 
   return `<!DOCTYPE html>
 <html>
@@ -196,9 +198,19 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   
   /* Document hash / audit */
   .audit-line { font-size: 7px; color: #999; text-align: right; margin-top: 4px; }
+
+  .draft-wrap { position: relative; }
+  .draft-mark { position: absolute; inset: 40px 10px; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 20; overflow: hidden; }
+  .draft-mark span { font-size: 64px; font-weight: 900; color: rgba(185,28,28,0.16); transform: rotate(-32deg); letter-spacing: 8px; text-transform: uppercase; white-space: nowrap; }
+  .draft-banner { text-align: center; font-weight: 900; font-size: 12px; letter-spacing: 2px; color: #991b1b; border: 2px solid #991b1b; padding: 4px 8px; margin: 6px 0 10px; text-transform: uppercase; }
 </style>
 </head>
 <body>
+  ${isPurchaseDraft ? `
+  <div class="draft-wrap">
+  <div class="draft-mark"><span>RASCUNHO</span></div>
+  <div class="draft-banner">RASCUNHO — não lançado em stock nem contabilidade</div>
+  ` : ''}
   <!-- PAGE INFO -->
   <div class="page-info">Pág. 1/1</div>
   
@@ -397,6 +409,7 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   <div class="audit-line">
     ${doc.saftHash ? doc.saftHash : ''} &nbsp;&nbsp; ${formatDateTime(doc.createdAt)}
   </div>
+  ${isPurchaseDraft ? '</div>' : ''}
 </body>
 </html>`;
 }

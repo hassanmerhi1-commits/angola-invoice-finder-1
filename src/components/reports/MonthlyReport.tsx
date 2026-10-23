@@ -16,6 +16,7 @@ import { ReportTruncationBanner } from '@/components/reports/ReportTruncationBan
 import { useReportSales } from '@/hooks/useReportSales';
 import { useSharedReportFilters } from '@/contexts/ReportsPeriodContext';
 import { useReportExportMeta } from '@/hooks/useReportExportMeta';
+import { isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
 
 function escapeHtml(value: string): string {
   return String(value ?? '')
@@ -93,7 +94,7 @@ export default function MonthlyReport() {
     });
 
     purchases
-      .filter((p) => String(p.status || '') !== 'draft' && inRange(p.date || p.createdAt))
+      .filter((p) => !isPurchaseInvoiceUnposted(p.status) && String(p.status || '') !== 'cancelled' && inRange(p.date || p.createdAt))
       .forEach((p) => {
         const month = String(p.date || p.createdAt || '').slice(0, 7);
         if (!month) return;
