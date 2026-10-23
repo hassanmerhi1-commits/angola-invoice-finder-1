@@ -2716,6 +2716,36 @@ module.exports = function(broadcastTableRaw) {
     }
   });
 
+  router.patch('/:id/barcode', requirePermission('inventory_edit'), async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ error: 'Product id is required' });
+      const existing = await db.query(
+        'SELECT id, sku, barcode FROM products WHERE id = $1',
+        [id],
+      );
+      if (!existing.rows[0]) return res.status(404).json({ error: 'Product not found' });
+      const next = mergeProductBarcode(req.body?.barcode, existing.rows[0].barcode);
+      if (!next) return res.status(400).json({ error: 'Barcode is required' });
+      const result = await db.query(
+        `UPDATE products
+         SET barcode = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2
+         RETURNING *`,
+        [next, id],
+      );
+      try {
+        await copyBarcodeToSkuSiblings(existing.rows[0].sku || result.rows[0]?.sku, next, id);
+      } catch (_) { /* optional */ }
+      invalidateInventoryGridResultCache();
+      await broadcastTable('products');
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error('[PRODUCTS barcode]', error);
+      res.status(500).json({ error: 'Failed to save barcode' });
+    }
+  });
+
   // Update stock
   router.patch('/:id/stock', requirePermission('inventory_adjust'), async (req, res) => {
     try {

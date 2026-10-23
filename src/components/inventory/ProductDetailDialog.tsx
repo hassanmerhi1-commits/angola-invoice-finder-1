@@ -53,6 +53,7 @@ import {
 } from '@/lib/productSupplierResolve';
 import { buildSellingPriceBySku, withSellingPriceFromMap } from '@/lib/productDedupe';
 import { readSellingPriceHintsSession } from '@/lib/sellingPriceHints';
+import { firstProductBarcode, persistProductBarcode } from '@/lib/persistProductBarcode';
 import {
   filterProductsForSearch,
   normalizeSearchText,
@@ -772,10 +773,10 @@ export function ProductDetailDialog({
         : (formData.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`),
       name: formData.name,
       sku: skuTrim,
-      barcode:
-        [formData.barcode, ...(formData.barcodes || []).map((bc) => bc.barPrice)]
-          .map((value) => String(value || '').trim())
-          .find(Boolean) || undefined,
+      barcode: firstProductBarcode(
+        formData.barcode,
+        ...(formData.barcodes || []).map((bc) => bc.barPrice),
+      ) || undefined,
       category: resolveProductCategoryName(formData.category, activeCategories, language),
       price: formData.price,
       price2: formData.price2 || undefined,
@@ -803,6 +804,9 @@ export function ProductDetailDialog({
       createdAt: willCreate ? new Date().toISOString() : (effectiveProduct?.createdAt || product?.createdAt || new Date().toISOString()),
       updatedAt: new Date().toISOString(),
     };
+    if (savedProduct.barcode && savedProduct.id) {
+      void persistProductBarcode(savedProduct.id, savedProduct.barcode);
+    }
     formSnapshotRef.current = JSON.stringify(formData);
     forceCloseRef.current = true;
     setDiscardCloseOpen(false);
@@ -959,7 +963,14 @@ export function ProductDetailDialog({
                   <Input value={formData.sku} onChange={(e) => set('sku', e.target.value)} className={fieldControl} />
                 </Field>
                 <Field label={t.productFormUi.barcodeLabel}>
-                  <Input value={formData.barcode} onChange={(e) => setIdentityBarcode(e.target.value)} className={fieldControl} />
+                  <Input
+                    value={formData.barcode}
+                    onChange={(e) => setIdentityBarcode(e.target.value)}
+                    onBlur={() => {
+                      void persistProductBarcode(formData.id || product?.id, formData.barcode);
+                    }}
+                    className={fieldControl}
+                  />
                 </Field>
                 <Field label={`${t.common.description} *`} className="col-span-2">
                   <Input value={formData.name} onChange={(e) => set('name', e.target.value)} className={fieldControl} />
@@ -1175,6 +1186,11 @@ export function ProductDetailDialog({
                       <Input
                         value={bc.barPrice}
                         onChange={(e) => setInvBarcode(idx, e.target.value)}
+                        onBlur={() => {
+                          if (idx === 0) {
+                            void persistProductBarcode(formData.id || product?.id, bc.barPrice);
+                          }
+                        }}
                         className={fieldControl}
                       />
                     </td>

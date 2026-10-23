@@ -35,8 +35,7 @@ function generateEAN13CheckDigit(code: string): string {
   return code + checkDigit;
 }
 
-/** Real Code 128B SVG a gun can read. Not decorative bars. */
-export function generateBarcodeSVG(code: string): string {
+function encodeCode128Pattern(code: string): string {
   // Simple Code 128B encoding
   const CODE128_START_B = 104;
   const CODE128_STOP = 106;
@@ -92,7 +91,30 @@ export function generateBarcodeSVG(code: string): string {
     pattern += CODE128_PATTERNS[value] || '';
   }
   
-  // Integer modules + viewBox so print/CSS cannot smear the bars.
+  return pattern;
+}
+
+/** Solid CSS bars — thermal/browser print smears SVG. */
+export function generateBarcodeMarkup(code: string, heightMm = 12): string {
+  const raw = String(code || '').trim();
+  const pattern = encodeCode128Pattern(raw);
+  if (!raw || !pattern) return '';
+  const moduleMm = 0.35;
+  const quiet = 10;
+  const bits = `${'0'.repeat(quiet)}${pattern}${'0'.repeat(quiet)}`;
+  const bars = [...bits]
+    .map((bit) =>
+      `<i style="display:inline-block;width:${moduleMm}mm;height:${heightMm}mm;background:${bit === '1' ? '#000' : '#fff'};margin:0;padding:0;border:0"></i>`,
+    )
+    .join('');
+  return `<div class="nexor-barcode" style="display:block;white-space:nowrap;font-size:0;line-height:0;letter-spacing:0;-webkit-print-color-adjust:exact;print-color-adjust:exact">${bars}</div>`;
+}
+
+/** Real Code 128B SVG a gun can read. Not decorative bars. */
+export function generateBarcodeSVG(code: string): string {
+  const raw = String(code || '').trim();
+  const pattern = encodeCode128Pattern(raw);
+  if (!raw || !pattern) return '';
   const module = 1;
   const quiet = 10;
   const barH = 48;

@@ -13,7 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { Printer } from 'lucide-react';
 import { printHtml } from '@/lib/printHtml';
-import { generateBarcodeSVG } from '@/lib/labelPrinter';
+import { generateBarcodeMarkup } from '@/lib/labelPrinter';
+import { firstProductBarcode, persistProductBarcode } from '@/lib/persistProductBarcode';
 import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 
@@ -62,8 +63,11 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
     const labelsHtml = products.flatMap(product => {
       const taxRate = product.taxRate || 0;
       const priceWithIVA = product.price * (1 + taxRate / 100);
-      const barcodeValue = String(product.barcode || product.sku || '').trim();
-      const barcodeSvg = barcodeValue ? generateBarcodeSVG(barcodeValue) : '';
+      const barcodeValue = firstProductBarcode(product.barcode, product.sku);
+      const barcodeSvg = barcodeValue ? generateBarcodeMarkup(barcodeValue, labelSize === 'small' ? 8 : 12) : '';
+      if (product.id && barcodeValue) {
+        void persistProductBarcode(product.id, barcodeValue);
+      }
       const labels: string[] = [];
 
       for (let c = 0; c < copies; c++) {
@@ -128,12 +132,9 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
             text-align: center;
             margin: 0.5mm 0;
           }
-          .barcode svg {
-            display: block;
-            width: 100%;
-            height: auto;
-            max-height: ${labelSize === 'small' ? '9mm' : '13mm'};
-            shape-rendering: crispEdges;
+          .barcode .nexor-barcode {
+            overflow: hidden;
+            max-width: 100%;
           }
           .barcode-text {
             font-family: "Courier New", monospace;
@@ -257,15 +258,17 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
               <div className="text-xs font-bold truncate">{products[0]?.name || t.common.product}</div>
               <div className="text-[10px] text-muted-foreground">{products[0]?.sku || 'SKU'}</div>
               {showBarcode && (
-                <div className="my-1">
+                <div className="my-1 overflow-hidden">
                   <div
-                    className="[&_svg]:mx-auto [&_svg]:h-8 [&_svg]:w-full"
                     dangerouslySetInnerHTML={{
-                      __html: generateBarcodeSVG(String(products[0]?.barcode || products[0]?.sku || '0').trim()),
+                      __html: generateBarcodeMarkup(
+                        firstProductBarcode(products[0]?.barcode, products[0]?.sku) || '0',
+                        8,
+                      ),
                     }}
                   />
                   <div className="text-[10px] font-mono">
-                    {products[0]?.barcode || products[0]?.sku || ''}
+                    {firstProductBarcode(products[0]?.barcode, products[0]?.sku)}
                   </div>
                 </div>
               )}

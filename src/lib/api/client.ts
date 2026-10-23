@@ -969,6 +969,11 @@ export const api = {
     update: async (id: string, data: any) => {
       return apiFetch<any>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) });
     },
+    setBarcode: (id: string, barcode: string) =>
+      apiFetch<any>(`/products/${encodeURIComponent(id)}/barcode`, {
+        method: 'PATCH',
+        body: JSON.stringify({ barcode: String(barcode || '').trim() }),
+      }),
     updateStock: (id: string, quantityChange: number) => {
       if (isElectronMode()) {
         return ipcQuery<any>(

@@ -29,6 +29,7 @@ import { Product, StockMovement } from '@/types/erp';
 import { api } from '@/lib/api/client';
 import { parseTaxRateOrNull } from '@/lib/taxUtils';
 import { saveProduct, getProducts as storageGetProducts, PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
+import { persistProductBarcode } from '@/lib/persistProductBarcode';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -941,7 +942,15 @@ export default function Inventory() {
       const isUpdate = Boolean(selectedProduct && selectedProduct.id === product.id);
       if (isUpdate) {
         const saved = await updateProduct(gridProduct, writeOpts);
-        const savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
+        const barcode = String(gridProduct.barcode || saved.barcode || '').trim();
+        if (barcode) {
+          await persistProductBarcode(saved.id || gridProduct.id, barcode);
+        }
+        const savedRow = {
+          ...saved,
+          barcode: barcode || saved.barcode,
+          branchId: saved.branchId || gridProduct.branchId,
+        };
         patchInventoryRow(savedRow);
         setSelectedProduct((prev) =>
           prev && prev.id === product.id ? { ...prev, ...saved } : prev,
@@ -952,7 +961,15 @@ export default function Inventory() {
         }
       } else {
         const saved = await addProduct(gridProduct, writeOpts);
-        const savedRow = { ...saved, branchId: saved.branchId || gridProduct.branchId };
+        const barcode = String(gridProduct.barcode || saved.barcode || '').trim();
+        if (barcode) {
+          await persistProductBarcode(saved.id, barcode);
+        }
+        const savedRow = {
+          ...saved,
+          barcode: barcode || saved.barcode,
+          branchId: saved.branchId || gridProduct.branchId,
+        };
         patchInventoryRow(savedRow);
         toast.success(t.productFormUi.productCreated);
         setSelectedProduct(null);
