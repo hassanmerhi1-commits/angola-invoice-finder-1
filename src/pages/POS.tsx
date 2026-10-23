@@ -236,6 +236,12 @@ export default function POS() {
     if (!clientPickerOpen) return;
     void refreshClients();
   }, [clientPickerOpen, refreshClients]);
+
+  useEffect(() => {
+    if (posMainTab !== 'cart' || checkoutOpen || receiptOpen) return;
+    const handle = window.setTimeout(() => searchInputRef.current?.focus(), 80);
+    return () => window.clearTimeout(handle);
+  }, [posMainTab, checkoutOpen, receiptOpen]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
 
@@ -338,19 +344,23 @@ export default function POS() {
     qtyInputRef.current?.select();
   }, []);
 
+  const focusSearch = useCallback(() => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, []);
+
   const addProductToCart = useCallback(
     (product: Product) => {
       const parsedQty = parseFloat(pendingQty);
-      const qty = Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : 1;
+      const qty = Number.isFinite(parsedQty) && parsedQty > 0 && parsedQty < 1000 ? parsedQty : 1;
       cart.addItem(toPricedProduct(product), qty);
       setSelectedCartProductId(product.id);
-      // Keep focus on the POS qty box for the next product instead of grabbing
-      // focus into the cart line (which would send Tab to the checkout button).
       toast.success(t.posUi.itemAdded.replace('{name}', product.name));
       setPendingQty('1');
-      setTimeout(focusQty, 0);
+      // Search, not qty: the gun types into the focused field. Qty ate the scan.
+      setTimeout(focusSearch, 0);
     },
-    [cart, pendingQty, focusQty, t.posUi, toPricedProduct],
+    [cart, pendingQty, focusSearch, t.posUi, toPricedProduct],
   );
 
   const handleSearchSubmit = useCallback(() => {
@@ -432,6 +442,7 @@ export default function POS() {
           description: `${t.posUi.code}: ${code}`,
         });
         setTimeout(() => setLastScannedBarcode(null), 2000);
+        setTimeout(focusSearch, 0);
         return;
       }
       const known = products.find((p) => {
@@ -450,7 +461,7 @@ export default function POS() {
         description: `${t.posUi.code}: ${code}`,
       });
     },
-    [products, cart, t.posUi, t.inventory.outOfStock, toPricedProduct],
+    [products, cart, t.posUi, t.inventory.outOfStock, toPricedProduct, focusSearch],
   );
 
   useBarcodeScanner({
@@ -523,11 +534,6 @@ export default function POS() {
     }
     handleClearCart();
   }, [searchTerm, clearSearch, handleClearCart]);
-
-  const focusSearch = useCallback(() => {
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
-  }, []);
 
   const shortcuts: KeyboardShortcut[] = useMemo(
     () => [
@@ -870,6 +876,12 @@ export default function POS() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
+                const raw = String(pendingQty || '').trim();
+                if (raw.replace(/\D/g, '').length >= 6) {
+                  handleBarcodeScan(raw);
+                  setPendingQty('1');
+                  return;
+                }
                 focusSearch();
               }
             }}

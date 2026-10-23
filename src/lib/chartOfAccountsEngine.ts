@@ -157,15 +157,15 @@ export function isBranchCaixaLeaf(account: Pick<Account, 'code' | 'is_header'>):
   return /^45\d+$/.test(code) && code !== CASH_PARENT_CODE && !account.is_header;
 }
 
-/** Sequential cash numbers: 451, 452, 453 … 459, then 4510, 4511. Fills gaps. */
+/** Same as suppliers: 8-digit leaf under 45 (45000001). Categories keep 451, 452. */
 export function nextTopLevelBranchCaixaCode(codes: string[]): string {
-  const used = new Set(codes.map((code) => String(code || '').trim()));
-  used.add(CASH_PARENT_CODE);
-  for (let n = 1; n <= 999; n += 1) {
-    const code = `${CASH_PARENT_CODE}${n}`;
-    if (!used.has(code)) return code;
-  }
-  return `${CASH_PARENT_CODE}999`;
+  return nextEntityAccountCode(
+    CASH_PARENT_CODE,
+    codes.map((code) => ({
+      code,
+      is_header: String(code).startsWith(CASH_PARENT_CODE) && String(code).length < 8 && code !== CASH_PARENT_CODE,
+    })),
+  );
 }
 
 export function nextExtraBranchCaixaCode(_parentCode: string, siblingCodes: string[]): string {

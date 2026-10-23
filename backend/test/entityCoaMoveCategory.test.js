@@ -118,7 +118,7 @@ describe('supplier COA category move', () => {
     assert.equal(String(code).length, 8);
   });
 
-  it('moves a cash leaf under a cash category with a compact child code', async () => {
+  it('moves a cash leaf under a cash category with an 8-digit leaf code', async () => {
     const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
     const parent45 = randomUUID();
     const catId = randomUUID();
@@ -156,7 +156,7 @@ describe('supplier COA category move', () => {
       });
       assert.equal(moved.moved, true);
       assert.equal(moved.oldCode, leafCode);
-      assert.equal(moved.newCode, `${catCode}1`);
+      assert.equal(moved.newCode, `${catCode}${String(1).padStart(8 - catCode.length, '0')}`);
     });
   });
 });

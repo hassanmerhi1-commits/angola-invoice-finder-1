@@ -47,8 +47,8 @@ import {
   defaultBranchCaixaName,
   isBranchCaixaLeaf,
   isReservedCashCode,
-  nextTopLevelBranchCaixaCode,
 } from '@/lib/chartOfAccountsEngine';
+import { nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
 
 // Category tabs
 // Angola PGC (novo com IVA) — no-dot numbering. Tabs map to PGC class/main codes:
@@ -99,34 +99,13 @@ const buildSuggestedChildCode = (
   parentCode: string,
   siblingCodes: string[],
   isHeader = false,
-  allCodes?: string[],
+  allAccounts: Array<{ code?: string | null; is_header?: boolean | null }> = [],
 ) => {
-  const entityParent = isEntityRegistryParent(parentCode);
-  const used = new Set((allCodes && allCodes.length ? allCodes : siblingCodes).map(String));
-  // Compact category slots (3211) must skip ANY existing code — including old 4-digit
-  // supplier leaves that used to occupy 3211 / 3212.
-  if (isHeader && entityParent) {
-    let n = 1;
-    while (used.has(`${parentCode}${n}`)) n += 1;
-    return `${parentCode}${n}`;
+  const usedCodes = (allAccounts.length ? allAccounts : siblingCodes.map((code) => ({ code }))).map((a) => String(a.code || ''));
+  if (isHeader) {
+    return nextCompactChildCode(parentCode, usedCodes);
   }
-  const nextIndex = siblingCodes.reduce((max, code) => {
-    if (!code.startsWith(parentCode) || code.length <= parentCode.length) return max;
-    // Under a customer/supplier registry parent, header sub-accounts (compact, e.g. 3211) and
-    // leaf entity accounts (8-digit, e.g. 32100001) are numbered independently — so only count
-    // the siblings of the same kind we're creating.
-    if (entityParent) {
-      const isLeaf = code.length === ENTITY_ACCOUNT_CODE_LENGTH;
-      if (isHeader ? isLeaf : !isLeaf) return max;
-    }
-    const segment = code.slice(parentCode.length);
-    const parsed = Number(segment);
-    return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
-  }, 0) + 1;
-  if (!isHeader && entityParent) {
-    return `${parentCode}${String(nextIndex).padStart(ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length, '0')}`;
-  }
-  return `${parentCode}${nextIndex}`;
+  return nextEntityAccountCode(parentCode, allAccounts.length ? allAccounts : siblingCodes.map((code) => ({ code })));
 };
 
 // Next free top-level (root / no-parent) account code. Increments by 1 from the highest
@@ -451,16 +430,22 @@ export default function ChartOfAccounts() {
         ...nextForm,
         parent_id: parent.id,
         level: parent.level + 1,
-        code: buildSuggestedChildCode(parent.code, children.map(c => c.code), nextForm.is_header, accounts.map((a) => a.code)),
+        code: buildSuggestedChildCode(parent.code, children.map(c => c.code), nextForm.is_header, accounts),
         account_type: parent.account_type,
         account_nature: parent.account_nature,
       };
     };
 
     const tabConfig = CATEGORY_TABS.find((tab) => tab.key === tabKey) || CATEGORY_TABS[CATEGORY_TABS.length - 1];
-    const selectedMatchesCurrentTab = selectedAccount
-      ? tabConfig.filter(selectedAccount) && tabKey !== 'caixa'
-      : false;
+    const selectedMatchesCurrentTab = !!(
+      selectedAccount
+      && tabConfig.filter(selectedAccount)
+      && (
+        selectedAccount.is_header
+        || isEntityRegistryParent(selectedAccount.code)
+        || selectedAccount.code === CASH_PARENT_CODE
+      )
+    );
 
     if (selectedAccount && selectedMatchesCurrentTab) {
       applyParentDefaults(selectedAccount);
@@ -485,23 +470,27 @@ export default function ChartOfAccounts() {
 
     if (tabKey === 'caixa' && !nextForm.is_header) {
       const cashParent = accounts.find((a) => a.code === CASH_PARENT_CODE && a.is_active !== false);
+      const selectedHeader = selectedAccount?.is_header && tabConfig.filter(selectedAccount) ? selectedAccount : null;
       const selectedCaixa = selectedAccount && isBranchCaixaLeaf(selectedAccount) ? selectedAccount : null;
-      if (cashParent) {
-        applyParentDefaults(cashParent);
+      const parent = selectedHeader
+        || accounts.find((a) => a.id === nextForm.parent_id)
+        || cashParent;
+      if (parent) {
+        if (parent.id !== nextForm.parent_id) applyParentDefaults(parent);
         const extras = selectedCaixa
           ? accounts.filter((a) => a.branch_id && a.branch_id === selectedCaixa.branch_id && isBranchCaixaLeaf(a))
           : [];
         nextForm = {
           ...nextForm,
-          code: nextTopLevelBranchCaixaCode(accounts.map((a) => a.code)),
-          branch_id: selectedCaixa?.branch_id || '',
+          code: nextEntityAccountCode(parent.code, accounts),
+          branch_id: selectedCaixa?.branch_id || nextForm.branch_id || '',
           name: selectedCaixa?.branch_id
             ? defaultBranchCaixaName(
               branches.find((b) => b.id === selectedCaixa.branch_id)?.name
                 || selectedCaixa.name.replace(/^caixa\s*-\s*/i, ''),
               extras.length,
             )
-            : '',
+            : nextForm.name,
         };
       }
     }
@@ -562,7 +551,7 @@ export default function ChartOfAccounts() {
       : [];
     setFormData({
       code: parent
-        ? buildSuggestedChildCode(parent.code, children.map((c) => c.code), true, accounts.map((a) => a.code))
+        ? buildSuggestedChildCode(parent.code, children.map((c) => c.code), true, accounts)
         : '',
       name: '',
       description: '',
@@ -786,7 +775,7 @@ export default function ChartOfAccounts() {
         branch_id: branchId,
         parent_id: cashParent.id,
         level: (cashParent.level || 1) + 1,
-        code: nextTopLevelBranchCaixaCode(accounts.map((a) => a.code)),
+        code: nextEntityAccountCode(cashParent.code, accounts),
         name: branch ? defaultBranchCaixaName(branch.name, existing.length) : prev.name,
         account_type: 'asset',
         account_nature: 'debit',
@@ -799,7 +788,7 @@ export default function ChartOfAccounts() {
     const parent = accounts.find(a => a.id === formData.parent_id);
     if (!parent) return buildSuggestedRootCode(accounts.filter(a => !a.parent_id).map(a => a.code));
     const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
-    return buildSuggestedChildCode(parent.code, children.map(c => c.code), true, accounts.map((a) => a.code));
+    return buildSuggestedChildCode(parent.code, children.map(c => c.code), true, accounts);
   })();
 
   // Open the inline "+" form pre-filled with the suggested compact header code (editable).
@@ -837,7 +826,7 @@ export default function ChartOfAccounts() {
         ...prev,
         parent_id: created.id,
         level: (created.level ?? 1) + 1,
-        code: buildSuggestedChildCode(created.code, [], prev.is_header, accounts.map((a) => a.code).concat(created.code)),
+        code: buildSuggestedChildCode(created.code, [], prev.is_header, [...accounts, created]),
         account_type: created.account_type,
         account_nature: created.account_nature,
       }));
@@ -879,26 +868,12 @@ export default function ChartOfAccounts() {
   const accountsById = useMemo(() => new Map(accounts.map((a) => [coaIdKey(a.id), a])), [accounts]);
   const categoryOptions = useMemo(() => {
     if (!selectedMovableLeaf) return [];
-    const code = String(selectedMovableLeaf.code || '');
-    if (code.startsWith('32')) {
-      return accounts
-        .filter((a) => a.is_active !== false && (
-          a.code === '321'
-          || (a.is_header && a.code.startsWith('321') && a.code.length > 3 && a.code.length < ENTITY_ACCOUNT_CODE_LENGTH)
-        ))
-        .sort((a, b) => compareAccountCodes(a.code, b.code));
-    }
-    if (code.startsWith('31')) {
-      return accounts
-        .filter((a) => a.is_active !== false && (
-          a.code === '311'
-          || (a.is_header && a.code.startsWith('311') && a.code.length > 3 && a.code.length < ENTITY_ACCOUNT_CODE_LENGTH)
-        ))
-        .sort((a, b) => compareAccountCodes(a.code, b.code));
-    }
+    const tabParents = (TAB_ACCOUNT_DEFAULTS[currentTabConfig.key]?.preferredParentCodes || []);
     return accounts
       .filter((a) => {
-        if (a.is_active === false || !a.is_header || a.id === selectedMovableLeaf.id) return false;
+        if (a.is_active === false || a.id === selectedMovableLeaf.id) return false;
+        if (tabParents.includes(a.code)) return true;
+        if (!a.is_header || a.code.length >= ENTITY_ACCOUNT_CODE_LENGTH) return false;
         if (!currentTabConfig.filter(a)) return false;
         return !ancestorIdsOf(a, accountsById).includes(selectedMovableLeaf.id);
       })
@@ -1249,7 +1224,7 @@ export default function ChartOfAccounts() {
                             ...prev,
                             parent_id: parentId,
                             level: parent.level + 1,
-                            code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header, accounts.map((a) => a.code)),
+                            code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header, accounts),
                             account_type: parent.account_type,
                             account_nature: parent.account_nature,
                           };
@@ -1282,7 +1257,7 @@ export default function ChartOfAccounts() {
                   return {
                     ...prev,
                     is_header: isHeader,
-                    code: buildSuggestedChildCode(parent.code, children.map(c => c.code), isHeader, accounts.map((a) => a.code)),
+                    code: buildSuggestedChildCode(parent.code, children.map(c => c.code), isHeader, accounts),
                   };
                 })} />
                 <Label htmlFor="is_header" className="text-sm">{t.chartOfAccountsUi.headerAccountLabel}</Label>

@@ -56,8 +56,8 @@ test('moveEntityLeafToParent recodes a cash leaf under a cash category', async (
 
   assert.equal(moved.moved, true);
   assert.equal(moved.oldCode, '452');
-  assert.equal(moved.newCode, '4581');
-  assert.ok(client.updates.some((q) => q.sql.includes('SET parent_id') && q.params[1] === '4581'));
+  assert.equal(moved.newCode, '45800001');
+  assert.ok(client.updates.some((q) => q.sql.includes('SET parent_id') && q.params[1] === '45800001'));
 });
 
 test('moveEntityLeafToParent refuses a supplier parent for a cash leaf only when it is a supplier leaf', async () => {

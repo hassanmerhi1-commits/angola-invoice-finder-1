@@ -514,16 +514,20 @@ async function accountHasJournalLines(client, row) {
  */
 async function recodeOccupyingLeaf(client, row) {
   const code = String(row.code || '').trim();
-  const defaultParent = code.startsWith(CLIENT_PARENT_CODE) ? CLIENT_PARENT_CODE : SUPPLIER_PARENT_CODE;
-  const group = code.startsWith(CLIENT_PARENT_CODE) ? CLIENT_GROUP_CODE : SUPPLIER_GROUP_CODE;
-  let parentCode = defaultParent;
+  let parentCode = code.startsWith(CLIENT_PARENT_CODE)
+    ? CLIENT_PARENT_CODE
+    : code.startsWith(SUPPLIER_PARENT_CODE)
+      ? SUPPLIER_PARENT_CODE
+      : code.startsWith('45')
+        ? '45'
+        : code.slice(0, Math.max(1, code.length - 1));
   if (row.parent_id) {
     const parent = await client.query(
       'SELECT code FROM chart_of_accounts WHERE id = $1 LIMIT 1',
       [row.parent_id],
     );
     const got = String(parent.rows?.[0]?.code || '').trim();
-    if (got && got.startsWith(group) && got !== group) parentCode = got;
+    if (got) parentCode = got;
   }
 
   const usedRows = await client.query(
@@ -575,7 +579,10 @@ async function claimChartAccountCode(client, opts) {
   const header = isTruthyFlag(row.is_header);
   const active = isActiveFlag(row.is_active);
   const nifLeaf = /NIF\s*:/i.test(String(row.description || ''));
-  const compactLeaf = isCompactEntityCode(row.code) && (!header || nifLeaf);
+  const compactLeaf = (
+    (isCompactEntityCode(row.code) && (!header || nifLeaf))
+    || (!header && String(row.code || '').length < ENTITY_ACCOUNT_CODE_LENGTH && String(row.code || '').trim() !== '45')
+  );
 
   if (wantHeader && compactLeaf) {
     const recoded = await recodeOccupyingLeaf(client, row);
@@ -598,7 +605,8 @@ async function claimChartAccountCode(client, opts) {
   const used = await client.query('SELECT code FROM chart_of_accounts');
   const parent = code.startsWith(SUPPLIER_PARENT_CODE) ? SUPPLIER_PARENT_CODE
     : code.startsWith(CLIENT_PARENT_CODE) ? CLIENT_PARENT_CODE
-      : code.slice(0, Math.max(1, code.length - 1));
+      : code.startsWith('45') ? '45'
+        : code.slice(0, Math.max(1, code.length - 1));
   const suggestion = nextCompactChildCode(parent, (used.rows || []).map((r) => r.code));
   const err = new Error(`A conta ${code} já existe (${row.name}). Tente ${suggestion}.`);
   err.code = 'CODE_EXISTS';
@@ -641,9 +649,9 @@ async function assertNotMovingIntoSelf(client, leafId, newParentId) {
 }
 
 /**
- * Move a leaf under a category parent. Supplier/client 8-digit leaves keep that
- * numbering. Other tabs get the next compact child (452 → 4511 under 451).
- * The COA id stays so journal lines stored by UUID remain valid.
+ * Move a leaf under a category parent. Same rule on every tab: 8-digit leaf
+ * (32110001 under 3211, 45100001 under 451). The COA id stays so journal
+ * lines stored by UUID remain valid.
  */
 async function moveEntityLeafToParent(client, opts) {
   const requestedParent = cleanText(opts?.parentCode);
@@ -719,9 +727,14 @@ async function moveEntityLeafToParent(client, opts) {
     `SELECT code FROM chart_of_accounts WHERE parent_id = $1 AND is_header IS NOT TRUE`,
     [parent.rows[0].id],
   );
-  const newCode = entityLeaf
-    ? nextEntityAccountCode(parentCode, (siblings.rows || []).map((r) => r.code))
-    : nextCompactChildCode(parentCode, usedCodes);
+  const headerCodes = usedCodes.filter(
+    (c) => c && c !== parentCode && String(c).startsWith(parentCode) && String(c).length < ENTITY_ACCOUNT_CODE_LENGTH,
+  );
+  const newCode = nextEntityAccountCode(
+    parentCode,
+    usedCodes.filter((c) => String(c).length === ENTITY_ACCOUNT_CODE_LENGTH),
+    headerCodes,
+  );
   if (usedCodes.includes(newCode)) {
     throw new Error(`Code ${newCode} is already in use`);
   }

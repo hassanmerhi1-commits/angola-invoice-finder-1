@@ -43,7 +43,7 @@ export function nextEntityAccountCode(parentCode: string, accounts: CodeLike[]):
   return `${parent}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
 }
 
-/** Next compact header under a parent (321 → 3211) that is not already used. */
+/** Next compact header under a parent (321 → 3211, 45 → 451) that is not already used. */
 export function nextCompactChildCode(parentCode: string, usedCodes: Array<string | { code?: string | null }>): string {
   const parent = String(parentCode || '').trim();
   const used = new Set(

@@ -7,6 +7,7 @@ const {
   resolveBranchCaixaGlAccountCode,
   linkOrphanBranchCaixaAccounts,
 } = require('./resolveBranchCaixaGlAccount');
+const { nextEntityAccountCode } = require('./entityCoaAccounts');
 
 const CAIXA_PARENT_CODE = '45';
 
@@ -15,15 +16,11 @@ function isBranchCaixaLeafCode(code) {
   return /^45\d+$/.test(value) && value !== CAIXA_PARENT_CODE;
 }
 
-/** Sequential cash numbers: 451, 452, 453 … 459, then 4510, 4511. Fills gaps. */
+/** Same as suppliers: 8-digit leaf under 45 (45000001), not 451/452 category slots. */
 function pickNextTopLevelCaixaCode(usedCodes) {
-  const used = new Set([...usedCodes].map((code) => String(code || '').trim()));
-  used.add(CAIXA_PARENT_CODE);
-  for (let n = 1; n <= 999; n += 1) {
-    const code = `${CAIXA_PARENT_CODE}${n}`;
-    if (!used.has(code)) return code;
-  }
-  throw new Error('No free 45x caixa sub-account codes');
+  const codes = [...usedCodes].map((code) => String(code || '').trim());
+  const headers = codes.filter((c) => c.startsWith(CAIXA_PARENT_CODE) && c !== CAIXA_PARENT_CODE && c.length < 8);
+  return nextEntityAccountCode(CAIXA_PARENT_CODE, codes, headers);
 }
 
 function pickNextExtraCaixaCode(_parentCode, usedCodes) {

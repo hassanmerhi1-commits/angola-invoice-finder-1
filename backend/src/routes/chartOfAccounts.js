@@ -495,9 +495,8 @@ module.exports = function(broadcastTable) {
         CLIENT_PARENT_CODE,
       } = require('../lib/entityCoaAccounts');
 
-      // A typed 3211 on a supplier/client leaf is the old compact number. New leaves
-      // are 8 digits (32100001). Categories keep the compact code.
-      if (!wantHeader && isCompactEntityCode(String(code))) {
+      // Leaves are always 8 digits (32100001, 45100001). Categories keep compact codes.
+      if (!wantHeader && String(code).trim().length < 8) {
         let parentCode = '';
         if (parent_id) {
           const parentRow = await db.query(
@@ -506,7 +505,7 @@ module.exports = function(broadcastTable) {
           );
           parentCode = String(parentRow.rows[0]?.code || '').trim();
         }
-        let resolvedParent = '';
+        let resolvedParent = parentCode;
         if (parentCode === '32') resolvedParent = SUPPLIER_PARENT_CODE;
         else if (parentCode === '31') resolvedParent = CLIENT_PARENT_CODE;
         else if (isSupplierCategoryParent(parentCode) || parentCode === CLIENT_PARENT_CODE || parentCode.startsWith('311')) {
@@ -515,6 +514,8 @@ module.exports = function(broadcastTable) {
           resolvedParent = CLIENT_PARENT_CODE;
         } else if (String(code).startsWith('321')) {
           resolvedParent = SUPPLIER_PARENT_CODE;
+        } else if (String(code).startsWith('45') && !parentCode) {
+          resolvedParent = '45';
         }
         if (resolvedParent) {
           const used = await db.query(
