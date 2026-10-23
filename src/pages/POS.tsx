@@ -418,26 +418,45 @@ export default function POS() {
 
   const handleBarcodeScan = useCallback(
     (barcode: string) => {
-      const product = findPosProductByCode(products, barcode);
+      const code = String(barcode || '').trim();
+      if (!code) return;
+      setSearchTerm('');
+      setPendingQty('1');
+      const product = findPosProductByCode(products, code);
       if (product) {
         cart.addItem(toPricedProduct(product));
         setSelectedCartProductId(product.id);
         setFocusCartQtyProductId(product.id);
-        setLastScannedBarcode(barcode);
+        setLastScannedBarcode(code);
         toast.success(t.posUi.itemAdded.replace('{name}', product.name), {
-          description: `${t.posUi.code}: ${barcode}`,
+          description: `${t.posUi.code}: ${code}`,
         });
         setTimeout(() => setLastScannedBarcode(null), 2000);
-      } else {
-        toast.error(t.posUi.productNotFound, {
-          description: `${t.posUi.code}: ${barcode}`,
-        });
+        return;
       }
+      const known = products.find((p) => {
+        const barcodeValue = String(p.barcode || '').trim().toLowerCase();
+        const skuValue = String(p.sku || '').trim().toLowerCase();
+        const q = code.toLowerCase();
+        return (barcodeValue && barcodeValue === q) || (skuValue && skuValue === q);
+      });
+      if (known && (Number(known.stock) || 0) <= 0) {
+        toast.error(t.inventory.outOfStock, {
+          description: `${known.name} · ${t.posUi.code}: ${code}`,
+        });
+        return;
+      }
+      toast.error(t.posUi.productNotFound, {
+        description: `${t.posUi.code}: ${code}`,
+      });
     },
-    [products, cart, t.posUi, toPricedProduct],
+    [products, cart, t.posUi, t.inventory.outOfStock, toPricedProduct],
   );
 
-  useBarcodeScanner({ onScan: handleBarcodeScan });
+  useBarcodeScanner({
+    onScan: handleBarcodeScan,
+    enabled: !checkoutOpen && !receiptOpen && !payExpenseOpen && !endOfDayOpen && !clientPickerOpen && posMainTab === 'cart',
+  });
 
   const handleCheckout = useCallback(() => {
     if (completingSaleRef.current || completingSale) return;

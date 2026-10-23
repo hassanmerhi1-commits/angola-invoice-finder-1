@@ -79,6 +79,20 @@ export function getPosNavigableSearchResults(
     .slice(0, POS_SEARCH_MAX_RESULTS);
 }
 
+function productCodeEquals(product: Product, term: string): boolean {
+  const q = term.trim();
+  if (!q) return false;
+  const lower = q.toLowerCase();
+  const barcode = String(product.barcode || '').trim();
+  const sku = String(product.sku || '').trim();
+  if (barcode && (barcode === q || barcode.toLowerCase() === lower)) return true;
+  if (sku && sku.toLowerCase() === lower) return true;
+  const qDigits = digitProductCodeForMatch(q);
+  if (qDigits.length < 6) return false;
+  return digitProductCodeForMatch(sku) === qDigits
+    || digitProductCodeForMatch(barcode) === qDigits;
+}
+
 /** Find a single product by barcode, SKU, or unique name match (POS quick-add). */
 export function findPosProductByCode(products: Product[], term: string): Product | null {
   const q = term.trim();
@@ -87,14 +101,10 @@ export function findPosProductByCode(products: Product[], term: string): Product
   const lower = q.toLowerCase();
   const available = products.filter((p) => p.isActive && (Number(p.stock) || 0) > 0);
 
-  const qDigits = digitProductCodeForMatch(q);
-  const exact = available.find((p) => {
-    if (p.barcode && p.barcode === q) return true;
-    if (p.sku.toLowerCase() === lower) return true;
-    if (qDigits.length < 6) return false;
-    return digitProductCodeForMatch(p.sku) === qDigits
-      || digitProductCodeForMatch(p.barcode) === qDigits;
-  });
+  const exactAny = products.find((p) => productCodeEquals(p, q));
+  if (exactAny && exactAny.isActive && (Number(exactAny.stock) || 0) > 0) return exactAny;
+
+  const exact = available.find((p) => productCodeEquals(p, q));
   if (exact) return exact;
 
   const nameExact = available.find((p) => p.name.toLowerCase() === lower);
