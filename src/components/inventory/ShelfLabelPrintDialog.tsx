@@ -132,9 +132,19 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
             text-align: center;
             margin: 0.5mm 0;
           }
-          .barcode .nexor-barcode {
-            overflow: hidden;
-            max-width: 100%;
+          .barcode img.nexor-barcode {
+            display: block;
+            width: 100%;
+            height: ${labelSize === 'small' ? '9mm' : '13mm'};
+            object-fit: fill;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+          }
+          @media print {
+            .barcode img.nexor-barcode {
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
           }
           .barcode-text {
             font-family: "Courier New", monospace;

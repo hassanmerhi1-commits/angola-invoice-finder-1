@@ -35,11 +35,43 @@ function generateEAN13CheckDigit(code: string): string {
   return code + checkDigit;
 }
 
+const CODE128_START_B = 104;
+const CODE128_START_C = 105;
+const CODE128_CODE_B = 100;
+const CODE128_STOP = 106;
+
+function encodeCode128Values(code: string): number[] {
+  const raw = String(code || '');
+  const values: number[] = [];
+  const digitsOnly = raw.length > 0 && /^[0-9]+$/.test(raw);
+
+  if (digitsOnly && raw.length >= 2) {
+    values.push(CODE128_START_C);
+    let i = 0;
+    const pairCount = Math.floor(raw.length / 2);
+    for (let p = 0; p < pairCount; p += 1, i += 2) {
+      values.push(Number(raw.slice(i, i + 2)));
+    }
+    if (i < raw.length) {
+      values.push(CODE128_CODE_B);
+      values.push(raw.charCodeAt(i) - 32);
+    }
+  } else {
+    values.push(CODE128_START_B);
+    for (let i = 0; i < raw.length; i++) {
+      const charCode = raw.charCodeAt(i) - 32;
+      if (charCode >= 0 && charCode < 95) values.push(charCode);
+    }
+  }
+
+  let checksum = values[0] || 0;
+  for (let i = 1; i < values.length; i++) checksum += values[i] * i;
+  values.push(checksum % 103);
+  values.push(CODE128_STOP);
+  return values;
+}
+
 function encodeCode128Pattern(code: string): string {
-  // Simple Code 128B encoding
-  const CODE128_START_B = 104;
-  const CODE128_STOP = 106;
-  
   const CODE128_PATTERNS: Record<number, string> = {
     0: '11011001100', 1: '11001101100', 2: '11001100110', 3: '10010011000',
     4: '10010001100', 5: '10001001100', 6: '10011001000', 7: '10011000100',
@@ -70,44 +102,77 @@ function encodeCode128Pattern(code: string): string {
     104: '11010010000', 105: '11010011100', 106: '1100011101011',
   };
   
-  // Encode the string
-  const values: number[] = [CODE128_START_B];
-  let checksum = CODE128_START_B;
-  
-  for (let i = 0; i < code.length; i++) {
-    const charCode = code.charCodeAt(i) - 32;
-    if (charCode >= 0 && charCode < 95) {
-      values.push(charCode);
-      checksum += charCode * (i + 1);
-    }
-  }
-  
-  values.push(checksum % 103);
-  values.push(CODE128_STOP);
-  
-  // Generate pattern
+  const values = encodeCode128Values(code);
   let pattern = '';
   for (const value of values) {
     pattern += CODE128_PATTERNS[value] || '';
   }
-  
   return pattern;
 }
 
-/** Solid CSS bars — thermal/browser print smears SVG. */
-export function generateBarcodeMarkup(code: string, heightMm = 12): string {
+function writeU32(buf: Uint8Array, offset: number, value: number) {
+  buf[offset] = value & 255;
+  buf[offset + 1] = (value >> 8) & 255;
+  buf[offset + 2] = (value >> 16) & 255;
+  buf[offset + 3] = (value >> 24) & 255;
+}
+
+function writeU16(buf: Uint8Array, offset: number, value: number) {
+  buf[offset] = value & 255;
+  buf[offset + 1] = (value >> 8) & 255;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/** Printers always ink an image. CSS backgrounds on empty spans often print blank. */
+export function barcodeImageDataUri(code: string, modulePx = 3, barHeight = 80): string {
   const raw = String(code || '').trim();
   const pattern = encodeCode128Pattern(raw);
   if (!raw || !pattern) return '';
-  const moduleMm = 0.35;
   const quiet = 10;
   const bits = `${'0'.repeat(quiet)}${pattern}${'0'.repeat(quiet)}`;
-  const bars = [...bits]
-    .map((bit) =>
-      `<i style="display:inline-block;width:${moduleMm}mm;height:${heightMm}mm;background:${bit === '1' ? '#000' : '#fff'};margin:0;padding:0;border:0"></i>`,
-    )
-    .join('');
-  return `<div class="nexor-barcode" style="display:block;white-space:nowrap;font-size:0;line-height:0;letter-spacing:0;-webkit-print-color-adjust:exact;print-color-adjust:exact">${bars}</div>`;
+  const width = bits.length * modulePx;
+  const height = barHeight;
+  const rowSize = Math.ceil((width * 3) / 4) * 4;
+  const pixelSize = rowSize * height;
+  const buf = new Uint8Array(54 + pixelSize);
+  buf[0] = 0x42;
+  buf[1] = 0x4d;
+  writeU32(buf, 2, buf.length);
+  writeU32(buf, 10, 54);
+  writeU32(buf, 14, 40);
+  writeU32(buf, 18, width);
+  writeU32(buf, 22, height);
+  writeU16(buf, 26, 1);
+  writeU16(buf, 28, 24);
+  writeU32(buf, 34, pixelSize);
+  for (let y = 0; y < height; y++) {
+    const rowOff = 54 + y * rowSize;
+    for (let x = 0; x < width; x++) {
+      const black = bits[Math.floor(x / modulePx)] === '1';
+      const off = rowOff + x * 3;
+      const v = black ? 0 : 255;
+      buf[off] = v;
+      buf[off + 1] = v;
+      buf[off + 2] = v;
+    }
+  }
+  return `data:image/bmp;base64,${bytesToBase64(buf)}`;
+}
+
+/** Black-and-white barcode image a gun can read after print. */
+export function generateBarcodeMarkup(code: string, heightMm = 12): string {
+  const raw = String(code || '').trim();
+  const uri = barcodeImageDataUri(raw);
+  if (!raw || !uri) return '';
+  return `<img class="nexor-barcode" alt="" src="${uri}" style="display:block;width:100%;height:${heightMm}mm;object-fit:fill;image-rendering:pixelated;image-rendering:crisp-edges"/>`;
 }
 
 /** Real Code 128B SVG a gun can read. Not decorative bars. */
