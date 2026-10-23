@@ -31,6 +31,7 @@ const {
   isUniqueSkuBranchError,
   loadMainBranchIds,
   sqlMovementSkuKey,
+  findBarcodeForSku,
 } = require('./lib/productSkuResolve');
 const { randomUUID } = require('crypto');
 const { normalizeSqlDate } = require('./lib/dateSql');
@@ -1208,7 +1209,7 @@ async function resolveOrCloneProductForBranch(client, src, branchId, options = {
         cloneId,
         src.name,
         sku || src.sku || '',
-        src.barcode || '',
+        src.barcode || (await findBarcodeForSku(sku || src.sku, client)) || '',
         src.category || 'GERAL',
         parseFloat(src.price) || 0,
         // Copy the whole tier ladder — a clone that only carried Price 1 showed a different

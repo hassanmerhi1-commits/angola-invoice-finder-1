@@ -92,20 +92,24 @@ export function generateBarcodeSVG(code: string): string {
     pattern += CODE128_PATTERNS[value] || '';
   }
   
-  // Generate SVG
-  const barWidth = 2;
-  const height = 40;
-  let x = 10;
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pattern.length * barWidth + 20}" height="${height + 20}">`;
-  svg += `<rect width="100%" height="100%" fill="white"/>`;
-  
+  // Integer modules + viewBox so print/CSS cannot smear the bars.
+  const module = 1;
+  const quiet = 10;
+  const barH = 48;
+  const padY = 4;
+  const width = quiet * 2 + pattern.length * module;
+  const height = barH + padY * 2;
+  let x = quiet;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges">`;
+  svg += `<rect width="${width}" height="${height}" fill="white"/>`;
+
   for (let i = 0; i < pattern.length; i++) {
     if (pattern[i] === '1') {
-      svg += `<rect x="${x}" y="5" width="${barWidth}" height="${height}" fill="black"/>`;
+      svg += `<rect x="${x}" y="${padY}" width="${module}" height="${barH}" fill="black"/>`;
     }
-    x += barWidth;
+    x += module;
   }
-  
+
   svg += `</svg>`;
   return svg;
 }

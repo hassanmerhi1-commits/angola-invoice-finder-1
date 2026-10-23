@@ -772,7 +772,10 @@ export function ProductDetailDialog({
         : (formData.id || `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`),
       name: formData.name,
       sku: skuTrim,
-      barcode: formData.barcode || formData.barcodes[0]?.barPrice || undefined,
+      barcode:
+        [formData.barcode, ...(formData.barcodes || []).map((bc) => bc.barPrice)]
+          .map((value) => String(value || '').trim())
+          .find(Boolean) || undefined,
       category: resolveProductCategoryName(formData.category, activeCategories, language),
       price: formData.price,
       price2: formData.price2 || undefined,

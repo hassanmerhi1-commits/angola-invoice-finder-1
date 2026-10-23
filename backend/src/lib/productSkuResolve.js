@@ -4,7 +4,8 @@
  */
 
 const db = require('../db');
-const { headOfficeBranchWhere, orderByActiveDesc, emptyBranchIdClause } = require('./sqlDialect');
+const { headOfficeBranchWhere, orderByActiveDesc, emptyBranchIdClause, coalesceActiveNotZero } = require('./sqlDialect');
+const { trimProductBarcode, mergeProductBarcode } = require('./productBarcode');
 const { branchKeysEqual, normalizeBranchIdKey } = require('./branchIdMatch');
 
 let mainBranchIdsCache = null;
@@ -222,6 +223,87 @@ async function resolveProductIdsForMovementSku(queryable, sku, extraId) {
   return Array.from(ids);
 }
 
+async function findBarcodeForSku(sku, clientOrDb) {
+  const q = clientOrDb || db;
+  const skuKey = canonicalSkuString(sku).toLowerCase();
+  if (!skuKey) return '';
+  const result = await q.query(
+    `SELECT barcode
+     FROM products
+     WHERE ${sqlMovementSkuKey('products')} = $1
+       AND TRIM(COALESCE(barcode, '')) != ''
+     ORDER BY updated_at DESC, created_at DESC
+     LIMIT 1`,
+    [skuKey],
+  );
+  return trimProductBarcode(result.rows[0]?.barcode);
+}
+
+/** One barcode per SKU — write it onto every sibling row (filial clones included). */
+async function copyBarcodeToSkuSiblings(sku, barcode, exceptId, clientOrDb) {
+  const q = clientOrDb || db;
+  const code = trimProductBarcode(barcode);
+  const skuKey = canonicalSkuString(sku).toLowerCase();
+  if (!code || !skuKey) return;
+  const active = coalesceActiveNotZero(db, 'is_active');
+  const skuMatch = `${sqlMovementSkuKey('products')} = $2`;
+  if (exceptId) {
+    await q.query(
+      `UPDATE products
+       SET barcode = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE ${active}
+         AND ${skuMatch}
+         AND id <> $3
+         AND TRIM(COALESCE(barcode, '')) <> $1`,
+      [code, skuKey, exceptId],
+    );
+    return;
+  }
+  await q.query(
+    `UPDATE products
+     SET barcode = $1, updated_at = CURRENT_TIMESTAMP
+     WHERE ${active}
+       AND ${skuMatch}
+       AND TRIM(COALESCE(barcode, '')) <> $1`,
+    [code, skuKey],
+  );
+}
+
+async function fillMissingProductBarcodes(rows, clientOrDb) {
+  const q = clientOrDb || db;
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const missingKeys = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (trimProductBarcode(row.barcode)) continue;
+    const key = canonicalSkuString(row.sku).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    missingKeys.push(key);
+  }
+  if (missingKeys.length === 0) return rows;
+  const placeholders = missingKeys.map((_, i) => `$${i + 1}`).join(', ');
+  const found = await q.query(
+    `SELECT ${sqlMovementSkuKey('products')} AS sku_key, barcode
+     FROM products
+     WHERE TRIM(COALESCE(barcode, '')) != ''
+       AND ${sqlMovementSkuKey('products')} IN (${placeholders})`,
+    missingKeys,
+  );
+  const map = new Map();
+  for (const row of found.rows || []) {
+    const k = String(row.sku_key || '').trim();
+    const code = trimProductBarcode(row.barcode);
+    if (k && code && !map.has(k)) map.set(k, code);
+  }
+  if (map.size === 0) return rows;
+  return rows.map((row) => {
+    if (trimProductBarcode(row.barcode)) return row;
+    const code = map.get(canonicalSkuString(row.sku).toLowerCase());
+    return code ? { ...row, barcode: code } : row;
+  });
+}
+
 module.exports = {
   loadMainBranchIds,
   isCatalogBranchScope,
@@ -233,4 +315,9 @@ module.exports = {
   sqlMovementSkuKey,
   resolveProductIdsForMovementSku,
   expandProductIdVariants,
+  trimProductBarcode,
+  mergeProductBarcode,
+  findBarcodeForSku,
+  copyBarcodeToSkuSiblings,
+  fillMissingProductBarcodes,
 };

@@ -31,6 +31,10 @@ const {
   canonicalSkuString,
   sqlMovementSkuKey,
   sqlCanonicalSkuText,
+  mergeProductBarcode,
+  findBarcodeForSku,
+  copyBarcodeToSkuSiblings,
+  fillMissingProductBarcodes,
 } = require('../lib/productSkuResolve');
 const { listStockBySku } = require('../lib/stockBySku');
 const {
@@ -222,6 +226,7 @@ function dedupeProductsBySku(rows, branchId, mainBranchIds = []) {
       stock: scopedBranch
         ? Number(pick.stock) || 0
         : Math.max(Number(pick.stock) || 0, Number(other.stock) || 0),
+      barcode: String(pick.barcode || '').trim() || other.barcode || '',
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     });
@@ -243,6 +248,7 @@ function dedupeProductsBySku(rows, branchId, mainBranchIds = []) {
       stock: scopedBranch
         ? Number(pick.stock) || 0
         : Math.max(Number(pick.stock) || 0, Number(other.stock) || 0),
+      barcode: String(pick.barcode || '').trim() || other.barcode || '',
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     };
@@ -697,6 +703,7 @@ function mergeConsolidatedSkuRow(bySku, row, mainBranchIds) {
   const other = pick === row ? prev : row;
   bySku.set(key, {
     ...pick,
+    barcode: String(pick.barcode || '').trim() || other.barcode || '',
     supplier_id: pick.supplier_id || other.supplier_id || null,
     supplier_name: pick.supplier_name || other.supplier_name || null,
     stock: (Number(prev.stock) || 0) + qty,
@@ -813,6 +820,7 @@ async function listInventoryConsolidatedByBranches() {
     bySku.set(key, {
       ...pick,
       stock: stockBySku.has(key) ? stockBySku.get(key) : 0,
+      barcode: String(pick.barcode || '').trim() || other.barcode || '',
       supplier_id: pick.supplier_id || other.supplier_id || null,
       supplier_name: pick.supplier_name || other.supplier_name || null,
     });
@@ -1249,6 +1257,7 @@ async function loadInventoryGridBaseRows(branchId, consolidated, { repair = fals
   if (supplierBySku) {
     rows = enrichRowsWithPurchaseSuppliers(rows, supplierBySku);
   }
+  rows = await fillMissingProductBarcodes(rows);
   return { rows: sortRowsBySkuAsc(rows), cacheable };
 }
 
@@ -1267,7 +1276,7 @@ async function listProductsForBranch(branchKey, lightList) {
             COALESCE(bp.id, p.id) AS id,
             COALESCE(bp.name, p.name) AS name,
             COALESCE(bp.sku, p.sku) AS sku,
-            COALESCE(bp.barcode, p.barcode) AS barcode,
+            COALESCE(NULLIF(TRIM(bp.barcode), ''), NULLIF(TRIM(p.barcode), '')) AS barcode,
             COALESCE(bp.category, p.category) AS category,
             -- The branch row owns its price; the master only fills a blank (0) tier. Taking a
             -- MAX here showed a price that belonged to neither row once the two diverged.
@@ -1349,6 +1358,7 @@ async function listProductsForBranch(branchKey, lightList) {
     rows = dedupeProductsBySku(rows, branchKeyStr, mainBranchIds);
   }
   }
+  rows = await fillMissingProductBarcodes(rows);
   const { applyBranchReserves } = require('../lib/softReserve');
   const withHolds = await applyBranchReserves(db, rows, branchKeyStr);
   return enrichRowsWithSellingPrices(withHolds);
@@ -1944,7 +1954,9 @@ module.exports = function(broadcastTableRaw) {
 
       const result = await db.query(query, params);
       const mainBranchIds = await loadMainBranchIds();
-      const rows = dedupeProductsBySku(result.rows, undefined, mainBranchIds);
+      const rows = await fillMissingProductBarcodes(
+        dedupeProductsBySku(result.rows, undefined, mainBranchIds),
+      );
       if (process.env.NODE_ENV !== 'production' && rows.length > 0) {
         console.log(`[PRODUCTS GET] branchId=ALL light=${lightList} rows=${rows.length}`);
       }
@@ -2036,6 +2048,14 @@ module.exports = function(broadcastTableRaw) {
       } catch (enrichErr) {
         console.warn('[PRODUCTS GET/:id] supplier enrichment skipped:', enrichErr.message);
       }
+      try {
+        if (!String(row.barcode || '').trim()) {
+          const siblingBarcode = await findBarcodeForSku(row.sku);
+          if (siblingBarcode) row = { ...row, barcode: siblingBarcode };
+        }
+      } catch (barcodeErr) {
+        console.warn('[PRODUCTS GET/:id] barcode enrichment skipped:', barcodeErr.message);
+      }
       // The inventory grid fills a blank (0) Price 1 from the SKU-wide selling-price hint, so
       // the detail dialog has to apply the *same* fill or the row opens showing a different
       // number than the list it was opened from.
@@ -2110,11 +2130,12 @@ module.exports = function(broadcastTableRaw) {
           || req.body?.force_vat_change === true;
         let nextTaxRate = hasExplicitTax ? parsedTax : null;
         const beforeRes = await db.query(
-          `SELECT name, sku, price, cost, stock, tax_rate, vat_override, category, branch_id, is_active
+          `SELECT name, sku, barcode, price, cost, stock, tax_rate, vat_override, category, branch_id, is_active
            FROM products WHERE id = $1 LIMIT 1`,
           [existing.id],
         );
         const beforeRow = beforeRes.rows[0] || null;
+        const nextBarcode = mergeProductBarcode(barcode, beforeRow?.barcode);
         if (
           nextTaxRate != null
           && beforeRow
@@ -2156,7 +2177,7 @@ module.exports = function(broadcastTableRaw) {
                RETURNING *`,
           nextTaxRate != null
             ? [
-                name, canonicalSku, barcode, category, price,
+                name, canonicalSku, nextBarcode, category, price,
                 Number(price2) > 0 ? Number(price2) : null,
                 Number(price3) > 0 ? Number(price3) : null,
                 Number(price4) > 0 ? Number(price4) : null,
@@ -2166,7 +2187,7 @@ module.exports = function(broadcastTableRaw) {
                 existing.id,
               ]
             : [
-                name, canonicalSku, barcode, category, price,
+                name, canonicalSku, nextBarcode, category, price,
                 Number(price2) > 0 ? Number(price2) : null,
                 Number(price3) > 0 ? Number(price3) : null,
                 Number(price4) > 0 ? Number(price4) : null,
@@ -2198,6 +2219,9 @@ module.exports = function(broadcastTableRaw) {
         // No implicit lock: only an explicit vatOverride from the product form may set it.
         // Auto-locking every row that merely *has* a non-default rate opted it out of all
         // future HQ IVA changes, which is why some branches were stuck on the old rate.
+        if (nextBarcode) {
+          try { await copyBarcodeToSkuSiblings(canonicalSku, nextBarcode, existing.id); } catch (_) { /* optional */ }
+        }
         invalidateInventoryGridResultCache();
         await broadcastTable('products');
         const afterRow = result.rows[0];
@@ -2243,6 +2267,7 @@ module.exports = function(broadcastTableRaw) {
       const resolvedTaxRate = parsedTax;
 
       const id = crypto.randomUUID();
+      const createBarcode = mergeProductBarcode(barcode, await findBarcodeForSku(skuTrim));
       let result;
       try {
         // SQLite expands $10 four times from ONE param — do not pass c,c,c,c in the array.
@@ -2251,7 +2276,7 @@ module.exports = function(broadcastTableRaw) {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10, $10, $11, $12, $13, $14, $15, $16, $17)
            RETURNING *`,
           [
-            id, name, skuTrim, barcode, category, price, price2 || 0, price3 || 0, price4 || 0,
+            id, name, skuTrim, createBarcode, category, price, price2 || 0, price3 || 0, price4 || 0,
             c,
             stock || 0, unit || 'un', resolvedTaxRate, storedBranchId, activeValue,
             sanitizeUuid(supplierId), supplierName || null,
@@ -2285,10 +2310,11 @@ module.exports = function(broadcastTableRaw) {
         const conflict = await findProductBySkuAndBranch(db, skuTrim, resolvedBranchId);
         if (!conflict?.id) throw insertErr;
         const conflictTaxRes = await db.query(
-          `SELECT tax_rate, vat_override FROM products WHERE id = $1 LIMIT 1`,
+          `SELECT tax_rate, vat_override, barcode FROM products WHERE id = $1 LIMIT 1`,
           [conflict.id],
         );
         const conflictRow = conflictTaxRes.rows?.[0] || null;
+        const conflictBarcode = mergeProductBarcode(createBarcode, conflictRow?.barcode);
         const vatOverrideBodyConflict = req.body?.vatOverride ?? req.body?.vat_override;
         const clientSetsOverrideConflict = isTruthyFlag(vatOverrideBodyConflict);
         const forceVatChangeConflict =
@@ -2337,7 +2363,7 @@ module.exports = function(broadcastTableRaw) {
                RETURNING *`,
           writeConflictTax
             ? [
-                name, skuTrim, barcode, category, price,
+                name, skuTrim, conflictBarcode, category, price,
                 Number(price2) > 0 ? Number(price2) : null,
                 Number(price3) > 0 ? Number(price3) : null,
                 Number(price4) > 0 ? Number(price4) : null,
@@ -2347,7 +2373,7 @@ module.exports = function(broadcastTableRaw) {
                 conflict.id,
               ]
             : [
-                name, skuTrim, barcode, category, price,
+                name, skuTrim, conflictBarcode, category, price,
                 Number(price2) > 0 ? Number(price2) : null,
                 Number(price3) > 0 ? Number(price3) : null,
                 Number(price4) > 0 ? Number(price4) : null,
@@ -2358,6 +2384,13 @@ module.exports = function(broadcastTableRaw) {
               ],
         );
         // Preserving the stored IVA on a SKU conflict must not lock the row (see above).
+        if (conflictBarcode) {
+          try { await copyBarcodeToSkuSiblings(skuTrim, conflictBarcode, conflict.id); } catch (_) { /* optional */ }
+        }
+      }
+
+      if (createBarcode && result?.rows?.[0]?.id) {
+        try { await copyBarcodeToSkuSiblings(skuTrim, createBarcode, result.rows[0].id); } catch (_) { /* optional */ }
       }
 
       invalidateInventoryGridResultCache();
@@ -2416,7 +2449,7 @@ module.exports = function(broadcastTableRaw) {
       } = req.body;
       const mergedName = name != null && name !== '' ? name : existing.name;
       const mergedSku = sku != null && sku !== '' ? sku : existing.sku;
-      const mergedBarcode = barcode != null ? barcode : existing.barcode;
+      const mergedBarcode = mergeProductBarcode(barcode, existing.barcode);
       const mergedCategory = category != null && category !== '' ? category : existing.category;
       const mergedPrice = price != null && price !== '' ? price : existing.price;
       // Price tiers 2-4: only overwrite when a positive value is supplied. A 0/blank means
@@ -2516,6 +2549,9 @@ module.exports = function(broadcastTableRaw) {
       const overrideBranchOptOuts = propagatePrices || callerIsHq || productIsHq;
 
       if (skuKey) {
+        if (mergedBarcode) {
+          try { await copyBarcodeToSkuSiblings(skuKey, mergedBarcode, id); } catch (_) { /* optional */ }
+        }
         const prevTax = Number(existing.tax_rate);
         // Use the rate actually written (after preserve guard) — never cascade a rejected 5%.
         const nextTax = Number(mergedTaxRate);
@@ -2763,21 +2799,23 @@ module.exports = function(broadcastTableRaw) {
             const hasExplicitIva =
               rawIva !== undefined && rawIva !== null && String(rawIva).trim() !== '';
             let importTaxRate = hasExplicitIva ? normalizeTaxRate(rawIva) : null;
-            if (hasExplicitIva && existingId && importTaxRate != null) {
-              const existingRow = await db.query(
-                `SELECT tax_rate, vat_override FROM products WHERE id = $1 LIMIT 1`,
-                [existingId],
-              );
-              const er = existingRow.rows?.[0];
-              if (
-                er
-                && shouldPreserveExistingTaxRate(er, importTaxRate, {
-                  // Explicit IVA column in the sheet = intentional change.
-                  clientSetsOverride: true,
-                })
-              ) {
-                importTaxRate = null; // keep stored IVA
-              }
+            const existingRow = await db.query(
+              `SELECT tax_rate, vat_override, barcode FROM products WHERE id = $1 LIMIT 1`,
+              [existingId],
+            );
+            const er = existingRow.rows?.[0];
+            const importBarcode = mergeProductBarcode(p.barcode, er?.barcode);
+            if (
+              hasExplicitIva
+              && existingId
+              && importTaxRate != null
+              && er
+              && shouldPreserveExistingTaxRate(er, importTaxRate, {
+                // Explicit IVA column in the sheet = intentional change.
+                clientSetsOverride: true,
+              })
+            ) {
+              importTaxRate = null; // keep stored IVA
             }
             const upd = importTaxRate != null
               ? await db.query(
@@ -2791,7 +2829,7 @@ module.exports = function(broadcastTableRaw) {
                   [
                     name,
                     sku,
-                    p.barcode || '',
+                    importBarcode,
                     p.category || 'GERAL',
                     Number(p.price) || 0,
                     cost,
@@ -2816,7 +2854,7 @@ module.exports = function(broadcastTableRaw) {
                   [
                     name,
                     sku,
-                    p.barcode || '',
+                    importBarcode,
                     p.category || 'GERAL',
                     Number(p.price) || 0,
                     cost,
@@ -2829,7 +2867,12 @@ module.exports = function(broadcastTableRaw) {
                     existingId,
                   ],
                 );
-            if (upd.rowCount > 0) updated++;
+            if (upd.rowCount > 0) {
+              updated++;
+              if (importBarcode) {
+                try { await copyBarcodeToSkuSiblings(sku, importBarcode, existingId); } catch (_) { /* optional */ }
+              }
+            }
             // An imported IVA column is not a per-branch lock — see PUT/POST above.
           } else {
             const { parseTaxRateOrNull, isAllowedVatRate } = require('../taxDefaults');
@@ -2844,6 +2887,7 @@ module.exports = function(broadcastTableRaw) {
               continue;
             }
             const id = crypto.randomUUID();
+            const insertBarcode = mergeProductBarcode(p.barcode, await findBarcodeForSku(sku));
             const ins = await db.query(
               `INSERT INTO products (id, name, sku, barcode, category, price, price2, price3, price4, cost, first_cost, last_cost, avg_cost, stock, unit, tax_rate, branch_id, is_active, supplier_id, supplier_name)
                VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 0, $7, $7, $7, $7, $8, $9, $10, $11, $12, $13, $14)`,
@@ -2851,7 +2895,7 @@ module.exports = function(broadcastTableRaw) {
                 id,
                 name,
                 sku,
-                p.barcode || '',
+                insertBarcode,
                 p.category || 'GERAL',
                 Number(p.price) || 0,
                 cost,

@@ -131,7 +131,9 @@ export function ShelfLabelPrintDialog({ open, onOpenChange, products }: ShelfLab
           .barcode svg {
             display: block;
             width: 100%;
-            height: ${labelSize === 'small' ? '8mm' : '11mm'};
+            height: auto;
+            max-height: ${labelSize === 'small' ? '9mm' : '13mm'};
+            shape-rendering: crispEdges;
           }
           .barcode-text {
             font-family: "Courier New", monospace;

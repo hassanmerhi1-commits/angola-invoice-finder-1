@@ -42,7 +42,7 @@ function shouldIgnoreTarget(target: EventTarget | null): boolean {
 export function useBarcodeScanner({
   onScan,
   minLength = 4,
-  maxDelay = 200,
+  maxDelay = 400,
   enabled = true,
 }: UseBarcodeScannerOptions) {
   const onScanRef = useRef(onScan);

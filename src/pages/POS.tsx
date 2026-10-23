@@ -466,6 +466,7 @@ export default function POS() {
 
   useBarcodeScanner({
     onScan: handleBarcodeScan,
+    maxDelay: 400,
     enabled: !checkoutOpen && !receiptOpen && !payExpenseOpen && !endOfDayOpen && !clientPickerOpen && posMainTab === 'cart',
   });
 
