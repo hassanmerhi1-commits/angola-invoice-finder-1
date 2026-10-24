@@ -54,6 +54,10 @@ import { isCashCategoryParent, isCompactCategoryParent, nextCompactChildCode, ne
 // Angola PGC (novo com IVA) — no-dot numbering. Tabs map to PGC class/main codes:
 // 31 Clientes, 32 Fornecedores, 45 Caixa, 42/43/44 Depósitos, 36/72 Pessoal,
 // class 6 Proveitos (revenue), class 7 Custos (expense), class 5 Capital.
+// Class 2 Existências stays an asset on the books; the Custos tab shows it for daily use.
+const isExistenciasAccount = (account: Pick<Account, 'code'>) =>
+  String(account.code || '').startsWith('2');
+
 const CATEGORY_TABS = [
   { key: 'clientes', labelKey: 'tabCustomers', filter: (a: Account) => String(a.code || '').startsWith('31') },
   { key: 'fornecedores', labelKey: 'tabSuppliers', filter: (a: Account) => String(a.code || '').startsWith('32') },
@@ -62,9 +66,9 @@ const CATEGORY_TABS = [
     const code = String(a.code || '');
     return code.startsWith('42') || code.startsWith('43') || code.startsWith('44');
   } },
-  { key: 'ativos', labelKey: 'tabAssets', filter: (a: Account) => a.account_type === 'asset' },
+  { key: 'ativos', labelKey: 'tabAssets', filter: (a: Account) => a.account_type === 'asset' && !isExistenciasAccount(a) },
   { key: 'recebimentos', labelKey: 'tabRevenue', filter: (a: Account) => a.account_type === 'revenue' },
-  { key: 'custos', labelKey: 'tabExpenses', filter: (a: Account) => a.account_type === 'expense' },
+  { key: 'custos', labelKey: 'tabExpenses', filter: (a: Account) => a.account_type === 'expense' || isExistenciasAccount(a) },
   { key: 'funcionarios', labelKey: 'tabEmployees', filter: (a: Account) => {
     const code = String(a.code || '');
     return code.startsWith('36') || code.startsWith('72');
@@ -78,9 +82,9 @@ const TAB_ACCOUNT_DEFAULTS: Record<string, { accountType: AccountType; preferred
   fornecedores: { accountType: 'liability', preferredParentCodes: ['321', '32'] },
   caixa: { accountType: 'asset', preferredParentCodes: ['45'] },
   bancos: { accountType: 'asset', preferredParentCodes: ['43', '42', '44'] },
-  ativos: { accountType: 'asset', preferredParentCodes: ['11', '21', '26'] },
+  ativos: { accountType: 'asset', preferredParentCodes: ['11'] },
   recebimentos: { accountType: 'revenue', preferredParentCodes: ['61', '62'] },
-  custos: { accountType: 'expense', preferredParentCodes: ['71', '75'] },
+  custos: { accountType: 'expense', preferredParentCodes: ['71', '75', '21'] },
   funcionarios: { accountType: 'expense', preferredParentCodes: ['72', '36'] },
   capital: { accountType: 'equity', preferredParentCodes: ['51', '55'] },
 };

@@ -12,6 +12,7 @@ export type IncomeStatementLine = {
   code: string;
   description: string;
   value: number;
+  isHeader?: boolean;
   isSubtotal?: boolean;
   isTotal?: boolean;
   indent?: number;
@@ -36,6 +37,11 @@ export type IncomeStatementLabels = {
   resultBeforeTax: string;
   incomeTax: string;
   netResult: string;
+  sectionRevenue: string;
+  sectionExpenses: string;
+  sectionResult: string;
+  totalRevenue: string;
+  totalExpenses: string;
 };
 
 export function periodMovement(row: TbRow): number {
@@ -85,34 +91,36 @@ export function buildIncomeStatement(rows: TbRow[], labels: IncomeStatementLabel
   const profitBeforeTax = operatingProfit + financialResult;
   const incomeTax = sumByPrefix(rows, ['87']);
   const netProfit = profitBeforeTax - incomeTax;
+  const totalRevenue = operatingIncome + financialIncome;
+  const totalExpenses = cogs + totalOperatingExpenses + financialExpenses + incomeTax;
 
   const lineItems: IncomeStatementLine[] = [
+    { code: '', description: labels.sectionRevenue, value: 0, isHeader: true },
     { code: '61', description: labels.salesOfGoods, value: salesOfGoods },
     { code: '62', description: labels.servicesProvided, value: services },
     { code: '63', description: labels.otherOperatingIncome, value: otherIncome },
-    { code: '', description: labels.operatingIncome, value: operatingIncome, isSubtotal: true },
+    { code: '66', description: labels.financialIncome, value: financialIncome },
+    { code: '', description: labels.totalRevenue, value: totalRevenue, isSubtotal: true },
 
-    { code: '71', description: labels.costOfGoodsSold, value: -cogs, indent: 1 },
+    { code: '', description: labels.sectionExpenses, value: 0, isHeader: true },
+    { code: '71', description: labels.costOfGoodsSold, value: cogs },
+    { code: '72', description: labels.personnelExpenses, value: personnel },
+    { code: '73', description: labels.depreciationAmortization, value: depreciation },
+    { code: '75', description: labels.externalSuppliesServices, value: externalSupplies },
+    { code: '76', description: labels.financialExpenses, value: financialExpenses },
+    { code: '78', description: labels.otherOperatingExpenses, value: otherOpex },
+    { code: '87', description: labels.incomeTax, value: incomeTax },
+    { code: '', description: labels.totalExpenses, value: totalExpenses, isSubtotal: true },
+
+    { code: '', description: labels.sectionResult, value: 0, isHeader: true },
     { code: '', description: labels.grossResult, value: grossProfit, isSubtotal: true },
-
-    { code: '75', description: labels.externalSuppliesServices, value: -externalSupplies, indent: 1 },
-    { code: '72', description: labels.personnelExpenses, value: -personnel, indent: 1 },
-    { code: '73', description: labels.depreciationAmortization, value: -depreciation, indent: 1 },
-    { code: '78', description: labels.otherOperatingExpenses, value: -otherOpex, indent: 1 },
-    { code: '', description: labels.totalOperatingExpenses, value: -totalOperatingExpenses, isSubtotal: true },
-
     { code: '', description: labels.operatingResult, value: operatingProfit, isSubtotal: true },
-
-    { code: '66', description: labels.financialIncome, value: financialIncome, indent: 1 },
-    { code: '76', description: labels.financialExpenses, value: -financialExpenses, indent: 1 },
     { code: '', description: labels.financialResult, value: financialResult, isSubtotal: true },
-
     { code: '', description: labels.resultBeforeTax, value: profitBeforeTax, isSubtotal: true },
-    { code: '87', description: labels.incomeTax, value: -incomeTax, indent: 1 },
-    { code: '', description: labels.netResult, value: netProfit, isTotal: true },
+    { code: '88', description: labels.netResult, value: netProfit, isTotal: true },
   ];
 
-  return { lineItems, netProfit, operatingIncome, grossProfit, operatingProfit };
+  return { lineItems, netProfit, operatingIncome, grossProfit, operatingProfit, totalRevenue, totalExpenses };
 }
 
 export function treasuryMovement(rows: TbRow[]): { cash: number; banks: number } {
