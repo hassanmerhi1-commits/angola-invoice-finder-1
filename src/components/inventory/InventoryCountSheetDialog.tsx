@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -10,13 +9,15 @@ import { Printer, FileSpreadsheet, Download, ClipboardCheck } from 'lucide-react
 import { Product, Branch } from '@/types/erp';
 import { readProductStock } from '@/lib/inventoryGrid';
 import {
+  COUNT_SHEET_TEMPLATE,
   buildCountSheetHtml,
+  buildCountSheetPrintedHeader,
   buildCountSheetRows,
-  countSheetAsOfLabel,
   downloadCountSheetExcel,
   formatCountSheetQty,
 } from '@/lib/inventoryCountSheet';
 import { printHtml } from '@/lib/printHtml';
+import { getCompanySettings } from '@/lib/companySettings';
 import { useTranslation } from '@/i18n';
 import { inventoryFoodCategoryLabel } from '@/lib/inventoryFoodCategories';
 import { toast } from 'sonner';
@@ -53,7 +54,6 @@ export function InventoryCountSheetDialog({
   const [includeInactive, setIncludeInactive] = useState(false);
   const [hideSystemStock, setHideSystemStock] = useState(false);
   const [inStockOnly, setInStockOnly] = useState(false);
-  const [includeBarcode, setIncludeBarcode] = useState(false);
   const [countedBy, setCountedBy] = useState('');
 
   const showBranchPicker = branches.length > 1 || branchRequired;
@@ -87,39 +87,23 @@ export function InventoryCountSheetDialog({
     return true;
   };
 
-  const locale = language === 'pt' ? 'pt' : 'en';
-  const asOfLabel = countSheetAsOfLabel(t.countSheetUi.asOfDate);
-  const sheetLabels = {
-    reportTitle: t.countSheetUi.reportTitle,
-    asOfDate: t.countSheetUi.asOfDate,
-    colCode: t.countSheetUi.colCode,
-    colDescription: t.countSheetUi.colDescription,
-    colBarcode: t.inventory.barcode,
-    colQty: t.countSheetUi.colQty,
-    colCount: t.countSheetUi.colCount,
-    colDiff: t.countSheetUi.colDiff,
+  const sheetHeader = {
+    companyName: getCompanySettings().name || getCompanySettings().tradeName || '',
+    branchName: branch?.name || '',
+    branchCode: branch?.code || '',
+    countedBy,
   };
   const previewRows = sheetRows.slice(0, 8);
-
-  const buildSheetHtml = () => buildCountSheetHtml({
-    rows: sheetRows,
-    labels: sheetLabels,
-    asOfLabel,
-    includeBarcode,
-    locale,
-  });
+  const printedHeader = buildCountSheetPrintedHeader(sheetHeader);
 
   const handlePrint = async () => {
     if (!ensureReady()) return;
-    await printHtml(buildSheetHtml());
+    await printHtml(buildCountSheetHtml({ rows: sheetRows, header: sheetHeader }));
   };
 
   const handleExportExcel = () => {
     if (!ensureReady()) return;
-    downloadCountSheetExcel(
-      buildSheetHtml(),
-      `${t.countSheetUi.filePrefix}_${branch?.code || 'geral'}_${format(new Date(), 'yyyy-MM-dd')}`,
-    );
+    downloadCountSheetExcel(sheetRows, sheetHeader);
   };
 
   return (
@@ -212,16 +196,6 @@ export function InventoryCountSheetDialog({
             </div>
             <div className="flex items-center gap-2">
               <Checkbox
-                id="includeBarcode"
-                checked={includeBarcode}
-                onCheckedChange={(checked) => setIncludeBarcode(checked === true)}
-              />
-              <label htmlFor="includeBarcode" className="text-sm cursor-pointer">
-                {t.countSheetUi.includeBarcode}
-              </label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
                 id="includeInactive"
                 checked={includeInactive}
                 onCheckedChange={(checked) => setIncludeInactive(checked === true)}
@@ -232,41 +206,45 @@ export function InventoryCountSheetDialog({
             </div>
           </div>
 
-          <div className="rounded-md border border-[#8ea9db] overflow-hidden bg-white">
-            <div className="flex items-baseline justify-between px-3 pt-3 pb-2">
-              <p className="text-[15px] font-semibold text-slate-900">{t.countSheetUi.reportTitle}</p>
-              <p className="text-xs font-semibold text-slate-600">{asOfLabel}</p>
+          <div className="mx-auto w-full max-w-[420px] rounded-md border bg-white p-3 shadow-sm">
+            <p className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">A4 retrato</p>
+            <div className="mb-2 space-y-0.5">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-[13px] font-bold leading-tight">{printedHeader.title}</p>
+                <p className="text-[10px] text-slate-700 whitespace-nowrap">{printedHeader.asOf}</p>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-[10px] text-slate-700">{printedHeader.company}</p>
+                <p className="text-[10px] text-slate-700 whitespace-nowrap">{printedHeader.countedBy}</p>
+              </div>
+              <p className="text-[10px] text-slate-700">{printedHeader.branch}</p>
             </div>
-            <table className="w-full border-collapse text-[11px]">
+            <table className="w-full border-collapse text-[10px]">
               <thead>
-                <tr className="bg-[#bdd7ee] text-[#1e3a5f]">
-                  <th className="border border-[#8ea9db] px-2 py-1.5 text-left font-semibold w-28">{t.countSheetUi.colCode}</th>
-                  <th className="border border-[#8ea9db] px-2 py-1.5 text-left font-semibold">{t.countSheetUi.colDescription}</th>
-                  {includeBarcode && (
-                    <th className="border border-[#8ea9db] px-2 py-1.5 text-left font-semibold w-28">{t.inventory.barcode}</th>
-                  )}
-                  <th className="border border-[#8ea9db] px-2 py-1.5 text-right font-semibold w-20">{t.countSheetUi.colQty}</th>
-                  <th className="border border-[#8ea9db] px-2 py-1.5 text-right font-semibold w-24">{t.countSheetUi.colCount}</th>
-                  <th className="border border-[#8ea9db] px-2 py-1.5 text-right font-semibold w-16">{t.countSheetUi.colDiff}</th>
+                <tr className="bg-[#d6e3f0]">
+                  <th className="border border-[#7f8c9b] px-1.5 py-1 text-left w-24">{COUNT_SHEET_TEMPLATE.colCode}</th>
+                  <th className="border border-[#7f8c9b] px-1.5 py-1 text-left">{COUNT_SHEET_TEMPLATE.colDescription}</th>
+                  <th className="border border-[#7f8c9b] px-1.5 py-1 text-right w-14">{COUNT_SHEET_TEMPLATE.colQty}</th>
+                  <th className="border border-[#7f8c9b] px-1.5 py-1 text-right w-16">{COUNT_SHEET_TEMPLATE.colCount}</th>
+                  <th className="border border-[#7f8c9b] px-1.5 py-1 text-right w-12">{COUNT_SHEET_TEMPLATE.colDiff}</th>
                 </tr>
               </thead>
               <tbody>
                 {previewRows.length === 0 ? (
                   <tr>
-                    <td colSpan={includeBarcode ? 6 : 5} className="px-2 py-4 text-center text-muted-foreground">
+                    <td colSpan={5} className="px-2 py-4 text-center text-muted-foreground">
                       {loading ? t.common.loading : t.countSheetUi.noProducts}
                     </td>
                   </tr>
                 ) : previewRows.map((row, index) => (
-                  <tr key={`${row.sku}-${index}`} className={index % 2 ? 'bg-[#f8fbfe]' : 'bg-white'}>
-                    <td className="border border-[#b4c6e7] px-2 py-1 font-mono">{row.sku}</td>
-                    <td className="border border-[#b4c6e7] px-2 py-1">{row.name}</td>
-                    {includeBarcode && <td className="border border-[#b4c6e7] px-2 py-1">{row.barcode}</td>}
-                    <td className="border border-[#b4c6e7] px-2 py-1 text-right tabular-nums">
-                      {row.qty == null ? '' : formatCountSheetQty(row.qty, locale)}
+                  <tr key={`${row.sku}-${index}`}>
+                    <td className="border border-[#7f8c9b] px-1.5 py-0.5">{row.sku}</td>
+                    <td className="border border-[#7f8c9b] px-1.5 py-0.5">{row.name}</td>
+                    <td className="border border-[#7f8c9b] px-1.5 py-0.5 text-right">
+                      {row.qty == null ? '' : formatCountSheetQty(row.qty)}
                     </td>
-                    <td className="border border-[#b4c6e7] px-2 py-1 bg-[#fffdf6]" />
-                    <td className="border border-[#b4c6e7] px-2 py-1 bg-[#fffdf6]" />
+                    <td className="border border-[#7f8c9b] px-1.5 py-0.5 bg-[#fffdf4]" />
+                    <td className="border border-[#7f8c9b] px-1.5 py-0.5 bg-[#fffdf4]" />
                   </tr>
                 ))}
               </tbody>

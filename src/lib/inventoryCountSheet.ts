@@ -3,29 +3,45 @@ import { Product } from '@/types/erp';
 import { readProductStock } from '@/lib/inventoryGrid';
 import { escapeHtml } from '@/lib/reportExport';
 
-export type CountSheetLabels = {
-  reportTitle: string;
-  asOfDate: string;
-  colCode: string;
-  colDescription: string;
-  colBarcode: string;
-  colQty: string;
-  colCount: string;
-  colDiff: string;
-};
+/** Warehouse count sheet always follows the Portuguese A4 template. */
+export const COUNT_SHEET_TEMPLATE = {
+  reportTitle: 'Qtd por Armazém',
+  companyLabel: 'Empresa',
+  branchLabel: 'Filial',
+  asOfLabel: 'A Data',
+  countedByLabel: 'Contado por',
+  colCode: 'Código',
+  colDescription: 'Descrição',
+  colQty: 'Qtd',
+  colCount: 'Contagem',
+  colDiff: 'Diff',
+  filePrefix: 'Qtd_por_Armazem',
+} as const;
 
 export type CountSheetRow = {
   sku: string;
   name: string;
-  barcode: string;
   qty: number | null;
 };
 
-export function formatCountSheetQty(qty: number, locale: 'pt' | 'en' = 'pt'): string {
-  return qty.toLocaleString(locale === 'pt' ? 'pt-AO' : 'en-GB', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+export type CountSheetHeader = {
+  companyName?: string;
+  branchName?: string;
+  branchCode?: string;
+  countedBy?: string;
+  date?: Date;
+};
+
+export type CountSheetPrintedHeader = {
+  title: string;
+  company: string;
+  branch: string;
+  asOf: string;
+  countedBy: string;
+};
+
+export function formatCountSheetQty(qty: number): string {
+  return qty.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function buildCountSheetRows(
@@ -35,96 +51,136 @@ export function buildCountSheetRows(
   return products.map((product) => ({
     sku: String(product.sku || '').trim(),
     name: String(product.name || '').trim().toUpperCase(),
-    barcode: String(product.barcode || '').trim(),
     qty: hideSystemStock ? null : readProductStock(product),
   }));
 }
 
-export function countSheetAsOfLabel(template: string, date = new Date()): string {
-  return template.replace('{date}', format(date, 'dd/MM/yyyy'));
+function sheetDate(date = new Date()): string {
+  return format(date, 'dd/MM/yyyy');
 }
 
-function tableCss(): string {
-  return `
-    * { box-sizing: border-box; }
-    body { margin: 0; padding: 16px 20px; font-family: Calibri, "Segoe UI", Arial, sans-serif; color: #1f2937; background: #fff; }
-    .sheet { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    .sheet .title { font-size: 18px; font-weight: 700; color: #111827; padding: 0 0 14px 0; border: none; }
-    .sheet .as-of { font-size: 12px; font-weight: 600; color: #374151; text-align: right; padding: 0 0 14px 0; border: none; }
-    .sheet th {
-      background: #bdd7ee;
-      color: #1e3a5f;
-      font-size: 11px;
-      font-weight: 700;
-      border: 1px solid #8ea9db;
-      padding: 7px 8px;
-      text-align: left;
-    }
-    .sheet td {
-      border: 1px solid #b4c6e7;
-      padding: 5px 8px;
-      font-size: 11px;
-      vertical-align: middle;
-    }
-    .sheet tbody tr:nth-child(even) td { background: #f8fbfe; }
-    .col-code { width: 118px; font-variant-numeric: tabular-nums; }
-    .col-name { width: auto; }
-    .col-barcode { width: 130px; }
-    .col-num { width: 88px; text-align: right; font-variant-numeric: tabular-nums; }
-    .col-write { background: #fffdf6 !important; }
-    .num { mso-number-format: '#,##0.00'; text-align: right; }
-    @page { size: A4 portrait; margin: 10mm; }
-    @media print { body { padding: 0; } }
-  `;
+function branchLine(header: CountSheetHeader): string {
+  const name = String(header.branchName || '').trim();
+  const code = String(header.branchCode || '').trim();
+  if (name && code) return `${name} (${code})`;
+  return name || code || '—';
+}
+
+function labeled(label: string, value: string): string {
+  return `${label}: ${value}`;
+}
+
+export function buildCountSheetPrintedHeader(header: CountSheetHeader): CountSheetPrintedHeader {
+  return {
+    title: COUNT_SHEET_TEMPLATE.reportTitle,
+    company: labeled(COUNT_SHEET_TEMPLATE.companyLabel, header.companyName?.trim() || '—'),
+    branch: labeled(COUNT_SHEET_TEMPLATE.branchLabel, branchLine(header)),
+    asOf: labeled(COUNT_SHEET_TEMPLATE.asOfLabel, sheetDate(header.date)),
+    countedBy: labeled(COUNT_SHEET_TEMPLATE.countedByLabel, header.countedBy?.trim() || ''),
+  };
+}
+
+export function countSheetMetaLines(header: CountSheetHeader): string[] {
+  const printed = buildCountSheetPrintedHeader(header);
+  return [printed.company, printed.branch, printed.asOf, printed.countedBy];
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function countSheetFileName(header: CountSheetHeader): string {
+  const code = String(header.branchCode || 'geral').replace(/[^\w-]+/g, '');
+  return `${COUNT_SHEET_TEMPLATE.filePrefix}_${code}_${format(header.date || new Date(), 'yyyy-MM-dd')}.xls`;
 }
 
 export function buildCountSheetHtml(opts: {
   rows: CountSheetRow[];
-  labels: CountSheetLabels;
-  asOfLabel: string;
-  includeBarcode?: boolean;
-  locale?: 'pt' | 'en';
+  header: CountSheetHeader;
 }): string {
-  const includeBarcode = !!opts.includeBarcode;
-  const locale = opts.locale || 'pt';
-  const colSpanTitle = includeBarcode ? 3 : 2;
-  const colSpanDate = 2;
-  const barcodeHeader = includeBarcode
-    ? `<th class="col-barcode">${escapeHtml(opts.labels.colBarcode)}</th>`
-    : '';
-
+  const printed = buildCountSheetPrintedHeader(opts.header);
   const body = opts.rows.map((row) => `
     <tr>
-      <td class="col-code">${escapeHtml(row.sku)}</td>
-      <td class="col-name">${escapeHtml(row.name)}</td>
-      ${includeBarcode ? `<td class="col-barcode">${escapeHtml(row.barcode)}</td>` : ''}
-      <td class="col-num num">${row.qty == null ? '' : escapeHtml(formatCountSheetQty(row.qty, locale))}</td>
-      <td class="col-num col-write"></td>
-      <td class="col-num col-write"></td>
+      <td class="code">${escapeHtml(row.sku)}</td>
+      <td class="name">${escapeHtml(row.name)}</td>
+      <td class="num">${row.qty == null ? '' : escapeHtml(formatCountSheetQty(row.qty))}</td>
+      <td class="write"></td>
+      <td class="write"></td>
     </tr>
   `).join('');
 
   return `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<html>
 <head>
   <meta charset="UTF-8">
-  <title>${escapeHtml(opts.labels.reportTitle)}</title>
-  <style>${tableCss()}</style>
+  <title>${escapeHtml(printed.title)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    @page { size: A4 portrait; margin: 7mm; }
+    html, body { margin: 0; padding: 0; background: #fff; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      color: #111;
+      width: 196mm;
+    }
+    .page-head { margin: 0 0 3.5mm; }
+    .page-head .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8mm;
+    }
+    .page-head h1 {
+      margin: 0;
+      font-size: 11pt;
+      font-weight: 700;
+      line-height: 1.15;
+    }
+    .page-head .meta {
+      margin: 0.6mm 0 0;
+      font-size: 7.5pt;
+      line-height: 1.25;
+    }
+    .page-head .meta.right { text-align: right; white-space: nowrap; }
+    table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    table.grid th, table.grid td {
+      border: 0.35pt solid #7f8c9b;
+      padding: 0.7mm 1mm;
+      font-size: 7pt;
+      line-height: 1.1;
+    }
+    table.grid th { background: #d6e3f0; font-weight: 700; text-align: left; }
+    table.grid .code { width: 18mm; }
+    table.grid .name { width: auto; }
+    table.grid .num, table.grid .write { width: 16mm; text-align: right; }
+    table.grid .write { background: #fffdf4; }
+    @media print { body { width: auto; } }
+  </style>
 </head>
 <body>
-  <table class="sheet" cellspacing="0" cellpadding="0">
+  <header class="page-head">
+    <div class="row">
+      <h1>${escapeHtml(printed.title)}</h1>
+      <p class="meta right">${escapeHtml(printed.asOf)}</p>
+    </div>
+    <div class="row">
+      <p class="meta">${escapeHtml(printed.company)}</p>
+      <p class="meta right">${escapeHtml(printed.countedBy)}</p>
+    </div>
+    <p class="meta">${escapeHtml(printed.branch)}</p>
+  </header>
+  <table class="grid">
     <thead>
       <tr>
-        <td class="title" colspan="${colSpanTitle}">${escapeHtml(opts.labels.reportTitle)}</td>
-        <td class="as-of" colspan="${colSpanDate}">${escapeHtml(opts.asOfLabel)}</td>
-      </tr>
-      <tr>
-        <th class="col-code">${escapeHtml(opts.labels.colCode)}</th>
-        <th class="col-name">${escapeHtml(opts.labels.colDescription)}</th>
-        ${barcodeHeader}
-        <th class="col-num">${escapeHtml(opts.labels.colQty)}</th>
-        <th class="col-num">${escapeHtml(opts.labels.colCount)}</th>
-        <th class="col-num">${escapeHtml(opts.labels.colDiff)}</th>
+        <th class="code">${COUNT_SHEET_TEMPLATE.colCode}</th>
+        <th class="name">${COUNT_SHEET_TEMPLATE.colDescription}</th>
+        <th class="num">${COUNT_SHEET_TEMPLATE.colQty}</th>
+        <th class="write">${COUNT_SHEET_TEMPLATE.colCount}</th>
+        <th class="write">${COUNT_SHEET_TEMPLATE.colDiff}</th>
       </tr>
     </thead>
     <tbody>${body}</tbody>
@@ -133,12 +189,168 @@ export function buildCountSheetHtml(opts: {
 </html>`;
 }
 
-export function downloadCountSheetExcel(html: string, filename: string): void {
-  const blob = new Blob([`\uFEFF${html}`], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+function excelBorder(): string {
+  return `
+    <Borders>
+      <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
+      <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
+      <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
+      <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
+    </Borders>`;
+}
+
+function excelStringCell(style: string, value: string, mergeAcross = 0): string {
+  const merge = mergeAcross > 0 ? ` ss:MergeAcross="${mergeAcross}"` : '';
+  return `<Cell${merge} ss:StyleID="${style}"><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`;
+}
+
+function excelNumberCell(style: string, value: number): string {
+  return `<Cell ss:StyleID="${style}"><Data ss:Type="Number">${value}</Data></Cell>`;
+}
+
+function excelEmptyCell(style: string): string {
+  return `<Cell ss:StyleID="${style}"/>`;
+}
+
+export function buildCountSheetExcelXml(
+  rows: CountSheetRow[],
+  header: CountSheetHeader,
+): string {
+  const printed = buildCountSheetPrintedHeader(header);
+  const lastRow = 5 + rows.length;
+  const dataRows = rows.map((row) => {
+    const qtyCell = row.qty == null
+      ? excelEmptyCell('CellNum')
+      : excelNumberCell('CellNum', Number(row.qty));
+    return `<Row ss:Height="12.5">${
+      excelStringCell('Cell', row.sku)
+    }${
+      excelStringCell('Cell', row.name)
+    }${qtyCell}${excelEmptyCell('Write')}${excelEmptyCell('Write')}</Row>`;
+  }).join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">
+  <Title>${escapeXml(printed.title)}</Title>
+ </DocumentProperties>
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal">
+   <Font ss:FontName="Arial" ss:Size="8"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="Title">
+   <Font ss:FontName="Arial" ss:Size="12" ss:Bold="1"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="Meta">
+   <Font ss:FontName="Arial" ss:Size="8"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="MetaRight">
+   <Font ss:FontName="Arial" ss:Size="8"/>
+   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="Head">
+   <Font ss:FontName="Arial" ss:Size="8" ss:Bold="1"/>
+   <Interior ss:Color="#D6E3F0" ss:Pattern="Solid"/>
+   <Alignment ss:Horizontal="Left" ss:Vertical="Center"/>
+   ${excelBorder()}
+  </Style>
+  <Style ss:ID="HeadNum">
+   <Font ss:FontName="Arial" ss:Size="8" ss:Bold="1"/>
+   <Interior ss:Color="#D6E3F0" ss:Pattern="Solid"/>
+   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+   ${excelBorder()}
+  </Style>
+  <Style ss:ID="Cell">
+   <Font ss:FontName="Arial" ss:Size="8"/>
+   <Alignment ss:Vertical="Center"/>
+   ${excelBorder()}
+  </Style>
+  <Style ss:ID="CellNum">
+   <Font ss:FontName="Arial" ss:Size="8"/>
+   <NumberFormat ss:Format="#,##0.00"/>
+   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+   ${excelBorder()}
+  </Style>
+  <Style ss:ID="Write">
+   <Font ss:FontName="Arial" ss:Size="8"/>
+   <Interior ss:Color="#FFFDF4" ss:Pattern="Solid"/>
+   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+   ${excelBorder()}
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Qtd por Armazem">
+  <Names>
+   <NamedRange ss:Name="Print_Area" ss:RefersTo="='Qtd por Armazem'!R1C1:R${lastRow}C5"/>
+  </Names>
+  <Table ss:ExpandedColumnCount="5" ss:ExpandedRowCount="${lastRow}" ss:DefaultRowHeight="12.5">
+   <Column ss:Index="1" ss:AutoFitWidth="0" ss:Width="62"/>
+   <Column ss:Index="2" ss:AutoFitWidth="0" ss:Width="210"/>
+   <Column ss:Index="3" ss:AutoFitWidth="0" ss:Width="46"/>
+   <Column ss:Index="4" ss:AutoFitWidth="0" ss:Width="54"/>
+   <Column ss:Index="5" ss:AutoFitWidth="0" ss:Width="44"/>
+   <Row ss:Height="16">
+    ${excelStringCell('Title', printed.title, 2)}
+    ${excelStringCell('MetaRight', printed.asOf, 1)}
+   </Row>
+   <Row ss:Height="13">
+    ${excelStringCell('Meta', printed.company, 2)}
+    ${excelStringCell('MetaRight', printed.countedBy, 1)}
+   </Row>
+   <Row ss:Height="13">
+    ${excelStringCell('Meta', printed.branch, 4)}
+   </Row>
+   <Row ss:Height="6"/>
+   <Row ss:Height="14">
+    ${excelStringCell('Head', COUNT_SHEET_TEMPLATE.colCode)}
+    ${excelStringCell('Head', COUNT_SHEET_TEMPLATE.colDescription)}
+    ${excelStringCell('HeadNum', COUNT_SHEET_TEMPLATE.colQty)}
+    ${excelStringCell('HeadNum', COUNT_SHEET_TEMPLATE.colCount)}
+    ${excelStringCell('HeadNum', COUNT_SHEET_TEMPLATE.colDiff)}
+   </Row>
+   ${dataRows}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <PageSetup>
+    <Layout x:Orientation="Portrait"/>
+    <Header x:Margin="0.12"/>
+    <Footer x:Margin="0.12"/>
+    <PageMargins x:Bottom="0.28" x:Left="0.25" x:Right="0.25" x:Top="0.28"/>
+   </PageSetup>
+   <FitToPage/>
+   <Print>
+    <ValidPrinterInfo/>
+    <PaperSizeIndex>9</PaperSizeIndex>
+    <FitWidth>1</FitWidth>
+    <FitHeight>0</FitHeight>
+   </Print>
+   <FreezePanes/>
+   <FrozenNoSplit/>
+   <SplitHorizontal>5</SplitHorizontal>
+   <TopRowBottomPane>5</TopRowBottomPane>
+   <ActivePane>2</ActivePane>
+  </WorksheetOptions>
+ </Worksheet>
+</Workbook>`;
+}
+
+export function downloadCountSheetExcel(
+  rows: CountSheetRow[],
+  header: CountSheetHeader,
+): void {
+  const xml = buildCountSheetExcelXml(rows, header);
+  const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = filename.endsWith('.xls') ? filename : `${filename}.xls`;
+  link.download = countSheetFileName(header);
   document.body.appendChild(link);
   link.click();
   link.remove();
