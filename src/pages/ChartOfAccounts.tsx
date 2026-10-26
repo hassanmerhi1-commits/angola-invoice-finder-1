@@ -319,7 +319,7 @@ export default function ChartOfAccounts() {
   }, [searchQuery, language, t]);
 
   const accountsById = useMemo(
-    () => new Map(accounts.map((account) => [String(account.id), account])),
+    () => new Map(accounts.map((account) => [coaIdKey(account.id), account])),
     [accounts],
   );
 
@@ -920,7 +920,6 @@ export default function ChartOfAccounts() {
     && String(selectedAccountInCurrentTab.code || '').trim() !== CASH_PARENT_CODE
     ? selectedAccountInCurrentTab
     : null;
-  const accountsById = useMemo(() => new Map(accounts.map((a) => [coaIdKey(a.id), a])), [accounts]);
   const categoryOptions = useMemo(() => {
     if (!selectedMovableLeaf) return [];
     const tabParents = (TAB_ACCOUNT_DEFAULTS[currentTabConfig.key]?.preferredParentCodes || []);

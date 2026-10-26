@@ -1,5 +1,6 @@
 import type { Account, AccountNature, AccountType } from '@/types/accounting';
 import { getDefaultNature } from '@/types/accounting';
+import { coaIdKey } from '@/lib/coaTreeBalances';
 
 const TAB_ACCOUNT_TYPE: Record<CoaDisplayTab, AccountType> = {
   clientes: 'asset',
@@ -45,11 +46,11 @@ export function resolveDisplayTab(
 ): CoaDisplayTab | null {
   let current: Pick<Account, 'id' | 'parent_id' | 'display_tab'> | undefined = account;
   const seen = new Set<string>();
-  while (current && !seen.has(String(current.id))) {
-    seen.add(String(current.id));
+  while (current && !seen.has(coaIdKey(current.id))) {
+    seen.add(coaIdKey(current.id));
     const tab = normalizeDisplayTab(current.display_tab);
     if (tab) return tab;
-    const parentId = current.parent_id ? String(current.parent_id) : '';
+    const parentId = coaIdKey(current.parent_id);
     current = parentId ? byId.get(parentId) : undefined;
   }
   return null;
