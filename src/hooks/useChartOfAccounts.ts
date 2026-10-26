@@ -6,6 +6,7 @@ import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, Acco
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
 import { compareAccountCodes } from '@/lib/coaTreeBalances';
 import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
+import { applyDisplayTabToBranch } from '@/lib/coaDisplayTab';
 import { useTranslation } from '@/i18n';
 import { allowsLocalLedgerWrites, cityLedgerOfflineError } from '@/lib/api/config';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
@@ -364,8 +365,17 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       if (response.error) throw new Error(response.error);
       const updated = response.data as Account;
       markCachedListStale('chartOfAccounts');
-      if (updated?.id) mergeAccountIntoList(updated);
-      else scheduleCoaRefresh(300);
+      if (updated?.id) {
+        mergeAccountIntoList(updated);
+        if (data.display_tab !== undefined) {
+          setAccounts((prev) => {
+            const next = applyDisplayTabToBranch(prev, id, data.display_tab || null);
+            setCachedList('chartOfAccounts', next);
+            saveLocalAccounts(next);
+            return next;
+          });
+        }
+      } else scheduleCoaRefresh(300);
       return updated;
     } catch (err) {
       if (!isOfflineError(err) || !allowsLocalLedgerWrites()) {
@@ -391,8 +401,17 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
         throw new Error('Account code already exists');
       }
 
-      const next = [...localAccounts];
-      next[index] = updatedAccount;
+      const next = data.display_tab !== undefined
+        ? applyDisplayTabToBranch(
+          localAccounts.map((account, i) => (i === index ? updatedAccount : account)),
+          id,
+          data.display_tab || null,
+        )
+        : (() => {
+          const copy = [...localAccounts];
+          copy[index] = updatedAccount;
+          return copy;
+        })();
       const sorted = sortAccountsByCode(next);
       saveLocalAccounts(sorted);
       setAccounts(sorted);

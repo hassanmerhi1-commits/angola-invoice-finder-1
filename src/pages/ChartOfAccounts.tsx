@@ -41,6 +41,7 @@ import { ChartOfAccountsNewMenu } from '@/components/accounting/ChartOfAccountsN
 import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
 import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
 import { chartNewActionTab, type ChartNewAction } from '@/lib/chartOfAccountsNewActions';
+import { accountingForTab, COA_DISPLAY_TABS, resolveDisplayTab, type CoaDisplayTab } from '@/lib/coaDisplayTab';
 import { useBranchContext } from '@/contexts/BranchContext';
 import {
   CASH_PARENT_CODE,
@@ -76,6 +77,25 @@ const CATEGORY_TABS = [
   { key: 'capital', labelKey: 'tabEquity', filter: (a: Account) => a.account_type === 'equity' },
   { key: 'todos', labelKey: 'tabAll', filter: () => true },
 ] as const;
+
+const inferAccountTab = (
+  account: Account,
+  allAccounts: Account[],
+  preferredTab?: string,
+): CoaDisplayTab => {
+  const byId = new Map(allAccounts.map((row) => [String(row.id), row]));
+  const override = resolveDisplayTab(account, byId);
+  if (override) return override;
+  if (preferredTab && preferredTab !== 'todos') {
+    const preferred = CATEGORY_TABS.find((tab) => tab.key === preferredTab);
+    if (preferred && preferred.filter(account)) return preferredTab as CoaDisplayTab;
+  }
+  for (const tab of CATEGORY_TABS) {
+    if (tab.key === 'todos') continue;
+    if (tab.filter(account)) return tab.key as CoaDisplayTab;
+  }
+  return 'ativos';
+};
 
 const TAB_ACCOUNT_DEFAULTS: Record<string, { accountType: AccountType; preferredParentCodes: string[] }> = {
   clientes: { accountType: 'asset', preferredParentCodes: ['311', '31'] },
@@ -281,6 +301,7 @@ export default function ChartOfAccounts() {
     is_header: false,
     opening_balance: 0,
     branch_id: '',
+    display_tab: '',
   });
 
   // Filter accounts by tab + search
@@ -297,8 +318,20 @@ export default function ChartOfAccounts() {
       || resolveAccountDisplayName(a, language, t).toLowerCase().includes(searchQuery);
   }, [searchQuery, language, t]);
 
+  const accountsById = useMemo(
+    () => new Map(accounts.map((account) => [String(account.id), account])),
+    [accounts],
+  );
+
   const filteredAccounts = useMemo(() => {
-    if (!searchQuery) return accounts.filter((a) => currentTabConfig.filter(a));
+    if (!searchQuery) {
+      if (activeTab === 'todos') return accounts;
+      return accounts.filter((account) => {
+        const override = resolveDisplayTab(account, accountsById);
+        if (override) return override === activeTab;
+        return currentTabConfig.filter(account);
+      });
+    }
 
     // A search covers the whole chart: scoping it to the open tab meant a supplier
     // could not be found from any other tab. Ancestors of each hit come along so the
@@ -313,7 +346,7 @@ export default function ChartOfAccounts() {
       }
     }
     return accounts.filter((a) => keep.has(coaIdKey(a.id)));
-  }, [accounts, currentTabConfig, searchQuery, matchesQuery]);
+  }, [accounts, accountsById, activeTab, currentTabConfig, searchQuery, matchesQuery]);
 
   const searchHitCount = useMemo(
     () => (searchQuery ? filteredAccounts.filter(matchesQuery).length : 0),
@@ -427,6 +460,7 @@ export default function ChartOfAccounts() {
       is_header: false,
       opening_balance: 0,
       branch_id: '',
+      display_tab: tabKey !== 'todos' ? tabKey : '',
     };
 
     let nextForm = { ...emptyForm };
@@ -440,6 +474,7 @@ export default function ChartOfAccounts() {
         code: buildSuggestedChildCode(parent.code, children.map(c => c.code), nextForm.is_header, accounts),
         account_type: parent.account_type,
         account_nature: parent.account_nature,
+        display_tab: inferAccountTab(parent, accounts, tabKey),
       };
     };
 
@@ -570,6 +605,7 @@ export default function ChartOfAccounts() {
       is_header: true,
       opening_balance: 0,
       branch_id: '',
+      display_tab: tab !== 'todos' ? tab : '',
     });
     setIsDialogOpen(true);
   };
@@ -595,6 +631,7 @@ export default function ChartOfAccounts() {
       is_header: true,
       opening_balance: 0,
       branch_id: '',
+      display_tab: activeTab !== 'todos' ? activeTab : '',
     });
     setIsDialogOpen(true);
   };
@@ -652,6 +689,7 @@ export default function ChartOfAccounts() {
       is_header: account.is_header,
       opening_balance: Number(account.opening_balance) || 0,
       branch_id: account.branch_id || '',
+      display_tab: inferAccountTab(account, accounts, activeTab),
     });
     setIsDialogOpen(true);
   };
@@ -710,11 +748,15 @@ export default function ChartOfAccounts() {
     const description = isEntityRegistry
       ? `NIF: ${nif.trim()}${rest.description && !/NIF:/i.test(rest.description) ? ` — ${rest.description}` : ''}`
       : rest.description;
+    const tabAccounting = accountingForTab(formData.display_tab);
     const payload = {
       ...rest,
       description,
       parent_id: formData.parent_id || null,
       branch_id: formData.branch_id || null,
+      ...(tabAccounting
+        ? { account_type: tabAccounting.accountType, account_nature: tabAccounting.nature }
+        : {}),
     };
 
     setIsSubmitting(true);
@@ -745,9 +787,15 @@ export default function ChartOfAccounts() {
           }
         }
         toast.success(t.chartOfAccountsUi.updated);
+        if (formData.display_tab && formData.display_tab !== 'todos') {
+          setActiveTab(formData.display_tab);
+        }
       } else {
         await createAccount(payload);
         toast.success(t.chartOfAccountsUi.created);
+        if (formData.display_tab && formData.display_tab !== 'todos') {
+          setActiveTab(formData.display_tab);
+        }
       }
       setIsDialogOpen(false);
     } catch (error: any) {
@@ -934,6 +982,12 @@ export default function ChartOfAccounts() {
   // Whether the open dialog is creating/editing a customer/supplier ledger account (needs a NIF).
   const dialogParent = accounts.find(a => a.id === formData.parent_id);
   const dialogIsEntityRegistry = !formData.is_header && !!dialogParent && isEntityRegistryParent(dialogParent.code);
+  const dialogHasChildren = !!(editingAccount && accounts.some(
+    (account) => account.parent_id === editingAccount.id && account.is_active !== false,
+  ));
+  const showTabPlacement = !dialogIsEntityRegistry && (formData.is_header || dialogHasChildren || !!editingAccount);
+  const tabPlacementValue = (formData.display_tab as CoaDisplayTab | '')
+    || (editingAccount ? inferAccountTab(editingAccount, accounts, activeTab) : (activeTab !== 'todos' ? activeTab as CoaDisplayTab : 'ativos'));
   const dialogIsCashBox = !formData.is_header
     && (
       String(formData.code || '').startsWith('45')
@@ -1139,6 +1193,42 @@ export default function ChartOfAccounts() {
               <Label>{t.chartOfAccountsUi.nameLabel}</Label>
               <Input value={formData.name} onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))} placeholder={t.chartOfAccountsUi.namePlaceholder} />
             </div>
+            {showTabPlacement && (
+              <div className="space-y-2">
+                <Label>{t.chartOfAccountsUi.tabPlacementLabel}</Label>
+                <Select
+                  value={tabPlacementValue}
+                  onValueChange={(value) => {
+                    const accounting = accountingForTab(value);
+                    setFormData((prev) => ({
+                      ...prev,
+                      display_tab: value,
+                      ...(accounting
+                        ? { account_type: accounting.accountType, account_nature: accounting.nature }
+                        : {}),
+                    }));
+                  }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {COA_DISPLAY_TABS.map((tabKey) => {
+                      const tab = CATEGORY_TABS.find((item) => item.key === tabKey);
+                      if (!tab) return null;
+                      return (
+                        <SelectItem key={tabKey} value={tabKey}>
+                          {t.chartOfAccountsUi[tab.labelKey]}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  {dialogHasChildren || formData.is_header
+                    ? t.chartOfAccountsUi.tabPlacementHint
+                    : t.chartOfAccountsUi.tabPlacementHintLeaf}
+                </p>
+              </div>
+            )}
             {dialogIsCashBox && (
               <div className="space-y-2">
                 <Label>{t.chartOfAccountsUi.cashBranchLabel}</Label>

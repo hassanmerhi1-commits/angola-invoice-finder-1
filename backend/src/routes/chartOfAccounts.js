@@ -10,6 +10,66 @@ const { journalFilteredSumSql, journalThroughEndJoinSql } = require('../lib/jour
 const { syncLinkedEntityNameFromCoa, deleteLinkedEntityFromCoa } = require('../lib/entityCoaAccounts');
 const { isBranchCaixaLeafCode, upsertOperationalCaixaFromAccount } = require('../lib/branchCaixaAccounts');
 
+const COA_DISPLAY_TABS = new Set([
+  'clientes', 'fornecedores', 'caixa', 'bancos',
+  'ativos', 'recebimentos', 'custos', 'funcionarios', 'capital',
+]);
+
+function normalizeDisplayTab(raw) {
+  const value = String(raw || '').trim();
+  return COA_DISPLAY_TABS.has(value) ? value : null;
+}
+
+const TAB_ACCOUNT_TYPE = {
+  clientes: 'asset',
+  fornecedores: 'liability',
+  caixa: 'asset',
+  bancos: 'asset',
+  ativos: 'asset',
+  recebimentos: 'revenue',
+  custos: 'expense',
+  funcionarios: 'expense',
+  capital: 'equity',
+};
+
+function accountingForTab(tab) {
+  const key = normalizeDisplayTab(tab);
+  if (!key) return null;
+  const accountType = TAB_ACCOUNT_TYPE[key];
+  const nature = (accountType === 'liability' || accountType === 'equity' || accountType === 'revenue')
+    ? 'credit'
+    : 'debit';
+  return { accountType, nature };
+}
+
+async function cascadeDisplayTab(dbConn, rootId, displayTab) {
+  const tab = normalizeDisplayTab(displayTab);
+  const accounting = accountingForTab(tab);
+  const tree = await dbConn.query(`
+    WITH RECURSIVE tree AS (
+      SELECT id FROM chart_of_accounts WHERE id = $1
+      UNION ALL
+      SELECT c.id
+      FROM chart_of_accounts c
+      INNER JOIN tree t ON c.parent_id = t.id
+    )
+    SELECT id FROM tree
+  `, [rootId]);
+  const ids = (tree.rows || []).map((row) => row.id).filter(Boolean);
+  if (!ids.length) return [];
+  const placeholders = ids.map((_, index) => `$${index + 4}`).join(', ');
+  await dbConn.query(
+    `UPDATE chart_of_accounts
+     SET display_tab = $1,
+         account_type = COALESCE($2, account_type),
+         account_nature = COALESCE($3, account_nature),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id IN (${placeholders})`,
+    [tab, accounting?.accountType || null, accounting?.nature || null, ...ids],
+  );
+  return ids;
+}
+
 async function syncCaixaRegisterFromAccount(account) {
   if (!account || !isBranchCaixaLeafCode(account.code) || account.is_header) return;
   const branchId = String(account.branch_id || '').trim();
@@ -96,6 +156,7 @@ module.exports = function(broadcastTable) {
           coa.is_active,
           coa.opening_balance,
           coa.branch_id,
+          coa.display_tab,
           coa.created_at,
           coa.updated_at,
           parent.name as parent_name,
@@ -476,7 +537,7 @@ module.exports = function(broadcastTable) {
     try {
       const { 
         name, description, account_type, account_nature,
-        parent_id, level, is_header, opening_balance, branch_id 
+        parent_id, level, is_header, opening_balance, branch_id, display_tab
       } = req.body;
       let { code } = req.body;
       const wantHeader = is_header === true || is_header === 1 || is_header === 'true';
@@ -565,10 +626,10 @@ module.exports = function(broadcastTable) {
 
       const result = await db.query(`
         INSERT INTO chart_of_accounts 
-        (code, name, description, account_type, account_nature, parent_id, level, is_header, opening_balance, current_balance, branch_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
+        (code, name, description, account_type, account_nature, parent_id, level, is_header, opening_balance, current_balance, branch_id, display_tab)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $11)
         RETURNING *
-      `, [code, name, description, account_type, account_nature, parent_id, level || 1, wantHeader, opening_balance || 0, branch_id]);
+      `, [code, name, description, account_type, account_nature, parent_id, level || 1, wantHeader, opening_balance || 0, branch_id, normalizeDisplayTab(display_tab)]);
 
       await promoteToCategoryHeader(db, parent_id);
       await broadcastTable('chart_of_accounts');
@@ -604,7 +665,7 @@ module.exports = function(broadcastTable) {
       const { id } = req.params;
       const { 
         code, name, description, account_type, account_nature,
-        parent_id, level, is_header, is_active, opening_balance, branch_id
+        parent_id, level, is_header, is_active, opening_balance, branch_id, display_tab
       } = req.body;
       const parentId = parent_id === '' || parent_id === undefined ? null : parent_id;
 
@@ -651,6 +712,19 @@ module.exports = function(broadcastTable) {
       }
 
       const updated = result.rows[0];
+      if (display_tab !== undefined) {
+        try {
+          await cascadeDisplayTab(db, id, display_tab);
+          updated.display_tab = normalizeDisplayTab(display_tab);
+          const accounting = accountingForTab(display_tab);
+          if (accounting) {
+            updated.account_type = accounting.accountType;
+            updated.account_nature = accounting.nature;
+          }
+        } catch (tabErr) {
+          console.warn('[CHART OF ACCOUNTS] display_tab cascade:', tabErr.message);
+        }
+      }
       try {
         const linked = await syncLinkedEntityNameFromCoa(db, {
           code: updated.code,

@@ -6281,6 +6281,9 @@ export const en = {
     typeEquity: "Equity",
     typeRevenue: "Revenue",
     typeExpense: "Expense",
+    tabPlacementLabel: "Tab",
+    tabPlacementHint: "Account numbers stay the same. This parent and all its children take the tab's accounting type, so reports and calculations follow (Custos = expenses).",
+    tabPlacementHintLeaf: "Account number stays the same. This account takes the tab's accounting type, so reports and calculations follow.",
 
     nameLabel: "Name *",
     namePlaceholder: "e.g., Caixa",

@@ -19,6 +19,8 @@ export interface Account {
   opening_balance: number;
   current_balance: number;
   branch_id?: string | null;
+  /** Display-only COA tab. Children inherit from the nearest ancestor that has one. */
+  display_tab?: string | null;
   children_count?: number;
   created_at: string;
   updated_at: string;
@@ -104,6 +106,7 @@ export interface AccountFormData {
   is_header?: boolean;
   opening_balance?: number;
   branch_id?: string | null;
+  display_tab?: string | null;
 }
 
 // Helper to get account type label

@@ -293,6 +293,32 @@ async function ensureBranchPricingColumn(db) {
   }
 }
 
+async function ensureCoaDisplayTabColumn(db) {
+  if (db.engine === 'postgres') {
+    try {
+      await db.query('ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS display_tab VARCHAR(32)');
+    } catch (err) {
+      if (err.code !== '42701') console.warn('[SCHEMA] chart_of_accounts.display_tab:', err.message);
+    }
+    return;
+  }
+  if (db.sqlite) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma('table_info(chart_of_accounts)');
+    } catch (_) {
+      return;
+    }
+    if (!cols.length) return;
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('display_tab')) {
+      try {
+        db.sqlite.exec('ALTER TABLE chart_of_accounts ADD COLUMN display_tab TEXT');
+      } catch (_) {}
+    }
+  }
+}
+
 /** Soft-delete flag — PG 001 created branches without is_active. */
 async function ensureBranchActiveColumn(db) {
   if (db.engine === 'postgres') {
@@ -1330,6 +1356,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureBranchActiveColumn(db);
+    await ensureCoaDisplayTabColumn(db);
     await ensureProductPriceOverrideColumn(db);
     await ensureProductVatOverrideColumn(db);
     try {
@@ -1411,6 +1438,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureBranchActiveColumn(db);
+    await ensureCoaDisplayTabColumn(db);
     await ensureProductPriceOverrideColumn(db);
     await ensureProductVatOverrideColumn(db);
     try {
@@ -1460,6 +1488,7 @@ module.exports = {
   ensureClientsUniqueNif,
   ensureBranchPricingColumn,
   ensureBranchActiveColumn,
+  ensureCoaDisplayTabColumn,
   ensureProductPriceOverrideColumn,
   ensureProductVatOverrideColumn,
   ensureSalesCreditPaymentMethod,

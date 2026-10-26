@@ -41,6 +41,23 @@ function sumByPrefix(rows, prefixes) {
   }, 0);
 }
 
+test('reclassified class 2 expense is included in P&L costs without changing the code', () => {
+  assert.match(incomeStatementSrc, /sumByTypeExcludingPrefixes\(rows, 'expense'/);
+  const rows = [
+    { code: '212', account_type: 'expense', account_nature: 'debit', is_header: false, total_debits: 800, total_credits: 0 },
+    { code: '711', account_type: 'expense', account_nature: 'debit', is_header: false, total_debits: 4000, total_credits: 0 },
+  ];
+  const pgcExpense = ['71', '72', '73', '75', '76', '77', '78', '79', '87'];
+  const relocated = rows.reduce((sum, row) => {
+    if (row.is_header || row.account_type !== 'expense') return sum;
+    if (pgcExpense.some((p) => row.code === p || row.code.startsWith(p))) return sum;
+    return sum + periodMovement(row);
+  }, 0);
+  assert.equal(relocated, 800);
+  assert.equal(sumByPrefix(rows, ['71']), 4000);
+  assert.equal(relocated + sumByPrefix(rows, ['71']), 4800);
+});
+
 test('posted 613 sales and 711 CMV produce positive gross profit', () => {
   const rows = [
     { code: '613', account_nature: 'credit', total_credits: 10000, total_debits: 0 },

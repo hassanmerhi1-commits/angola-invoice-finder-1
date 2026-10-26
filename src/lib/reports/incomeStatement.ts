@@ -3,10 +3,14 @@ export type TbRow = {
   name?: string;
   account_type?: string;
   account_nature?: string;
+  is_header?: boolean;
   total_debits?: number;
   total_credits?: number;
   closing_balance?: number;
 };
+
+const PGC_REVENUE_PREFIXES = ['61', '62', '63', '64', '65', '66', '67', '68', '69'];
+const PGC_EXPENSE_PREFIXES = ['71', '72', '73', '75', '76', '77', '78', '79', '87'];
 
 export type IncomeStatementLine = {
   code: string;
@@ -63,6 +67,22 @@ export function sumByPrefix(rows: TbRow[], prefixes: string[]): number {
   }, 0);
 }
 
+/** Accounts reclassified to revenue/expense (codes stay) that PGC prefixes would miss. */
+export function sumByTypeExcludingPrefixes(
+  rows: TbRow[],
+  accountType: 'revenue' | 'expense',
+  prefixes: string[],
+): number {
+  return rows.reduce((sum, row) => {
+    if (row.is_header) return sum;
+    if (String(row.account_type || '').toLowerCase() !== accountType) return sum;
+    const code = String(row.code || '').trim();
+    if (!code) return sum;
+    if (prefixes.some((p) => code === p || code.startsWith(p))) return sum;
+    return sum + periodMovement(row);
+  }, 0);
+}
+
 /**
  * Angola PGC (class 6 proveitos, class 7 custos). Posted sales credit 613;
  * CMV debits 711. Do not use SNC 2009 (inverted 6/7) prefixes.
@@ -70,7 +90,8 @@ export function sumByPrefix(rows: TbRow[], prefixes: string[]): number {
 export function buildIncomeStatement(rows: TbRow[], labels: IncomeStatementLabels) {
   const salesOfGoods = sumByPrefix(rows, ['61']);
   const services = sumByPrefix(rows, ['62']);
-  const otherIncome = sumByPrefix(rows, ['63', '64', '65', '68', '69']);
+  const otherIncome = sumByPrefix(rows, ['63', '64', '65', '68', '69'])
+    + sumByTypeExcludingPrefixes(rows, 'revenue', PGC_REVENUE_PREFIXES);
   const operatingIncome = salesOfGoods + services + otherIncome;
 
   const cogs = sumByPrefix(rows, ['71']);
@@ -79,7 +100,8 @@ export function buildIncomeStatement(rows: TbRow[], labels: IncomeStatementLabel
   const externalSupplies = sumByPrefix(rows, ['75']);
   const personnel = sumByPrefix(rows, ['72']);
   const depreciation = sumByPrefix(rows, ['73']);
-  const otherOpex = sumByPrefix(rows, ['78', '79']);
+  const otherOpex = sumByPrefix(rows, ['78', '79'])
+    + sumByTypeExcludingPrefixes(rows, 'expense', PGC_EXPENSE_PREFIXES);
   const totalOperatingExpenses = externalSupplies + personnel + depreciation + otherOpex;
 
   const operatingProfit = grossProfit - totalOperatingExpenses;

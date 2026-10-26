@@ -6283,6 +6283,9 @@ export const pt: TranslationKeys = {
     typeEquity: "Capital Próprio",
     typeRevenue: "Receitas",
     typeExpense: "Gastos",
+    tabPlacementLabel: "Separador",
+    tabPlacementHint: "Os números ficam iguais. Esta conta-mãe e todas as filhas passam a ter o tipo do separador, por isso os relatórios e os cálculos seguem (Custos = gastos).",
+    tabPlacementHintLeaf: "O número fica igual. Esta conta passa a ter o tipo do separador, por isso os relatórios e os cálculos seguem.",
 
     nameLabel: "Nome *",
     namePlaceholder: "ex: Caixa Principal",
