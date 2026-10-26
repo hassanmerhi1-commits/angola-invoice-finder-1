@@ -1,5 +1,5 @@
 /**
- * Demonstração de Resultados — Angola PGC (classe 6 proveitos, classe 7 custos).
+ * Demonstração de Resultados — Angola PGC (classe 6 proveitos, classes 2 e 7 custos).
  */
 
 import { useEffect, useState } from 'react';

@@ -33,6 +33,7 @@ export type IncomeStatementLabels = {
   personnelExpenses: string;
   depreciationAmortization: string;
   otherOperatingExpenses: string;
+  inventories: string;
   totalOperatingExpenses: string;
   operatingResult: string;
   financialIncome: string;
@@ -95,14 +96,15 @@ export function buildIncomeStatement(rows: TbRow[], labels: IncomeStatementLabel
   const operatingIncome = salesOfGoods + services + otherIncome;
 
   const cogs = sumByPrefix(rows, ['71']);
+  const existencias = sumByPrefix(rows, ['2']);
   const grossProfit = operatingIncome - cogs;
 
   const externalSupplies = sumByPrefix(rows, ['75']);
   const personnel = sumByPrefix(rows, ['72']);
   const depreciation = sumByPrefix(rows, ['73']);
   const otherOpex = sumByPrefix(rows, ['78', '79'])
-    + sumByTypeExcludingPrefixes(rows, 'expense', PGC_EXPENSE_PREFIXES);
-  const totalOperatingExpenses = externalSupplies + personnel + depreciation + otherOpex;
+    + sumByTypeExcludingPrefixes(rows, 'expense', [...PGC_EXPENSE_PREFIXES, '2']);
+  const totalOperatingExpenses = existencias + externalSupplies + personnel + depreciation + otherOpex;
 
   const operatingProfit = grossProfit - totalOperatingExpenses;
 
@@ -125,6 +127,7 @@ export function buildIncomeStatement(rows: TbRow[], labels: IncomeStatementLabel
     { code: '', description: labels.totalRevenue, value: totalRevenue, isSubtotal: true },
 
     { code: '', description: labels.sectionExpenses, value: 0, isHeader: true },
+    { code: '2', description: labels.inventories, value: existencias, indent: 1 },
     { code: '71', description: labels.costOfGoodsSold, value: cogs, indent: 1 },
     { code: '72', description: labels.personnelExpenses, value: personnel, indent: 1 },
     { code: '73', description: labels.depreciationAmortization, value: depreciation, indent: 1 },

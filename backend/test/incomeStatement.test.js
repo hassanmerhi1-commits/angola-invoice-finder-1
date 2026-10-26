@@ -41,21 +41,24 @@ function sumByPrefix(rows, prefixes) {
   }, 0);
 }
 
-test('reclassified class 2 expense is included in P&L costs without changing the code', () => {
-  assert.match(incomeStatementSrc, /sumByTypeExcludingPrefixes\(rows, 'expense'/);
+test('class 2 existências is a dedicated P&L cost line and is not counted twice in other opex', () => {
+  assert.match(incomeStatementSrc, /existencias = sumByPrefix\(rows, \['2'\]\)/);
+  assert.match(incomeStatementSrc, /code: '2', description: labels\.inventories/);
   const rows = [
-    { code: '212', account_type: 'expense', account_nature: 'debit', is_header: false, total_debits: 800, total_credits: 0 },
+    { code: '212', account_type: 'asset', account_nature: 'debit', is_header: false, total_debits: 800, total_credits: 0 },
     { code: '711', account_type: 'expense', account_nature: 'debit', is_header: false, total_debits: 4000, total_credits: 0 },
   ];
-  const pgcExpense = ['71', '72', '73', '75', '76', '77', '78', '79', '87'];
-  const relocated = rows.reduce((sum, row) => {
+  const existencias = sumByPrefix(rows, ['2']);
+  const pgcExpense = ['71', '72', '73', '75', '76', '77', '78', '79', '87', '2'];
+  const otherRelocated = rows.reduce((sum, row) => {
     if (row.is_header || row.account_type !== 'expense') return sum;
     if (pgcExpense.some((p) => row.code === p || row.code.startsWith(p))) return sum;
     return sum + periodMovement(row);
   }, 0);
-  assert.equal(relocated, 800);
+  assert.equal(existencias, 800);
+  assert.equal(otherRelocated, 0);
   assert.equal(sumByPrefix(rows, ['71']), 4000);
-  assert.equal(relocated + sumByPrefix(rows, ['71']), 4800);
+  assert.equal(existencias + sumByPrefix(rows, ['71']), 4800);
 });
 
 test('posted 613 sales and 711 CMV produce positive gross profit', () => {
