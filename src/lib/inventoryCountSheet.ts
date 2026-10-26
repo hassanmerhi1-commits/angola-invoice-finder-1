@@ -1,4 +1,5 @@
 import { format } from 'date-fns';
+import * as XLSX from 'xlsx';
 import { Product } from '@/types/erp';
 import { readProductStock } from '@/lib/inventoryGrid';
 import { escapeHtml } from '@/lib/reportExport';
@@ -85,17 +86,9 @@ export function countSheetMetaLines(header: CountSheetHeader): string[] {
   return [printed.company, printed.branch, printed.asOf, printed.countedBy];
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 function countSheetFileName(header: CountSheetHeader): string {
   const code = String(header.branchCode || 'geral').replace(/[^\w-]+/g, '');
-  return `${COUNT_SHEET_TEMPLATE.filePrefix}_${code}_${format(header.date || new Date(), 'yyyy-MM-dd')}.xls`;
+  return `${COUNT_SHEET_TEMPLATE.filePrefix}_${code}_${format(header.date || new Date(), 'yyyy-MM-dd')}.xlsx`;
 }
 
 export function buildCountSheetHtml(opts: {
@@ -189,170 +182,79 @@ export function buildCountSheetHtml(opts: {
 </html>`;
 }
 
-function excelBorder(): string {
-  return `
-    <Borders>
-      <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
-      <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
-      <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
-      <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#7F8C9B"/>
-    </Borders>`;
-}
-
-function excelStringCell(style: string, value: string, mergeAcross = 0): string {
-  const merge = mergeAcross > 0 ? ` ss:MergeAcross="${mergeAcross}"` : '';
-  return `<Cell${merge} ss:StyleID="${style}"><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`;
-}
-
-function excelNumberCell(style: string, value: number): string {
-  return `<Cell ss:StyleID="${style}"><Data ss:Type="Number">${value}</Data></Cell>`;
-}
-
-function excelEmptyCell(style: string): string {
-  return `<Cell ss:StyleID="${style}"/>`;
-}
-
-export function buildCountSheetExcelXml(
+export function buildCountSheetAoa(
   rows: CountSheetRow[],
   header: CountSheetHeader,
-): string {
+): Array<Array<string | number | null>> {
   const printed = buildCountSheetPrintedHeader(header);
-  const lastRow = 5 + rows.length;
-  const dataRows = rows.map((row) => {
-    const qtyCell = row.qty == null
-      ? excelEmptyCell('CellNum')
-      : excelNumberCell('CellNum', Number(row.qty));
-    return `<Row ss:Height="12.5">${
-      excelStringCell('Cell', row.sku)
-    }${
-      excelStringCell('Cell', row.name)
-    }${qtyCell}${excelEmptyCell('Write')}${excelEmptyCell('Write')}</Row>`;
-  }).join('');
+  return [
+    [printed.title, null, null, printed.asOf, null],
+    [printed.company, null, null, printed.countedBy, null],
+    [printed.branch, null, null, null, null],
+    [null, null, null, null, null],
+    [
+      COUNT_SHEET_TEMPLATE.colCode,
+      COUNT_SHEET_TEMPLATE.colDescription,
+      COUNT_SHEET_TEMPLATE.colQty,
+      COUNT_SHEET_TEMPLATE.colCount,
+      COUNT_SHEET_TEMPLATE.colDiff,
+    ],
+    ...rows.map((row) => [
+      row.sku,
+      row.name,
+      row.qty == null ? null : Number(row.qty),
+      null,
+      null,
+    ]),
+  ];
+}
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
- <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">
-  <Title>${escapeXml(printed.title)}</Title>
- </DocumentProperties>
- <Styles>
-  <Style ss:ID="Default" ss:Name="Normal">
-   <Font ss:FontName="Arial" ss:Size="8"/>
-   <Alignment ss:Vertical="Center"/>
-  </Style>
-  <Style ss:ID="Title">
-   <Font ss:FontName="Arial" ss:Size="12" ss:Bold="1"/>
-   <Alignment ss:Vertical="Center"/>
-  </Style>
-  <Style ss:ID="Meta">
-   <Font ss:FontName="Arial" ss:Size="8"/>
-   <Alignment ss:Vertical="Center"/>
-  </Style>
-  <Style ss:ID="MetaRight">
-   <Font ss:FontName="Arial" ss:Size="8"/>
-   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
-  </Style>
-  <Style ss:ID="Head">
-   <Font ss:FontName="Arial" ss:Size="8" ss:Bold="1"/>
-   <Interior ss:Color="#D6E3F0" ss:Pattern="Solid"/>
-   <Alignment ss:Horizontal="Left" ss:Vertical="Center"/>
-   ${excelBorder()}
-  </Style>
-  <Style ss:ID="HeadNum">
-   <Font ss:FontName="Arial" ss:Size="8" ss:Bold="1"/>
-   <Interior ss:Color="#D6E3F0" ss:Pattern="Solid"/>
-   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
-   ${excelBorder()}
-  </Style>
-  <Style ss:ID="Cell">
-   <Font ss:FontName="Arial" ss:Size="8"/>
-   <Alignment ss:Vertical="Center"/>
-   ${excelBorder()}
-  </Style>
-  <Style ss:ID="CellNum">
-   <Font ss:FontName="Arial" ss:Size="8"/>
-   <NumberFormat ss:Format="#,##0.00"/>
-   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
-   ${excelBorder()}
-  </Style>
-  <Style ss:ID="Write">
-   <Font ss:FontName="Arial" ss:Size="8"/>
-   <Interior ss:Color="#FFFDF4" ss:Pattern="Solid"/>
-   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
-   ${excelBorder()}
-  </Style>
- </Styles>
- <Worksheet ss:Name="Qtd por Armazem">
-  <Names>
-   <NamedRange ss:Name="Print_Area" ss:RefersTo="='Qtd por Armazem'!R1C1:R${lastRow}C5"/>
-  </Names>
-  <Table ss:ExpandedColumnCount="5" ss:ExpandedRowCount="${lastRow}" ss:DefaultRowHeight="12.5">
-   <Column ss:Index="1" ss:AutoFitWidth="0" ss:Width="62"/>
-   <Column ss:Index="2" ss:AutoFitWidth="0" ss:Width="210"/>
-   <Column ss:Index="3" ss:AutoFitWidth="0" ss:Width="46"/>
-   <Column ss:Index="4" ss:AutoFitWidth="0" ss:Width="54"/>
-   <Column ss:Index="5" ss:AutoFitWidth="0" ss:Width="44"/>
-   <Row ss:Height="16">
-    ${excelStringCell('Title', printed.title, 2)}
-    ${excelStringCell('MetaRight', printed.asOf, 1)}
-   </Row>
-   <Row ss:Height="13">
-    ${excelStringCell('Meta', printed.company, 2)}
-    ${excelStringCell('MetaRight', printed.countedBy, 1)}
-   </Row>
-   <Row ss:Height="13">
-    ${excelStringCell('Meta', printed.branch, 4)}
-   </Row>
-   <Row ss:Height="6"/>
-   <Row ss:Height="14">
-    ${excelStringCell('Head', COUNT_SHEET_TEMPLATE.colCode)}
-    ${excelStringCell('Head', COUNT_SHEET_TEMPLATE.colDescription)}
-    ${excelStringCell('HeadNum', COUNT_SHEET_TEMPLATE.colQty)}
-    ${excelStringCell('HeadNum', COUNT_SHEET_TEMPLATE.colCount)}
-    ${excelStringCell('HeadNum', COUNT_SHEET_TEMPLATE.colDiff)}
-   </Row>
-   ${dataRows}
-  </Table>
-  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
-   <PageSetup>
-    <Layout x:Orientation="Portrait"/>
-    <Header x:Margin="0.12"/>
-    <Footer x:Margin="0.12"/>
-    <PageMargins x:Bottom="0.28" x:Left="0.25" x:Right="0.25" x:Top="0.28"/>
-   </PageSetup>
-   <FitToPage/>
-   <Print>
-    <ValidPrinterInfo/>
-    <PaperSizeIndex>9</PaperSizeIndex>
-    <FitWidth>1</FitWidth>
-    <FitHeight>0</FitHeight>
-   </Print>
-   <FreezePanes/>
-   <FrozenNoSplit/>
-   <SplitHorizontal>5</SplitHorizontal>
-   <TopRowBottomPane>5</TopRowBottomPane>
-   <ActivePane>2</ActivePane>
-  </WorksheetOptions>
- </Worksheet>
-</Workbook>`;
+export function buildCountSheetWorkbook(
+  rows: CountSheetRow[],
+  header: CountSheetHeader,
+): XLSX.WorkBook {
+  const printed = buildCountSheetPrintedHeader(header);
+  const aoa = buildCountSheetAoa(rows, header);
+  const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: false });
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } },
+    { s: { r: 0, c: 3 }, e: { r: 0, c: 4 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 2 } },
+    { s: { r: 1, c: 3 }, e: { r: 1, c: 4 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 4 } },
+  ];
+  ws['!cols'] = [
+    { wch: 14 },
+    { wch: 36 },
+    { wch: 9 },
+    { wch: 11 },
+    { wch: 8 },
+  ];
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+  for (let r = 5; r <= range.e.r; r += 1) {
+    const cell = ws[XLSX.utils.encode_cell({ r, c: 2 })];
+    if (cell && typeof cell.v === 'number') cell.z = '#,##0.00';
+  }
+  ws['!freeze'] = { xSplit: 0, ySplit: 5, topLeftCell: 'A6', activePane: 'bottomLeft', state: 'frozen' };
+  ws['!margins'] = { left: 0.25, right: 0.25, top: 0.4, bottom: 0.32, header: 0.16, footer: 0.16 };
+  ws['!pageSetup'] = {
+    paperSize: 9,
+    orientation: 'portrait',
+    fitToWidth: 1,
+    fitToHeight: 0,
+    horizontalDpi: 300,
+    verticalDpi: 300,
+  };
+  ws['!printHeader'] = `&L&B${printed.title}&R${printed.asOf}`;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Qtd por Armazem');
+  return wb;
 }
 
 export function downloadCountSheetExcel(
   rows: CountSheetRow[],
   header: CountSheetHeader,
 ): void {
-  const xml = buildCountSheetExcelXml(rows, header);
-  const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = countSheetFileName(header);
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  const wb = buildCountSheetWorkbook(rows, header);
+  XLSX.writeFile(wb, countSheetFileName(header), { bookType: 'xlsx', cellStyles: true });
 }

@@ -73,3 +73,14 @@ test('posted 613 sales and 711 CMV produce positive gross profit', () => {
   assert.equal(sales - cogs - fse, 5500);
   assert.equal(sumByPrefix(rows, ['71']) !== sales, true);
 });
+
+test('P&L Excel export builds a real .xlsx statement workbook', () => {
+  const excelSrc = fs.readFileSync(
+    path.join(__dirname, '../../src/lib/reports/incomeStatementExcel.ts'),
+    'utf8',
+  );
+  assert.match(excelSrc, /bookType: 'xlsx'/);
+  assert.match(excelSrc, /colVariancePct/);
+  assert.match(excelSrc, /!views/);
+  assert.match(excelSrc, /#,##0\.00/);
+});
