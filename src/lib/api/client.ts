@@ -17,8 +17,9 @@ import {
 } from './config';
 import {
   cacheOfflineLoginCredential,
-  tryOfflineLogin,
+  cityUnreachableOfflineHint,
   setOfflineModeActive,
+  tryOfflineLoginDetailed,
 } from '@/lib/offlineAuth';
 import { electronHttpJson, isElectronLanClient } from '@/lib/electronHttp';
 import { isNetworkErrorMessage } from '@/lib/networkErrors';
@@ -599,25 +600,24 @@ export const api = {
       if (isElectronMode() && !isDemoMode()) {
         clearStaleClientConfigIfServerMachine();
         invalidateElectronApiBaseCache();
-        const lanClient = await isElectronLanClient();
-        if (lanClient && isThinClientMode()) {
-          const ready = await waitForEmbeddedBackendHealth({ timeoutMs: 15000 });
-          if (!ready.ok) {
-            const offlineUser = await tryOfflineLogin(loginId, password);
-            if (offlineUser) {
-              setAuthToken(null);
-              setOfflineModeActive(true);
-              return {
-                data: { token: '', user: offlineUser, offline: true, mfaRequired: false, mfaToken: undefined as string | undefined },
-              };
-            }
-            return { error: ready.ok === false ? ready.error : 'Backend not ready', errorKind: 'connection' as LoginErrorKind };
+        const ready = await waitForEmbeddedBackendHealth({ timeoutMs: 15000 });
+        if (!ready.ok) {
+          const offline = await tryOfflineLoginDetailed(loginId, password);
+          if (offline.user) {
+            setAuthToken(null);
+            setOfflineModeActive(true);
+            return {
+              data: { token: '', user: offline.user, offline: true, mfaRequired: false, mfaToken: undefined as string | undefined },
+            };
           }
-        } else {
-          const ready = await waitForEmbeddedBackendHealth({ timeoutMs: 15000 });
-          if (!ready.ok) {
-            return { error: ready.ok === false ? ready.error : 'Backend not ready', errorKind: 'connection' as LoginErrorKind };
+          if (offline.reason === 'bad_password') {
+            return { error: 'Credenciais inválidas', errorKind: 'credentials' as LoginErrorKind };
           }
+          const base = ready.error || 'Backend not ready';
+          return {
+            error: `${base}${cityUnreachableOfflineHint(offline.reason)}`,
+            errorKind: 'connection' as LoginErrorKind,
+          };
         }
       }
 
@@ -636,7 +636,7 @@ export const api = {
       if (httpResult.data?.token && isJwtAuthToken(httpResult.data.token)) {
         setAuthToken(httpResult.data.token);
         setOfflineModeActive(false);
-        if (httpResult.data.user && isThinClientMode()) {
+        if (httpResult.data.user && isElectronMode()) {
           try {
             const u = httpResult.data.user;
             await cacheOfflineLoginCredential(loginId, password, {
@@ -656,21 +656,19 @@ export const api = {
         return httpResult;
       }
 
-      if (isThinClientMode()) {
-        const offlineUser = await tryOfflineLogin(loginId, password);
-        if (offlineUser) {
-          setAuthToken(null);
-          setOfflineModeActive(true);
-          return {
-            data: {
-              token: '',
-              user: offlineUser,
-              offline: true,
-              mfaRequired: false,
-              mfaToken: undefined as string | undefined,
-            },
-          };
-        }
+      const offlineAfterHttp = await tryOfflineLoginDetailed(loginId, password);
+      if (offlineAfterHttp.user) {
+        setAuthToken(null);
+        setOfflineModeActive(true);
+        return {
+          data: {
+            token: '',
+            user: offlineAfterHttp.user,
+            offline: true,
+            mfaRequired: false,
+            mfaToken: undefined as string | undefined,
+          },
+        };
       }
       const err = httpResult.error || 'Credenciais inválidas';
       return { error: err, errorKind: classifyLoginError(err) };

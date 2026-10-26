@@ -222,6 +222,11 @@ export interface ElectronAPI {
     setPrinterConfig?: (config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   };
 
+  offlineAuth?: {
+    read: () => Promise<{ store?: Record<string, unknown> }>;
+    write: (store: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+  };
+
   // Auto-updater
   updater: {
     check: () => Promise<{

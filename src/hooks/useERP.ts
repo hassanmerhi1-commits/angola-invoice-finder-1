@@ -1344,6 +1344,21 @@ export function useAuth() {
       if (response.error) {
         console.warn('[Auth] Login failed:', response.error);
         const kind = (response as { errorKind?: 'credentials' | 'connection' }).errorKind || 'credentials';
+        if (kind === 'connection' && !isDemoMode()) {
+          const { tryOfflineLogin, setOfflineModeActive } = await import('@/lib/offlineAuth');
+          const offlineUser = await tryOfflineLogin(normalized, password);
+          if (offlineUser) {
+            setAuthToken(null);
+            setOfflineModeActive(true);
+            storage.clearLocalProductsCache();
+            storage.setCurrentUser(offlineUser);
+            applyUserBranchLockOnLogin(offlineUser);
+            window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
+            setAuthState({ user: offlineUser });
+            markElectronSessionAuthenticated();
+            return { ok: true, offline: true };
+          }
+        }
         return { ok: false, kind, message: response.error };
       }
       if (response.data?.mfaRequired && response.data?.mfaToken) {
@@ -1394,20 +1409,17 @@ export function useAuth() {
       console.warn('[Auth] Login API error:', e);
       if (!isDemoMode()) {
         const { tryOfflineLogin, setOfflineModeActive } = await import('@/lib/offlineAuth');
-        const { isThinClientMode } = await import('@/lib/api/config');
-        if (isThinClientMode()) {
-          const offlineUser = await tryOfflineLogin(normalized, password);
-          if (offlineUser) {
-            setAuthToken(null);
-            setOfflineModeActive(true);
-            storage.clearLocalProductsCache();
-            storage.setCurrentUser(offlineUser);
-            applyUserBranchLockOnLogin(offlineUser);
-            window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
-            setAuthState({ user: offlineUser });
-            markElectronSessionAuthenticated();
-            return { ok: true, offline: true };
-          }
+        const offlineUser = await tryOfflineLogin(normalized, password);
+        if (offlineUser) {
+          setAuthToken(null);
+          setOfflineModeActive(true);
+          storage.clearLocalProductsCache();
+          storage.setCurrentUser(offlineUser);
+          applyUserBranchLockOnLogin(offlineUser);
+          window.dispatchEvent(new CustomEvent('nexor:branch-lock-changed'));
+          setAuthState({ user: offlineUser });
+          markElectronSessionAuthenticated();
+          return { ok: true, offline: true };
         }
         return { ok: false, kind: 'connection' };
       }

@@ -2659,6 +2659,50 @@ ipcMain.handle('app:setPrinterConfig', (_, config) => {
   }
 });
 
+function offlineLoginCachePath() {
+  return path.join(app.getPath('userData'), 'offline-login-cache.json');
+}
+
+function sanitizeOfflineLoginStore(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!value || typeof value !== 'object') continue;
+    if (typeof value.identifier !== 'string' || typeof value.passwordHash !== 'string') continue;
+    if (!value.user || typeof value.user !== 'object') continue;
+    out[String(key).toLowerCase()] = {
+      identifier: String(value.identifier).trim().toLowerCase(),
+      passwordHash: String(value.passwordHash),
+      user: value.user,
+      cachedAt: typeof value.cachedAt === 'string' ? value.cachedAt : new Date().toISOString(),
+    };
+  }
+  return out;
+}
+
+ipcMain.handle('offlineAuth:read', () => {
+  try {
+    const file = offlineLoginCachePath();
+    if (!fs.existsSync(file)) return { store: {} };
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return { store: sanitizeOfflineLoginStore(parsed) };
+  } catch (e) {
+    console.warn('[App] could not read offline login cache:', e.message);
+    return { store: {} };
+  }
+});
+
+ipcMain.handle('offlineAuth:write', (_, store) => {
+  try {
+    const clean = sanitizeOfflineLoginStore(store);
+    fs.writeFileSync(offlineLoginCachePath(), JSON.stringify(clean), 'utf8');
+    return { ok: true };
+  } catch (e) {
+    console.warn('[App] could not persist offline login cache:', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ============= SETUP WIZARD SUPPORT =============
 ipcMain.handle('setup:getConfig', async () => {
   try {

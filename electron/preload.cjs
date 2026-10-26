@@ -137,6 +137,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setPrinterConfig: (config) => ipcRenderer.invoke('app:setPrinterConfig', config),
   },
 
+  // Machine-level offline login cache (survives city /app vs 127.0.0.1 cache origin switch)
+  offlineAuth: {
+    read: () => ipcRenderer.invoke('offlineAuth:read'),
+    write: (store) => ipcRenderer.invoke('offlineAuth:write', store),
+  },
+
   // Auto-updater
   updater: {
     check: () => ipcRenderer.invoke('updater:check'),

@@ -10,6 +10,7 @@ import { getCompanySettings, softwareValidationLine } from './companySettings';
 import { taxBreakdownFromItems, IVA_EXEMPTION_REASON } from './taxUtils';
 import { receiptDocTypeLabel } from './fiscalInvoiceType';
 import { withFiscalHash } from './saleFiscalHash';
+import { OFFLINE_LOGIN_PRINTER_KEY } from './offlineAuth';
 
 // Printer configuration
 export interface PrinterConfig {
@@ -1056,21 +1057,29 @@ export function getPrinterConfig(): PrinterConfig {
   return { ...DEFAULT_PRINTER_CONFIG };
 }
 
+function printerDiskWithoutOfflineLogin(disk: Record<string, unknown>): Record<string, unknown> {
+  const { [OFFLINE_LOGIN_PRINTER_KEY]: _ignored, ...rest } = disk;
+  return rest;
+}
+
 /** Restore printer from Electron userData when this window's localStorage is empty (e.g. secondary login). */
 export async function hydratePrinterConfigFromDisk(): Promise<PrinterConfig> {
   const local = getPrinterConfig();
   if (local.deviceName?.trim()) return local;
   try {
     const disk = await window.electronAPI?.app?.getPrinterConfig?.();
-    if (disk && typeof disk === 'object' && typeof (disk as any).deviceName === 'string' && (disk as any).deviceName.trim()) {
+    const printerOnly = disk && typeof disk === 'object'
+      ? printerDiskWithoutOfflineLogin(disk as Record<string, unknown>)
+      : null;
+    if (printerOnly && typeof (printerOnly as any).deviceName === 'string' && (printerOnly as any).deviceName.trim()) {
       const merged: PrinterConfig = {
         ...DEFAULT_PRINTER_CONFIG,
-        ...disk,
-        type: normalizePrinterType((disk as any).type),
-        paperWidth: normalizePaperWidth((disk as any).paperWidth),
-        deviceName: String((disk as any).deviceName),
-        posAutoPrint: (disk as any).posAutoPrint !== false,
-        horizontalOffsetMm: normalizeOffsetMm((disk as any).horizontalOffsetMm),
+        ...printerOnly,
+        type: normalizePrinterType((printerOnly as any).type),
+        paperWidth: normalizePaperWidth((printerOnly as any).paperWidth),
+        deviceName: String((printerOnly as any).deviceName),
+        posAutoPrint: (printerOnly as any).posAutoPrint !== false,
+        horizontalOffsetMm: normalizeOffsetMm((printerOnly as any).horizontalOffsetMm),
       } as PrinterConfig;
       localStorage.setItem('kwanza_printer_config', JSON.stringify(merged));
       localStorage.setItem('kwanza_printer_configured', 'true');
@@ -1098,8 +1107,18 @@ export function savePrinterConfig(config: PrinterConfig): void {
     localStorage.setItem('kwanza_printer_configured', 'true');
   }
   // Machine-level copy so logout / secondary Electron windows keep the same printer.
+  // Preserve the offline-login map that shares this JSON on older Electron shells.
   try {
-    void window.electronAPI?.app?.setPrinterConfig?.(normalized as unknown as Record<string, unknown>);
+    void (async () => {
+      const disk = await window.electronAPI?.app?.getPrinterConfig?.();
+      const preserved = disk && typeof disk === 'object'
+        ? (disk as Record<string, unknown>)[OFFLINE_LOGIN_PRINTER_KEY]
+        : undefined;
+      await window.electronAPI?.app?.setPrinterConfig?.({
+        ...(normalized as unknown as Record<string, unknown>),
+        ...(preserved != null ? { [OFFLINE_LOGIN_PRINTER_KEY]: preserved } : {}),
+      });
+    })();
   } catch {
     /* ignore */
   }
