@@ -7,11 +7,12 @@ export { COLOR_THEME_IDS, THEME_PRESET_LIST, getThemePreset } from '@/themes/reg
 export const COLOR_THEME_STORAGE_KEY = 'nexor:color-theme';
 
 /** Default when nothing is stored yet. */
-export const DEFAULT_COLOR_THEME: ColorThemeId = 'ink';
+export const DEFAULT_COLOR_THEME: ColorThemeId = 'medium';
 
 function migrateLegacyThemeId(raw: string | null): ColorThemeId | null {
   if (!raw) return null;
   if (raw === 'cool') return 'cold';
+  if (raw === 'ink') return 'medium';
   if (isColorThemeId(raw)) return raw;
   return null;
 }
@@ -27,10 +28,7 @@ export function resolveColorTheme(preferred?: ColorThemeId | null): ColorThemeId
   return DEFAULT_COLOR_THEME;
 }
 
-const DARK_COLOR_THEMES = new Set<ColorThemeId>(['ink']);
-
 const THEME_WINDOW_HEX: Record<ColorThemeId, string> = {
-  ink: '#070b16',
   frost: '#f4f6fb',
   light: '#f7f8fb',
   medium: '#f3f6f9',
@@ -39,12 +37,11 @@ const THEME_WINDOW_HEX: Record<ColorThemeId, string> = {
 };
 
 export function themeWindowChrome(theme: ColorThemeId = resolveColorTheme()) {
-  const dark = DARK_COLOR_THEMES.has(theme);
   return {
     id: theme,
-    dark,
+    dark: false,
     background: THEME_WINDOW_HEX[theme],
-    colorScheme: dark ? 'dark' : 'light',
+    colorScheme: 'light' as const,
   };
 }
 

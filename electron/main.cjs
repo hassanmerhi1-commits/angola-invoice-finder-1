@@ -2622,7 +2622,7 @@ ipcMain.handle('clientLocal:pullMasterData', async (_, branchId) => {
 ipcMain.handle('sync:getApiUrl', async () => getCityApiBaseForClient());
 
 ipcMain.handle('app:setColorTheme', (_, themeId) => {
-  const id = WINDOW_CHROME[themeId] ? themeId : 'ink';
+  const id = WINDOW_CHROME[themeId] ? themeId : 'medium';
   writeStoredColorTheme(id);
   applyNativeWindowTheme(id);
   return true;
@@ -3773,7 +3773,6 @@ function requestAppExit() {
 }
 
 const WINDOW_CHROME = {
-  ink: { source: 'dark', background: '#070b16', symbol: '#e8eef5' },
   frost: { source: 'light', background: '#f4f6fb', symbol: '#1a1d24' },
   light: { source: 'light', background: '#f7f8fb', symbol: '#1a1d24' },
   medium: { source: 'light', background: '#f3f6f9', symbol: '#1a1d24' },
@@ -3793,9 +3792,10 @@ function readStoredColorTheme() {
   try {
     const raw = JSON.parse(fs.readFileSync(colorThemePrefsPath(), 'utf8'));
     const id = String(raw?.id || '').trim();
+    if (id === 'ink') return 'medium';
     if (WINDOW_CHROME[id]) return id;
-  } catch (_) { /* default ink */ }
-  return 'ink';
+  } catch (_) { /* default medium */ }
+  return 'medium';
 }
 
 function writeStoredColorTheme(id) {
@@ -3806,7 +3806,7 @@ function writeStoredColorTheme(id) {
 }
 
 function chromeForTheme(id) {
-  return WINDOW_CHROME[id] || WINDOW_CHROME.ink;
+  return WINDOW_CHROME[id] || WINDOW_CHROME.medium;
 }
 
 /** Windows caption buttons sit on a 32px overlay. Must be set at BrowserWindow create. */

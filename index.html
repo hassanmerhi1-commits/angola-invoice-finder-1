@@ -1,16 +1,16 @@
 <!doctype html>
-<html lang="en" data-color-theme="ink" style="color-scheme: dark">
+<html lang="en" data-color-theme="medium" style="color-scheme: light">
   <head>
     <script>
       (function () {
         try {
-          var raw = localStorage.getItem('nexor:color-theme') || 'ink';
+          var raw = localStorage.getItem('nexor:color-theme') || 'medium';
           if (raw === 'cool') raw = 'cold';
-          var ok = raw === 'ink' || raw === 'frost' || raw === 'light' || raw === 'medium' || raw === 'warm' || raw === 'cold';
-          var theme = ok ? raw : 'ink';
-          var dark = theme === 'ink';
+          if (raw === 'ink') raw = 'medium';
+          var ok = raw === 'frost' || raw === 'light' || raw === 'medium' || raw === 'warm' || raw === 'cold';
+          var theme = ok ? raw : 'medium';
           document.documentElement.setAttribute('data-color-theme', theme);
-          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+          document.documentElement.style.colorScheme = 'light';
         } catch (e) {}
       })();
     </script>

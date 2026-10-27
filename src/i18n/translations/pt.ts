@@ -3226,7 +3226,6 @@ export const pt: TranslationKeys = {
 
   colorTheme: {
     select: "Tema de cores",
-    ink: "Vidro tinta",
     frost: "Vidro tinta branco",
     light: "Claro",
     medium: "Médio",

@@ -1,6 +1,5 @@
 import { coldPreset } from '@/themes/coldPreset';
 import { frostPreset } from '@/themes/frostPreset';
-import { inkPreset } from '@/themes/inkPreset';
 import { lightPreset } from '@/themes/lightPreset';
 import { mediumPreset } from '@/themes/mediumPreset';
 import type { ColorThemeId, ThemePreset } from '@/themes/types';
@@ -8,7 +7,6 @@ import { COLOR_THEME_IDS, isColorThemeId } from '@/themes/types';
 import { warmThemePreset } from '@/themes/warmThemePreset';
 
 export const THEME_PRESETS: Record<ColorThemeId, ThemePreset> = {
-  ink: inkPreset,
   frost: frostPreset,
   light: lightPreset,
   medium: mediumPreset,
