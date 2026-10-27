@@ -1111,7 +1111,7 @@ export default function ChartOfAccounts() {
                   isSelected={selectedAccountId === account.id}
                   onToggle={handleToggle}
                   onSelect={handleSelectAccount}
-                  onEdit={openEditDialog}
+                  onOpenLedger={openLedger}
                   childrenByParent={childrenByParent}
                   rolledBalanceById={rolledBalanceById}
                   expandedIds={expandedIds}
@@ -1514,7 +1514,7 @@ interface AccountTreeRowProps {
   isSelected: boolean;
   onToggle: (id: string) => void;
   onSelect: (account: Account) => void;
-  onEdit: (account: Account) => void;
+  onOpenLedger: (account: Account) => void;
   childrenByParent: Map<string, Account[]>;
   rolledBalanceById: Map<string, number>;
   expandedIds: Set<string>;
@@ -1530,7 +1530,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
   isSelected,
   onToggle,
   onSelect,
-  onEdit,
+  onOpenLedger,
   childrenByParent,
   rolledBalanceById,
   expandedIds,
@@ -1575,7 +1575,11 @@ const AccountTreeRow = memo(function AccountTreeRow({
         onClick={() => onSelect(account)}
         onDoubleClick={(e) => {
           e.preventDefault();
-          onEdit(account);
+          if (hasChildren || account.is_header) {
+            onToggle(account.id);
+            return;
+          }
+          onOpenLedger(account);
         }}
       >
         <td className="px-3 py-1.5">
@@ -1616,7 +1620,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
           isSelected={selectedAccountId === child.id}
           onToggle={onToggle}
           onSelect={onSelect}
-          onEdit={onEdit}
+          onOpenLedger={onOpenLedger}
           childrenByParent={childrenByParent}
           rolledBalanceById={rolledBalanceById}
           expandedIds={expandedIds}
