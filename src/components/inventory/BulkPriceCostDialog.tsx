@@ -35,6 +35,7 @@ import {
   normalizeSearchText,
   sortProductSearchResults,
 } from '@/components/inventory/productLineSearch';
+import { anchorRectChanged, confirmInOpenDialog, releaseStuckDialogPointerLock } from '@/components/inventory/dialogPickerAnchor';
 
 interface BulkPriceCostDialogProps {
   open: boolean;
@@ -190,16 +191,21 @@ export function BulkPriceCostDialog({
 
   const syncPickerAnchor = useCallback((rowId: string | null) => {
     if (!rowId) {
-      setPickerAnchorRect(null);
+      setPickerAnchorRect((prev) => (prev == null ? prev : null));
       return;
     }
     const el = productInputRefs.current[rowId];
-    setPickerAnchorRect(el ? el.getBoundingClientRect() : null);
+    if (!el) {
+      setPickerAnchorRect((prev) => (prev == null ? prev : null));
+      return;
+    }
+    const next = el.getBoundingClientRect();
+    setPickerAnchorRect((prev) => (anchorRectChanged(prev, next) ? next : prev));
   }, []);
 
   useLayoutEffect(() => {
     if (!showPickerDropdown || !pickerRowId) {
-      setPickerAnchorRect(null);
+      setPickerAnchorRect((prev) => (prev == null ? prev : null));
       return;
     }
     syncPickerAnchor(pickerRowId);
@@ -386,7 +392,8 @@ export function BulkPriceCostDialog({
       onOpenChange(false);
       return;
     }
-    if (dirtyLines.length > 0 && !confirm(ui.discard)) return;
+    if (dirtyLines.length > 0 && !confirmInOpenDialog(ui.discard)) return;
+    releaseStuckDialogPointerLock();
     onOpenChange(false);
   };
 
@@ -396,7 +403,7 @@ export function BulkPriceCostDialog({
       toast.info(ui.noChanges);
       return;
     }
-    if (!confirm(ui.confirm.replace('{count}', String(dirtyLines.length)))) return;
+    if (!confirmInOpenDialog(ui.confirm.replace('{count}', String(dirtyLines.length)))) return;
     setSaving(true);
     try {
       const items = dirtyLines
@@ -426,6 +433,7 @@ export function BulkPriceCostDialog({
       toast.success(ui.success.replace('{count}', String(res.data.updated)));
       onApplied?.(res.data.updated);
       onOpenChange(false);
+      releaseStuckDialogPointerLock();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(message || ui.failed);
@@ -614,7 +622,6 @@ export function BulkPriceCostDialog({
 
         {showPickerDropdown
           && pickerRowId
-          && dialogContentRef.current
           && pickerAnchorRect
           && createPortal(
             <div
@@ -659,7 +666,7 @@ export function BulkPriceCostDialog({
                 ))
               )}
             </div>,
-            dialogContentRef.current,
+            document.body,
           )}
       </DialogContent>
     </Dialog>
