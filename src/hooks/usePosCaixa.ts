@@ -8,7 +8,7 @@ import {
   patchLocalCaixaSession,
 } from '@/lib/accountingStorage';
 import { api } from '@/lib/api/client';
-import { todayLocalDate, markPosCaixaClosed, getPosCaixaLastClosedAt } from '@/lib/posShiftSales';
+import { todayLocalDate, markPosCaixaClosed, getPosCaixaLastClosedAt, calendarDayFromApiDate } from '@/lib/posShiftSales';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import type { Caixa, CaixaSession } from '@/types/accounting';
@@ -195,7 +195,7 @@ function mapServerSession(row: Record<string, unknown>): CaixaSession {
     id: String(row.id),
     caixaId: String(row.caixaId ?? row.caixa_id ?? ''),
     branchId: String(row.branchId ?? row.branch_id ?? ''),
-    date: String(row.date ?? '').slice(0, 10),
+    date: calendarDayFromApiDate(row.date),
     openingBalance: Number(row.openingBalance ?? row.opening_balance) || 0,
     closingBalance:
       row.closingBalance != null || row.closing_balance != null
@@ -352,6 +352,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
     const cached = findCachedOpenSession(branchId);
     const prior = sessionRef.current;
     const sticky = cached ?? (prior?.status === 'open' ? prior : null);
+    const probeStartedAt = Date.now();
 
     if (sticky?.status === 'open') {
       setSession(sticky);
@@ -361,12 +362,26 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       // Always pull server totals (expenses/refunds), even on silent refresh — otherwise
       // a stale localStorage cache hides caixa expenses paid after the session opened.
       void fetchRemoteOpenSession(branchId, { syncExpenses: options?.syncExpenses }).then((remote) => {
+        const live = sessionRef.current;
+        const liveOpenedMs = (sess: CaixaSession | null | undefined) =>
+          new Date(sess?.openedAt || sess?.createdAt || 0).getTime();
         if (remote.kind === 'open') {
+          const remoteAt = liveOpenedMs(remote.session);
+          const newerLocal =
+            live?.status === 'open'
+            && live.id !== remote.session.id
+            && liveOpenedMs(live) >= remoteAt;
+          const closedStamp = getPosCaixaLastClosedAt(branchId);
+          const closedMs = closedStamp ? new Date(closedStamp).getTime() : NaN;
+          const alreadyClosed =
+            Number.isFinite(closedMs)
+            && remoteAt <= closedMs
+            && live?.id !== remote.session.id;
+          if (newerLocal || alreadyClosed) return;
           if (sticky && remote.session.id !== sticky.id) {
             // After EOD + reopen, a late probe can still see the old city shift.
             // Never replace a newer local open with an older remote leftover.
-            const stickyAt = new Date(sticky.openedAt || sticky.createdAt || 0).getTime();
-            const remoteAt = new Date(remote.session.openedAt || remote.session.createdAt || 0).getTime();
+            const stickyAt = liveOpenedMs(sticky);
             if (stickyAt >= remoteAt) {
               writePosCaixaCache(branchId, sticky);
               return;
@@ -381,6 +396,10 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
           return;
         }
         if (remote.kind === 'none') {
+          const openedDuringProbe =
+            live?.status === 'open'
+            && liveOpenedMs(live) >= probeStartedAt - 2000;
+          if (openedDuringProbe) return;
           if (sticky.pendingCitySync) {
             writePosCaixaCache(branchId, sticky);
             void syncOpenSessionToCity(sticky, branchName || branchId).then((adopted) => {
@@ -431,6 +450,13 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         { kind: 'error', error: 'timeout' } as RemoteOpenLookup,
       );
       if (remote.kind === 'open') {
+        const live = sessionRef.current;
+        const liveAt = new Date(live?.openedAt || live?.createdAt || 0).getTime();
+        const remoteAt = new Date(remote.session.openedAt || remote.session.createdAt || 0).getTime();
+        if (live?.status === 'open' && live.id !== remote.session.id && liveAt >= remoteAt) {
+          setLoading(false);
+          return;
+        }
         setSession(remote.session);
         writePosCaixaCache(branchId, remote.session);
         setLoading(false);
@@ -493,6 +519,12 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
             if (metaToken === metaLoadRef.current && cx) setCaixa(cx);
           })
           .catch(() => {});
+        return;
+      }
+      const live = sessionRef.current;
+      const liveOpenedMs = new Date(live?.openedAt || live?.createdAt || 0).getTime();
+      if (live?.status === 'open' && liveOpenedMs >= probeStartedAt - 2000) {
+        setLoading(false);
         return;
       }
       logCaixaDebug('refresh:city-none-clear-local', { branchId });

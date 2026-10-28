@@ -9,6 +9,7 @@ const { applyCaixaClose } = require('../sync/caixaIngest');
 const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPosting');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { syncOpenSessionExpensesFromLedger } = require('../lib/caixaCashRefund');
+const { sqlDateOnly } = require('../lib/sqlDateOnly');
 
 async function caixaTablesExist() {
   // Only cache positive results — a sticky false before migrations made
@@ -42,7 +43,7 @@ function mapSessionRow(row) {
     id: row.id,
     caixaId: row.caixa_id,
     branchId: row.branch_id,
-    date: row.date,
+    date: sqlDateOnly(row.date),
     openingBalance: Number(row.opening_balance) || 0,
     closingBalance: row.closing_balance != null ? Number(row.closing_balance) : undefined,
     totalIn: Number(row.total_in) || 0,
@@ -741,7 +742,7 @@ function caixaRouter(broadcastTable) {
 
       const sessionId = isUuid(id) ? String(id).trim() : crypto.randomUUID();
       const cxId = isUuid(caixaId) ? String(caixaId).trim() : crypto.randomUUID();
-      const today = date || new Date().toISOString().slice(0, 10);
+      const today = sqlDateOnly(date) || sqlDateOnly(new Date());
       const openBal = Number(openingBalance) || 0;
       const now = new Date().toISOString();
       const openedAt = req.body?.openedAt && String(req.body.openedAt).trim()

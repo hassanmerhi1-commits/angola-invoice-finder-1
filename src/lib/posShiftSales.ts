@@ -61,14 +61,50 @@ export function todayLocalDate(): string {
   return saleLocalDate(new Date().toISOString());
 }
 
+/**
+ * Calendar day of a caixa `date`.
+ * A Postgres DATE is local midnight; JSON from Angola turns it into the previous
+ * UTC evening (`2026-10-27T22:00:00.000Z` or `...T23:00:00.000Z`). Slicing that
+ * string makes a register opened today look like yesterday.
+ */
+export function calendarDayFromApiDate(value: unknown): string {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) return '';
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const zoned = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/i);
+  if (zoned) {
+    const hour = Number(zoned[2]);
+    const min = Number(zoned[3]);
+    const sec = Number(zoned[4]);
+    if (min === 0 && sec === 0 && hour >= 12 && hour <= 23) {
+      const y = Number(zoned[1].slice(0, 4));
+      const m = Number(zoned[1].slice(5, 7));
+      const d = Number(zoned[1].slice(8, 10));
+      return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+    }
+    return saleLocalDate(raw);
+  }
+  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return ymd ? ymd[1] : '';
+}
+
 /** Business day of the open register (YYYY-MM-DD), not the clock after midnight. */
 export function shiftBusinessDate(
   session: CaixaSession | null | undefined,
   fallback = todayLocalDate(),
 ): string {
-  const raw = String(session?.date || '').trim().slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  if (session?.openedAt) return saleLocalDate(session.openedAt);
+  const stored = calendarDayFromApiDate(session?.date);
+  const opened = session?.openedAt ? saleLocalDate(session.openedAt) : '';
+  // Already-sliced cache (`2026-10-27`) with an open instant of today is the same bug.
+  if (stored && opened && stored < opened) return opened;
+  if (stored) return stored;
+  if (opened) return opened;
   return fallback;
 }
 

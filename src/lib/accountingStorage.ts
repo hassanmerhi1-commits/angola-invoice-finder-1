@@ -27,6 +27,7 @@ import {
   cityLedgerOfflineError,
 } from '@/lib/api/config';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
+import { localISODate } from '@/lib/workingDayAccess';
 
 function newUuid(): string {
   // Cashier tills load the city page over http://, which is not a secure
@@ -965,7 +966,7 @@ export async function openCaixaSession(
   openingBalance: number, 
   openedBy: string
 ): Promise<CaixaSession> {
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = localISODate();
   const session: CaixaSession = {
     id: newUuid(),
     caixaId,
