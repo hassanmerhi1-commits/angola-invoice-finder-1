@@ -168,6 +168,8 @@ export default function Payments() {
   const navigate = useNavigate();
   const deepLinkHandled = useRef('');
   const returnToRef = useRef<string | null>(null);
+  /** When Pay now opens the dialog, keep that one document selected instead of every open item. */
+  const preferredOpenItemIdRef = useRef<string | null>(null);
   const { user } = useAuth();
   const { currentBranch } = useBranchContext();
   const { apiBranchId, treasuryAllBranches } = useBranchScope();
@@ -239,6 +241,7 @@ export default function Payments() {
   };
 
   const selectEntity = (entity: Client | Supplier) => {
+    preferredOpenItemIdRef.current = null;
     setEntityId(String(entity.id));
     setEntitySearch(formatEntityOption(entity));
     setEntityPickerOpen(false);
@@ -308,6 +311,7 @@ export default function Payments() {
   }, [openItems, searchTerm, resolveEntityName]);
 
   const resetForm = () => {
+    preferredOpenItemIdRef.current = null;
     setEntityId('');
     setEntitySearch('');
     setEntityPickerOpen(false);
@@ -430,6 +434,17 @@ export default function Payments() {
   const payableItemsKey = entityPayableItems.map((oi) => oi.id).join('|');
   useEffect(() => {
     if (!entityId || !payableItemsKey) return;
+    const preferredId = preferredOpenItemIdRef.current;
+    const preferred = preferredId
+      ? entityPayableItems.find((oi) => oi.id === preferredId)
+      : undefined;
+    if (preferred) {
+      const due = Math.round(Math.abs(signedOpenItemBalance(preferred)) * 100) / 100;
+      setSelectedOpenItems(new Set([preferred.id]));
+      setAmount(String(due));
+      setReference((prev) => prev || preferred.documentNumber || '');
+      return;
+    }
     setSelectedOpenItems(new Set(entityPayableItems.map((oi) => oi.id)));
     setAmount((prev) => {
       if (prev && Number(prev) > 0) return prev;
@@ -521,7 +536,7 @@ export default function Payments() {
     }
   };
 
-  const openNewDialog = (type: 'receipt' | 'payment', preset?: { entityId?: string; entityName?: string }) => {
+  const openNewDialog = (type: 'receipt' | 'payment', preset?: { entityId?: string; entityName?: string; openItemId?: string }) => {
     if (type === 'receipt' && !canRecordReceipt) {
       toast.error(t.topNav.toolbar.noPermission);
       return;
@@ -532,6 +547,7 @@ export default function Payments() {
     }
     setPaymentType(type);
     resetForm();
+    preferredOpenItemIdRef.current = preset?.openItemId || null;
     void (type === 'receipt' ? refreshClients() : refreshSuppliers());
     if (preset?.entityId) {
       setEntityId(String(preset.entityId));
@@ -781,10 +797,16 @@ export default function Payments() {
                 <th className="px-3 py-2 text-right font-semibold">{t.paymentsUi.original}</th>
                 <th className="px-3 py-2 text-right font-semibold">{t.paymentsUi.openAmount}</th>
                 <th className="px-3 py-2 text-center font-semibold">{t.paymentsUi.state}</th>
+                <th className="px-3 py-2 text-right font-semibold" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {filteredOpenItems.map(oi => (
+              {filteredOpenItems.map(oi => {
+                const due = signedOpenItemBalance(oi);
+                const canSettle = isOpenItemDebit(oi.isDebit) && due > 0 && (
+                  oi.entityType === 'customer' ? canRecordReceipt : canRecordPayment
+                );
+                return (
                 <tr key={oi.id} className="hover:bg-accent/50">
                   <td className="px-3 py-2 font-medium">
                     {resolveEntityName(oi.entityType, oi.entityId, oi.entityName)}
@@ -804,8 +826,27 @@ export default function Payments() {
                       {oi.status === 'open' ? t.paymentsUi.open : t.documentStatus.partial}
                     </Badge>
                   </td>
+                  <td className="px-3 py-2 text-right">
+                    {canSettle && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          openNewDialog(oi.entityType === 'customer' ? 'receipt' : 'payment', {
+                            entityId: oi.entityId,
+                            entityName: resolveEntityName(oi.entityType, oi.entityId, oi.entityName),
+                            openItemId: oi.id,
+                          });
+                        }}
+                      >
+                        {oi.entityType === 'customer' ? t.paymentsUi.receiveNow : t.paymentsUi.payNow}
+                      </Button>
+                    )}
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {filteredOpenItems.length === 0 && (

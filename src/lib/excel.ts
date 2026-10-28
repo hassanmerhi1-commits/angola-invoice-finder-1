@@ -246,12 +246,7 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
               quantidade: parseInt(String(getMappedValue('quantidade') || 0), 10) || 0,
               unidade: String(getMappedValue('unidade') || 'UN'),
               categoria: String(getMappedValue('categoria') || ''),
-              iva: (() => {
-                const raw = getMappedValue('iva');
-                if (raw === null || raw === undefined || raw === '') return null;
-                const n = parseFloat(String(raw));
-                return Number.isFinite(n) ? n : null;
-              })(),
+              iva: parseSpreadsheetVat(getMappedValue('iva')),
               codigoBarras: String(getMappedValue('codigoBarras') || ''),
               fornecedor: String(getMappedValue('fornecedor') || ''),
               qtdMinima: parseInt(String(getMappedValue('qtdMinima') || 0), 10) || 0,
@@ -301,12 +296,10 @@ export async function parseExcelFile(file: File, columnMappings?: ColumnMapping[
             quantidade: parseInt(String(findByAliases(['Quantidade', 'quantidade', 'Stock', 'Qty', 'QTD']) || 0), 10) || 0,
             unidade: String(findByAliases(['Unidade', 'unidade', 'Unit', 'UN']) || 'UN'),
             categoria: String(findByAliases(['Categoria', 'categoria', 'Category']) || ''),
-            iva: (() => {
-              const raw = findByAliases(['IVA %', 'iva', 'IVA', 'Tax']);
-              if (raw === null || raw === undefined || raw === '') return null;
-              const n = parseFloat(String(raw));
-              return Number.isFinite(n) ? n : null;
-            })(),
+            iva: parseSpreadsheetVat(findByAliases([
+              'IVA %', 'IVA%', 'iva', 'IVA', 'Tax', 'Taxa', 'Taxa IVA', 'TaxaIVA',
+              'Imposto', 'Iva %', '% IVA', 'VAT', 'VAT %',
+            ])),
             codigoBarras: String(findByAliases(['Código de Barras', 'codigo_barras', 'Barcode', 'EAN']) || ''),
             fornecedor: String(findByAliases(['Fornecedor', 'fornecedor', 'Supplier']) || ''),
             qtdMinima: parseInt(String(findByAliases(['Qtd Mínima', 'qtd_minima', 'Min Qty']) || 0), 10) || 0,
@@ -459,6 +452,24 @@ export function formatSpreadsheetCode(value: unknown): string {
     if (Number.isFinite(n)) return String(Math.trunc(n));
   }
   return text;
+}
+
+/** Excel IVA cell → percent, or null when the column is empty. 0.14 means 14%. */
+export function parseSpreadsheetVat(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    if (value > 0 && value < 1) return Math.round(value * 1000) / 10;
+    return value;
+  }
+  let raw = String(value).trim().replace(/%/g, '').replace(/\s/g, '');
+  if (!raw) return null;
+  if (/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(raw)) raw = raw.replace(/\./g, '').replace(',', '.');
+  else raw = raw.replace(',', '.');
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n)) return null;
+  if (n > 0 && n < 1) return Math.round(n * 1000) / 10;
+  return n;
 }
 
 function parseSpreadsheetNumber(value: unknown): number {

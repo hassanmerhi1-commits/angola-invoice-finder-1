@@ -3520,6 +3520,8 @@ export const en = {
     open: "Open",
     noneFound: "No {kind} found",
     noneOpenItems: "No open items",
+    payNow: "Pay now",
+    receiveNow: "Receive now",
     newReceiptTitle: "New Receipt (Incoming)",
     newPaymentTitle: "New Payment (Supplier)",
     openDocsToOffset: "Open documents (select to offset)",

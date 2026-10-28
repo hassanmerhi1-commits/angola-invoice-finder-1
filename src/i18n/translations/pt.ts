@@ -3523,6 +3523,8 @@ export const pt: TranslationKeys = {
     open: "Aberto",
     noneFound: "Nenhum {kind} encontrado",
     noneOpenItems: "Nenhum item em aberto",
+    payNow: "Pagar agora",
+    receiveNow: "Receber agora",
     newReceiptTitle: "Novo Recibo (Recebimento)",
     newPaymentTitle: "Novo Pagamento (a Fornecedor)",
     openDocsToOffset: "Documentos em Aberto (seleccione para compensar)",

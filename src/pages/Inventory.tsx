@@ -1024,21 +1024,27 @@ export default function Inventory() {
         throw new Error(result.error);
       }
       if (result.data) {
-        const { imported = 0, updated = 0, failed = 0 } = result.data;
+        const { imported = 0, updated = 0, failed = 0, errors } = result.data as {
+          imported?: number;
+          updated?: number;
+          failed?: number;
+          errors?: { sku?: string; error?: string }[];
+        };
         const saved = imported + updated;
+        const reason = [...new Set((errors || []).map((e) => String(e?.error || '').trim()).filter(Boolean))]
+          .slice(0, 2)
+          .join(' · ');
+        const bits: string[] = [];
+        if (imported > 0) bits.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
+        if (updated > 0) bits.push(`${updated} ${language === 'pt' ? 'actualizados' : 'updated'}`);
+        if (failed > 0) bits.push(t.inventoryUi.failedCount.replace('{count}', String(failed)));
+        const summary = [bits.join(', '), reason].filter(Boolean).join(' — ');
         if (saved > 0 && failed === 0) {
-          const bits: string[] = [];
-          if (imported > 0) bits.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
-          if (updated > 0) bits.push(`${updated} ${language === 'pt' ? 'actualizados' : 'updated'}`);
-          toast.success(bits.join(', ') || t.inventoryUi.importCompleted);
-        } else if (saved > 0) {
-          const messages: string[] = [];
-          if (imported > 0) messages.push(t.inventoryUi.importedCount.replace('{count}', String(imported)));
-          if (updated > 0) messages.push(`${updated} ${language === 'pt' ? 'actualizados' : 'updated'}`);
-          if (failed > 0) messages.push(t.inventoryUi.failedCount.replace('{count}', String(failed)));
-          toast.success(messages.join(', ') || t.inventoryUi.importCompleted);
+          toast.success(summary || t.inventoryUi.importCompleted);
         } else if (failed > 0) {
-          toast.error(t.inventoryUi.failedCount.replace('{count}', String(failed)));
+          toast.error(summary || t.inventoryUi.failedCount.replace('{count}', String(failed)));
+        } else if (saved > 0) {
+          toast.success(summary || t.inventoryUi.importCompleted);
         } else {
           toast.info(t.inventoryUi.noNewProductsToImport);
         }

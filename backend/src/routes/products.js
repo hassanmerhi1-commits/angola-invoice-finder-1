@@ -2905,14 +2905,24 @@ module.exports = function(broadcastTableRaw) {
             }
             // An imported IVA column is not a per-branch lock — see PUT/POST above.
           } else {
-            const { parseTaxRateOrNull, isAllowedVatRate } = require('../taxDefaults');
+            const { parseTaxRateOrNull, isAllowedVatRate, DEFAULT_VAT_RATE } = require('../taxDefaults');
             const insertRaw = p.taxRate ?? p.iva ?? p.tax_rate;
-            const insertRate = parseTaxRateOrNull(insertRaw);
-            if (insertRate === null || !isAllowedVatRate(insertRate)) {
+            const ivaMissing = insertRaw === undefined || insertRaw === null || String(insertRaw).trim() === '';
+            let insertRate = parseTaxRateOrNull(insertRaw);
+            if (insertRate != null && insertRate > 0 && insertRate < 1 && isAllowedVatRate(Math.round(insertRate * 100))) {
+              insertRate = Math.round(insertRate * 100);
+            }
+            if (insertRate != null && isAllowedVatRate(insertRate)) {
+              insertRate = Math.round(insertRate);
+            }
+            if (ivaMissing || insertRate === null) {
+              insertRate = DEFAULT_VAT_RATE;
+            }
+            if (!isAllowedVatRate(insertRate)) {
               failed++;
               errors.push({
                 sku,
-                error: 'IVA % é obrigatório para produtos novos (0, 5, 7 ou 14).',
+                error: 'IVA % tem de ser 0, 5, 7 ou 14. Sem coluna IVA o produto fica a 5%.',
               });
               continue;
             }
