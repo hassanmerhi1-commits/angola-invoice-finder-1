@@ -194,6 +194,8 @@ export interface CaixaSession {
   closedAt?: string;
   notes?: string;
   createdAt: string;
+  /** LAN till opened while city was unreachable — push open to server when back online. */
+  pendingCitySync?: boolean;
 }
 
 // ==================== BANK ACCOUNTS ====================

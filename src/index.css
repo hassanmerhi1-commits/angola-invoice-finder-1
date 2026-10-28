@@ -411,9 +411,26 @@
   html.nexor-electron-win:has([data-topnav]) .nexor-electron-drag {
     display: none;
   }
+  html.nexor-electron-win {
+    --nexor-titlebar-h: env(titlebar-area-height, 32px);
+    --nexor-caption-inset: 160px;
+  }
   html.nexor-electron-win .nexor-title-drag-row {
     -webkit-app-region: drag;
-    padding-right: 138px;
+    padding-right: var(--nexor-caption-inset);
+  }
+  /* Keep dialogs out of the Windows min/max/close overlay. */
+  html.nexor-electron-win [data-radix-dialog-content] {
+    top: calc(50% + (var(--nexor-titlebar-h) / 2)) !important;
+    max-height: calc(100dvh - var(--nexor-titlebar-h) - 16px) !important;
+  }
+  html.nexor-electron-win [data-radix-dialog-content].nexor-fs-dialog {
+    top: calc(var(--nexor-titlebar-h) + 6px) !important;
+    transform: translate(-50%, 0) !important;
+    height: calc(100dvh - var(--nexor-titlebar-h) - 12px) !important;
+    max-height: calc(100dvh - var(--nexor-titlebar-h) - 12px) !important;
+    width: min(98vw, calc(100vw - 12px)) !important;
+    max-width: min(98vw, calc(100vw - 12px)) !important;
   }
   html.nexor-electron-win .nexor-title-drag-row button,
   html.nexor-electron-win .nexor-title-drag-row a,

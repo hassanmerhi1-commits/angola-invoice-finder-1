@@ -43,7 +43,13 @@ import { PosShiftInvoicesPanel } from '@/components/pos/PosShiftInvoicesPanel';
 import { PosUpdateMenu } from '@/components/pos/PosUpdateMenu';
 import { TillCityUiBanner } from '@/components/pos/TillCityUiBanner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { selectPosShiftInvoices, todayLocalDate, recoveredShiftOpenedAt, shiftBusinessDate } from '@/lib/posShiftSales';
+import {
+  selectPosShiftInvoices,
+  todayLocalDate,
+  recoveredShiftOpenedAt,
+  shiftBusinessDate,
+  isPriorDayOpenCaixaSession,
+} from '@/lib/posShiftSales';
 import {
   appendShiftIssue,
   clearSaleIssueKind,
@@ -75,7 +81,8 @@ export default function POS() {
     refresh: refreshCaixa,
     adoptOpenedAt,
   } = usePosCaixa(branchId, currentBranch?.name || branchId);
-  const today = todayLocalDate();
+  const [clockDay, setClockDay] = useState(todayLocalDate);
+  const today = clockDay;
   const salesDay = shiftBusinessDate(caixaSession, today);
   const salesDateFrom = salesDay <= today ? salesDay : today;
   const salesDateTo = salesDay <= today ? today : salesDay;
@@ -196,6 +203,28 @@ export default function POS() {
     [currentBranch?.id, caixaSession?.id, bumpShiftIssues],
   );
   const caixaOpen = !!caixaSession;
+  const mustClosePriorDay = isPriorDayOpenCaixaSession(caixaSession, today);
+  const canSellOnOpenShift = caixaOpen && !mustClosePriorDay;
+  const endOfDayForcedOpen = endOfDayOpen || mustClosePriorDay;
+
+  useEffect(() => {
+    const tick = () => setClockDay(todayLocalDate());
+    const id = window.setInterval(tick, 30_000);
+    const onFocus = () => tick();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mustClosePriorDay) return;
+    setCheckoutOpen(false);
+    setPayExpenseOpen(false);
+  }, [mustClosePriorDay]);
 
   // If the register was re-opened after an update, pull shift start back to the first
   // sale of the day so shift invoices / end-of-day include the morning work.
@@ -468,13 +497,16 @@ export default function POS() {
   useBarcodeScanner({
     onScan: handleBarcodeScan,
     maxDelay: 400,
-    enabled: !checkoutOpen && !receiptOpen && !payExpenseOpen && !endOfDayOpen && !clientPickerOpen && posMainTab === 'cart',
+    enabled: !checkoutOpen && !receiptOpen && !payExpenseOpen && !endOfDayForcedOpen && !clientPickerOpen && posMainTab === 'cart',
   });
 
   const handleCheckout = useCallback(() => {
     if (completingSaleRef.current || completingSale) return;
-    if (!caixaOpen) {
-      toast.error(t.posUi.caixa.requiredToSell, { description: t.posUi.caixa.openDesc });
+    if (!canSellOnOpenShift) {
+      toast.error(
+        mustClosePriorDay ? t.posUi.caixa.priorDayMustClose : t.posUi.caixa.requiredToSell,
+        { description: mustClosePriorDay ? t.posUi.caixa.priorDayMustCloseDesc : t.posUi.caixa.openDesc },
+      );
       return;
     }
     if (cart.items.length > 0) {
@@ -482,7 +514,7 @@ export default function POS() {
     } else {
       toast.info(t.posUi.emptyCart, { description: t.posUi.addProductsToCheckout });
     }
-  }, [completingSale, caixaOpen, cart.items.length, t.posUi]);
+  }, [completingSale, canSellOnOpenShift, mustClosePriorDay, cart.items.length, t.posUi]);
 
   const handleClearCart = useCallback(() => {
     if (cart.items.length > 0) {
@@ -579,7 +611,10 @@ export default function POS() {
     [handleCheckout, handleEscape, focusSearch, cart, t.posUi],
   );
 
-  useKeyboardShortcuts({ shortcuts, enabled: !checkoutOpen && !receiptOpen && !completingSale });
+  useKeyboardShortcuts({
+    shortcuts,
+    enabled: !checkoutOpen && !receiptOpen && !completingSale && !endOfDayForcedOpen,
+  });
 
   const handleCompleteSale = async (
     paymentMethod: Sale['paymentMethod'],
@@ -611,6 +646,11 @@ export default function POS() {
         !user
           ? t.posUi.checkoutSessionExpired
           : t.posUi.checkoutBranchMissing,
+      );
+    }
+    if (!canSellOnOpenShift) {
+      throw new Error(
+        mustClosePriorDay ? t.posUi.caixa.priorDayMustClose : t.posUi.caixa.requiredToSell,
       );
     }
     if (completingSaleRef.current) return;
@@ -1033,8 +1073,12 @@ export default function POS() {
               size="sm"
               className="h-9 text-xs gap-1.5 shrink-0"
               onClick={() => {
-                if (!caixaOpen || !caixaSession?.caixaId) {
-                  toast.error(t.posUi.payExpenseCaixaRequired);
+                if (!canSellOnOpenShift || !caixaSession?.caixaId) {
+                  toast.error(
+                    mustClosePriorDay
+                      ? t.posUi.caixa.priorDayMustClose
+                      : t.posUi.payExpenseCaixaRequired,
+                  );
                   return;
                 }
                 setPayExpenseOpen(true);
@@ -1096,8 +1140,12 @@ export default function POS() {
       />
 
       <PosEndOfDayReportDialog
-        open={endOfDayOpen}
-        onOpenChange={setEndOfDayOpen}
+        open={endOfDayForcedOpen}
+        required={mustClosePriorDay}
+        onOpenChange={(open) => {
+          if (!open && mustClosePriorDay) return;
+          setEndOfDayOpen(open);
+        }}
         sales={sales}
         creditNotes={creditNotes}
         expenses={shiftExpenses}
@@ -1128,7 +1176,7 @@ export default function POS() {
       />
 
       <PosOpenCaixaDialog
-        open={!!branchId && !caixaLoading && !caixaOpen}
+        open={!!branchId && !caixaLoading && !caixaOpen && !mustClosePriorDay}
         branchName={currentBranch?.name || branchId}
         cashierName={user?.name || user?.username}
         submitting={openingCaixa}

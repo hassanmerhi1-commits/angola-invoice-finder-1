@@ -15,6 +15,7 @@ import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { printCurrentPage } from '@/lib/printHtml';
 import { AppInteractionProvider } from '@/components/interaction/AppInteractionProvider';
 import { DailyTodoDialog } from '@/components/daily/DailyTodoDialog';
+import { CityServerUpdatePrompt } from '@/components/CityServerUpdatePrompt';
 import { ensureDayTodos, shouldShowDailyTodoDialog, todayKey } from '@/lib/dailyTodos';
 import { hydrateCompanySettingsFromServer } from '@/lib/companySettings';
 import { useRealtimeSyncBridge } from '@/hooks/useRealtimeSyncBridge';
@@ -133,6 +134,7 @@ export function AppLayout() {
         open={dailyTodoOpen && user?.role !== 'cashier'}
         onOpenChange={setDailyTodoOpen}
       />
+      <CityServerUpdatePrompt />
     </div>
   );
 }

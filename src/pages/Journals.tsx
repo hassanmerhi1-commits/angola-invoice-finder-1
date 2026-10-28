@@ -1728,7 +1728,7 @@ export default function Journals() {
         if (!open) resetNewEntry();
       }}>
         <DialogContent
-          className="max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl"
+          className="nexor-fs-dialog max-w-[96vw] w-[96vw] max-h-[94vh] h-[90vh] flex flex-col gap-0 p-0 overflow-hidden sm:rounded-xl"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             focusLineField(newEntryLines[0]?.id, 'account');

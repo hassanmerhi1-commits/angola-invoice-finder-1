@@ -199,6 +199,19 @@ export function allowsLocalLedgerWrites(): boolean {
   return isDemoMode();
 }
 
+/** LAN till: city DB is on another PC; this install may keep a local treasury mirror when offline. */
+export function allowsTillOfflineLocalTreasury(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isDemoMode()) return false;
+  if (isServerDatabaseHost()) return false;
+  return isThinClientMode();
+}
+
+/** Demo preview or LAN till — may read/write caixa rows in localStorage when the city API is down. */
+export function canPersistTreasuryLocally(): boolean {
+  return allowsLocalLedgerWrites() || allowsTillOfflineLocalTreasury();
+}
+
 export const CITY_LEDGER_OFFLINE_CODE = 'CITY_LEDGER_OFFLINE';
 
 export function cityLedgerOfflineError(message?: string): Error {

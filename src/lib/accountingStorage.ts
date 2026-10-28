@@ -18,7 +18,14 @@ import {
 import { format } from 'date-fns';
 import { isElectronMode, dbGetAll, dbInsert, dbUpdate, dbDelete, lsGet, lsSet } from '@/lib/dbHelper';
 import { api, ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
-import { isThinClientMode, isServerDatabaseHost, allowsLocalLedgerWrites, cityLedgerOfflineError } from '@/lib/api/config';
+import {
+  isThinClientMode,
+  isServerDatabaseHost,
+  allowsLocalLedgerWrites,
+  allowsTillOfflineLocalTreasury,
+  canPersistTreasuryLocally,
+  cityLedgerOfflineError,
+} from '@/lib/api/config';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 
 function newUuid(): string {
@@ -275,6 +282,13 @@ function mergeCaixasById(server: Caixa[], local: Caixa[]): Caixa[] {
   return sortTreasuryCaixas([...map.values()]);
 }
 
+/** Keep a LAN till copy of city registers for offline POS open. */
+function mirrorCaixasToLocalStorage(incoming: Caixa[]): void {
+  if (!allowsTillOfflineLocalTreasury() || incoming.length === 0) return;
+  const localAll = lsGet<Caixa[]>(STORAGE_KEYS.caixas, []);
+  lsSet(STORAGE_KEYS.caixas, mergeCaixasById(incoming, localAll));
+}
+
 /** Banks may briefly arrive with empty branchId (mapper/API skew); still list them. */
 function isListableBankAccount(account: BankAccount | null | undefined): boolean {
   if (!account?.id) return false;
@@ -524,6 +538,8 @@ export async function getCaixas(
           )
         : sortTreasuryCaixas(serverList);
 
+      mirrorCaixasToLocalStorage(list);
+
       // Preview only. A city till must not invent a register here and later push it.
       if (allowsLocalLedgerWrites()) {
         void pushLocalTreasuryToServer(localAll, await loadLocalBankAccounts());
@@ -547,11 +563,11 @@ export async function getCaixas(
       return list;
     } catch (e) {
       console.warn('[caixas] server list failed:', e);
-      if (!allowsLocalLedgerWrites()) return [];
+      if (!canPersistTreasuryLocally()) return [];
     }
   }
 
-  if (!allowsLocalLedgerWrites()) return [];
+  if (!canPersistTreasuryLocally()) return [];
 
   let caixas = localAll.filter((c) => isListableCaixa(c));
   if (allBranches) return sortTreasuryCaixas(caixas);
@@ -579,13 +595,13 @@ export async function saveCaixa(caixa: Caixa): Promise<void> {
       }
       throw new Error(res.error);
     } catch (e) {
-      if (!allowsLocalLedgerWrites()) {
+      if (!canPersistTreasuryLocally()) {
         throw e instanceof Error ? e : cityLedgerOfflineError();
       }
       console.warn('[caixas] server update failed:', e);
     }
   }
-  if (!allowsLocalLedgerWrites() && (await shouldLoadCaixasFromServerApi())) {
+  if (!canPersistTreasuryLocally() && (await shouldLoadCaixasFromServerApi())) {
     throw cityLedgerOfflineError();
   }
   if (isElectronMode()) {
@@ -629,16 +645,14 @@ export async function createCaixa(
       }
       throw new Error(res.error || 'Failed to create caixa on server');
     } catch (e) {
-      if (!allowsLocalLedgerWrites()) {
+      if (!canPersistTreasuryLocally()) {
         throw e instanceof Error ? e : cityLedgerOfflineError();
       }
-      if (e instanceof Error && e.message.includes('Failed to create caixa')) throw e;
-      console.warn('[caixas] server create failed:', e);
-      throw e instanceof Error ? e : new Error('Failed to create caixa on server');
+      console.warn('[caixas] server create failed; using local register:', e);
     }
   }
 
-  if (!allowsLocalLedgerWrites()) {
+  if (!canPersistTreasuryLocally()) {
     throw cityLedgerOfflineError();
   }
 
@@ -681,8 +695,8 @@ export async function ensureBranchCaixa(
   if (existing.length > 0) {
     return existing[0];
   }
-  if (opts?.localOnly && allowsLocalLedgerWrites()) {
-    // Preview only — a city till must not invent a register on this PC.
+  if (opts?.localOnly && canPersistTreasuryLocally()) {
+    // Offline LAN till / preview — city register not reachable on this PC.
     const caixa: Caixa = {
       id: newUuid(),
       branchId,
@@ -935,6 +949,14 @@ export async function getOpenCaixaSessionForBranch(branchId: string): Promise<Ca
     .filter((s) => s.status === 'open' && branchIdsEquivalent(s.branchId, key))
     .sort((a, b) => new Date(b.openedAt || b.createdAt).getTime() - new Date(a.openedAt || a.createdAt).getTime());
   return open[0];
+}
+
+export function patchLocalCaixaSession(sessionId: string, patch: Partial<CaixaSession>): void {
+  const sessions = lsGet<CaixaSession[]>(STORAGE_KEYS.caixaSessions, []);
+  const idx = sessions.findIndex((s) => s.id === sessionId);
+  if (idx < 0) return;
+  sessions[idx] = { ...sessions[idx], ...patch };
+  lsSet(STORAGE_KEYS.caixaSessions, sessions);
 }
 
 export async function openCaixaSession(

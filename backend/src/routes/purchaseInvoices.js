@@ -411,6 +411,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         user: req.user,
         existing: priorInvoice.rows[0] || null,
         requestedStatus: row.status || req.body?.status,
+        metadataOnly: req.body?.metadataOnly === true,
       });
       if (!write.ok) {
         return res.status(write.statusCode || 403).json({ error: write.error });
@@ -667,6 +668,7 @@ module.exports = function purchaseInvoicesRoutes(broadcastTable) {
         user: req.user,
         existing: existing.rows[0] || null,
         requestedStatus: row.status || req.body?.status,
+        metadataOnly: req.body?.metadataOnly === true,
       });
       if (!write.ok) {
         return res.status(write.statusCode || 403).json({ error: write.error });

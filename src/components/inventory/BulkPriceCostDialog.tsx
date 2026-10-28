@@ -438,7 +438,7 @@ export function BulkPriceCostDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         ref={dialogContentRef}
-        className="flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-3 overflow-hidden p-4"
+        className="nexor-fs-dialog flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-3 overflow-hidden p-4"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader>

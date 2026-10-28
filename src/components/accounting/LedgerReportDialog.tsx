@@ -215,7 +215,7 @@ export function LedgerReportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] h-[88vh] flex flex-col gap-3 p-4 sm:p-6 overflow-hidden z-[70]">
+      <DialogContent className="nexor-fs-dialog max-w-[96vw] w-[96vw] max-h-[92vh] h-[88vh] flex flex-col gap-3 p-4 sm:p-6 overflow-hidden z-[70]">
         <DialogHeader className="shrink-0 space-y-1">
           <DialogTitle>{title}</DialogTitle>
           {accountCode ? (

@@ -554,7 +554,7 @@ export default function AccountLedgerDialog({
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[96vw] w-[96vw] max-h-[95vh] h-[90vh] flex flex-col gap-4 p-4 sm:p-6 bg-slate-50/40">
+      <DialogContent className="nexor-fs-dialog max-w-[96vw] w-[96vw] max-h-[95vh] h-[90vh] flex flex-col gap-4 p-4 sm:p-6 bg-slate-50/40">
         <DialogHeader className="shrink-0 space-y-0">
           <DialogTitle className="flex items-center gap-3 flex-wrap text-slate-800">
             <span className="inline-flex items-center rounded-lg bg-indigo-50 border border-indigo-200/70 px-2.5 py-1 font-mono text-sm font-semibold text-indigo-700">

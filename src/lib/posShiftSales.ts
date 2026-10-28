@@ -72,6 +72,15 @@ export function shiftBusinessDate(
   return fallback;
 }
 
+/** Yesterday (or earlier) still open — cashier must close it before today's sales. */
+export function isPriorDayOpenCaixaSession(
+  session: CaixaSession | null | undefined,
+  today = todayLocalDate(),
+): boolean {
+  if (!session || session.status !== 'open') return false;
+  return shiftBusinessDate(session, today) < today;
+}
+
 function expensePaidTimestamp(expense: Expense): string | undefined {
   // Never use updatedAt — a later edit/sync would move a closed-day expense onto today.
   const raw = expense.paidAt || expense.createdAt || expense.requestedAt;

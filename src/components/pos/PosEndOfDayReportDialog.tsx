@@ -56,6 +56,8 @@ interface CaixaGlReconciliation {
 interface PosEndOfDayReportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Prior-day shift still open — cashier cannot dismiss until they close it. */
+  required?: boolean;
   sales: Sale[];
   creditNotes?: CreditNote[];
   expenses?: Expense[];
@@ -69,6 +71,7 @@ interface PosEndOfDayReportDialogProps {
 export function PosEndOfDayReportDialog({
   open,
   onOpenChange,
+  required = false,
   sales,
   creditNotes = [],
   expenses: _expenses = [],
@@ -347,13 +350,26 @@ export function PosEndOfDayReportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent
+        className={cn(
+          'max-w-3xl max-h-[85vh] overflow-y-auto',
+          required && '[&_[data-dialog-close]]:hidden',
+        )}
+        onInteractOutside={required ? (e) => e.preventDefault() : undefined}
+        onEscapeKeyDown={required ? (e) => e.preventDefault() : undefined}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            {t.posUi.endOfDayTitle}
+            {required ? t.posUi.caixa.priorDayMustClose : t.posUi.endOfDayTitle}
           </DialogTitle>
         </DialogHeader>
+
+        {required && (
+          <p className="text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-md px-3 py-2">
+            {t.posUi.caixa.priorDayMustCloseDesc}
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <Badge variant="outline">{branch?.name || '—'}</Badge>

@@ -468,6 +468,9 @@ export const en = {
       closeError: "Could not close the register on the server — check the connection and try again before opening a new shift",
       closedToast: "Cash register closed",
       requiredToSell: "Open the cash register first",
+      priorDayMustClose: "Close yesterday's register first",
+      priorDayMustCloseDesc:
+        "Yesterday's shift is still open. Count the drawer, close that day, then open a new session for today before selling.",
       reconcileTitle: "Close shift — cash reconciliation",
       openingBalanceLabel: "Opening cash",
       cashInLabel: "Cash in (sales + deposits)",
@@ -3752,6 +3755,10 @@ export const en = {
       failed: "The update failed. The previous files were kept or restored.",
       rolledBack: "The previous files were restored automatically.",
       safetyHint: "The pack is checksummed, only backend + screen files are replaced, and the database is never overwritten. Version stays 1.3.8.",
+      popupTitle: "A NEXOR update is available",
+      popupBody:
+        "A newer pack ({build}) is published for this city server. Update now — shop tills pick it up automatically. Version stays 1.3.8.",
+      popupLater: "Later",
     },
     company: {
       title: "Company settings",
@@ -5276,6 +5283,8 @@ export const en = {
     confirmDenied: "You do not have permission to confirm a purchase invoice.",
     cannotEditOthersDraft: "You can only edit your own draft until an administrator confirms it.",
     cannotEditConfirmed: "This purchase invoice is already confirmed.",
+    cannotEditConfirmedAdminOnly: "Only an administrator can edit a confirmed purchase invoice.",
+    cannotEditAfter24h: "This purchase can no longer be edited — more than 24 hours have passed since it was created.",
     savedToOtherWarehouseTitle: "Saved to another warehouse",
     savedToOtherWarehouseDesc:
       "This purchase was saved to {warehouse}. Stock was updated there. Switch the branch in the top bar to see it in journals and branch-filtered reports.",

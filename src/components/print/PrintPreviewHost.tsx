@@ -75,7 +75,7 @@ export function PrintPreviewHost() {
         if (!open) finish('cancel');
       }}
     >
-      <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] flex flex-col gap-3">
+      <DialogContent className="nexor-fs-dialog max-w-[96vw] w-[96vw] max-h-[92vh] flex flex-col gap-3">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

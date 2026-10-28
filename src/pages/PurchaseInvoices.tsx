@@ -6,7 +6,12 @@ import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import QRCode from 'qrcode';
 import { useProducts, useSuppliers, useAuth } from '@/hooks/useERP';
 import { usePermissions } from '@/hooks/usePermissions';
-import { canEditPurchaseInvoiceDraft, isPurchaseInvoiceDraft, isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
+import {
+  canEditPurchaseInvoiceDraft,
+  isPurchaseInvoiceDraft,
+  isPurchaseInvoiceUnposted,
+  purchaseInvoiceEditDenial,
+} from '@/lib/purchaseInvoiceDraft';
 import { localISODate } from '@/lib/workingDayAccess';
 import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { resolveUserBranch, branchIdsEquivalent } from '@/lib/branchAccess';
@@ -1053,7 +1058,7 @@ function InvoiceViewPage({
         >
           {getPurchaseInvoiceStatusBadge(t, invoice.status).label}
         </Badge>
-        {onContinueDraft && isPurchaseInvoiceDraft(invoice.status) && (
+        {onContinueDraft && (
           <Button
             variant="outline"
             size="sm"
@@ -1310,8 +1315,23 @@ export default function PurchaseInvoices() {
   const { hasPermission } = usePermissions(user?.id);
   const canConfirmPurchase = hasPermission('purchase_invoice_confirm');
   const canWorkOnInvoice = useCallback((inv?: PurchaseInvoice | null) => (
-    canEditPurchaseInvoiceDraft(inv, { userId: user?.id, canConfirm: canConfirmPurchase })
-  ), [user?.id, canConfirmPurchase]);
+    canEditPurchaseInvoiceDraft(inv, {
+      userId: user?.id,
+      role: user?.role,
+      canConfirm: canConfirmPurchase,
+    })
+  ), [user?.id, user?.role, canConfirmPurchase]);
+  const purchaseEditDeniedText = useCallback((inv?: PurchaseInvoice | null) => {
+    const reason = purchaseInvoiceEditDenial(inv, {
+      userId: user?.id,
+      role: user?.role,
+      canConfirm: canConfirmPurchase,
+    });
+    if (reason === 'others_draft') return t.purchaseInvoicesUi.cannotEditOthersDraft;
+    if (reason === 'not_admin') return t.purchaseInvoicesUi.cannotEditConfirmedAdminOnly;
+    if (reason === 'window_closed') return t.purchaseInvoicesUi.cannotEditAfter24h;
+    return t.purchaseInvoicesUi.cannotEditConfirmed;
+  }, [user?.id, user?.role, canConfirmPurchase, t]);
   const { apiBranchId, currentBranch, isConsolidatedView, allBranches: branches, treasuryAllBranches } = useBranchScope();
   // Sede / consolidated: no branch filter (all filiais). Do NOT fall back to currentBranch.id —
   // that wrongly limited Compras to SEDE-only invoices.
@@ -1989,9 +2009,7 @@ export default function PurchaseInvoices() {
     if (!canWorkOnInvoice(inv)) {
       toast({
         title: t.common.error,
-        description: isPurchaseInvoiceDraft(inv.status)
-          ? t.purchaseInvoicesUi.cannotEditOthersDraft
-          : t.purchaseInvoicesUi.cannotEditConfirmed,
+        description: purchaseEditDeniedText(inv),
         variant: 'destructive',
       });
       return;
@@ -2053,7 +2071,7 @@ export default function PurchaseInvoices() {
     setSaveError(null);
     setSelectedListInvoiceId(full.id);
     setMode('create');
-  }, [canWorkOnInvoice, t, toast]);
+  }, [canWorkOnInvoice, purchaseEditDeniedText, toast]);
 
   const handleMarkAsPaid = useCallback(async (inv: PurchaseInvoice) => {
     if (!inv.isPending) return;
@@ -2752,6 +2770,15 @@ export default function PurchaseInvoices() {
       });
       return;
     }
+    const editingOriginal = editingInvoiceRef.current;
+    if (editingOriginal && !canWorkOnInvoice(editingOriginal)) {
+      toast({
+        title: t.common.error,
+        description: purchaseEditDeniedText(editingOriginal),
+        variant: 'destructive',
+      });
+      return;
+    }
     savingPurchaseRef.current = true;
     setSavingPurchase(true);
     try {
@@ -2955,7 +2982,6 @@ export default function PurchaseInvoices() {
       setFreightSourceName(treasury.accountName);
     }
 
-    const editingOriginal = editingInvoiceRef.current;
     if (editingOriginal) {
       const now = new Date().toISOString();
       const manualJournalLines = journalLines;
@@ -3359,7 +3385,7 @@ export default function PurchaseInvoices() {
       savingPurchaseRef.current = false;
       setSavingPurchase(false);
     }
-  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, scheduleLoadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId, upsertInvoiceInList, canConfirmPurchase]);
+  }, [activeSuppliers, form, lines, journalLines, totals, currentBranch, user, toast, refreshProducts, refreshSuppliers, freightAllocations, totalLandingCosts, freightSourceAccount, freightSourceName, freightCost, freightOtherCosts, goToPurchaseListRoute, refreshOrders, savingPurchase, branches, invoices, t, resetCreateFormState, loadInvoiceList, scheduleLoadInvoiceList, ensurePurchaseAccountingPosted, broadcastPurchaseAccountingSync, listBranchId, upsertInvoiceInList, canConfirmPurchase, canWorkOnInvoice, purchaseEditDeniedText]);
 
   // ═══════════════ RENDER ═══════════════
 

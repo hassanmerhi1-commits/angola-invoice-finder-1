@@ -5,6 +5,7 @@ import {
   getOpenCaixaSessionForBranch,
   openCaixaSession,
   closeCaixaSession,
+  patchLocalCaixaSession,
 } from '@/lib/accountingStorage';
 import { api } from '@/lib/api/client';
 import { todayLocalDate, markPosCaixaClosed, getPosCaixaLastClosedAt } from '@/lib/posShiftSales';
@@ -276,6 +277,43 @@ async function loadLocalOpenSession(branchId: string): Promise<CaixaSession | nu
   }
 }
 
+async function syncOpenSessionToCity(
+  sess: CaixaSession,
+  branchName: string,
+): Promise<CaixaSession | null> {
+  try {
+    await api.caixa.ensureRegister({
+      branchId: sess.branchId,
+      branchName: branchName || sess.branchId,
+    });
+    const openRes = await api.caixa.openSession({
+      id: sess.id,
+      caixaId: sess.caixaId,
+      branchId: sess.branchId,
+      branchName: branchName || sess.branchId,
+      openingBalance: sess.openingBalance,
+      openedBy: sess.openedBy,
+      date: sess.date || todayLocalDate(),
+      openedAt: sess.openedAt,
+      forceNew: true,
+    });
+    if (openRes.error) {
+      console.warn('[usePosCaixa] pending city open sync:', openRes.error);
+      return null;
+    }
+    const remote = openRes.data ? mapServerSession(openRes.data as Record<string, unknown>) : null;
+    if (!remote?.id || remote.status !== 'open') return null;
+    return {
+      ...remote,
+      openingBalance: Number(remote.openingBalance) || sess.openingBalance,
+      pendingCitySync: false,
+    };
+  } catch (err) {
+    console.warn('[usePosCaixa] pending city open sync:', err);
+    return null;
+  }
+}
+
 /** Load register metadata without blocking the open-caixa dialog. */
 async function loadBranchCaixaMeta(
   branchId: string,
@@ -343,6 +381,15 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
           return;
         }
         if (remote.kind === 'none') {
+          if (sticky.pendingCitySync) {
+            writePosCaixaCache(branchId, sticky);
+            void syncOpenSessionToCity(sticky, branchName || branchId).then((adopted) => {
+              if (!adopted) return;
+              setSession(adopted);
+              writePosCaixaCache(branchId, adopted);
+            });
+            return;
+          }
           // City authoritatively has no open shift (EOD closed from this or another
           // window). Drop sticky — keeping it rewrote the cache and brought invoices back.
           logCaixaDebug('refresh:city-none-drop-sticky', {
@@ -357,6 +404,13 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
           return;
         }
         // On error: keep sticky — restart/update must not drop an open day.
+        if (sticky.pendingCitySync) {
+          void syncOpenSessionToCity(sticky, branchName || branchId).then((adopted) => {
+            if (!adopted) return;
+            setSession(adopted);
+            writePosCaixaCache(branchId, adopted);
+          });
+        }
         writePosCaixaCache(branchId, sticky);
       });
       const metaToken = ++metaLoadRef.current;
@@ -422,8 +476,25 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         return;
       }
 
-      // City says none — authoritative. Never resurrect a leftover local open row
-      // (that re-opened city and brought shift invoices back in a second instance).
+      // City says none — authoritative unless this shift was opened offline-only.
+      const localPending = await loadLocalOpenSession(branchId);
+      if (localPending?.pendingCitySync) {
+        setSession(localPending);
+        writePosCaixaCache(branchId, localPending);
+        setLoading(false);
+        void syncOpenSessionToCity(localPending, branchName || branchId).then((adopted) => {
+          if (!adopted) return;
+          setSession(adopted);
+          writePosCaixaCache(branchId, adopted);
+        });
+        const metaToken = ++metaLoadRef.current;
+        void loadBranchCaixaMeta(branchId, branchName || branchId, true)
+          .then((cx) => {
+            if (metaToken === metaLoadRef.current && cx) setCaixa(cx);
+          })
+          .catch(() => {});
+        return;
+      }
       logCaixaDebug('refresh:city-none-clear-local', { branchId });
       await sealLocalAfterCityClosed(branchId);
       setSession(null);
@@ -509,44 +580,20 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       setCaixa(cx);
 
       const sess = await openCaixaSession(cx.id, branchId, openingCash, openedBy);
-      setSession(sess);
-      writePosCaixaCache(branchId, sess);
 
-      // Await city open with forceNew so leftovers are closed before any refresh
-      // can resurrect yesterday's totals into this shift.
-      try {
-        const openRes = await api.caixa.openSession({
-          id: sess.id,
-          caixaId: sess.caixaId,
-          branchId: sess.branchId,
-          branchName: branchName || branchId,
-          openingBalance: sess.openingBalance,
-          openedBy: sess.openedBy,
-          date: sess.date || todayLocalDate(),
-          openedAt: sess.openedAt,
-          forceNew: true,
-        });
-        if (openRes.error) {
-          console.warn('[usePosCaixa] server open sync:', openRes.error);
-        } else {
-          const remote = openRes.data ? mapServerSession(openRes.data as Record<string, unknown>) : null;
-          if (remote?.id && remote.status === 'open') {
-            // Prefer server row when forceNew created/returned it; keep our opening cash
-            // if the server somehow omitted it.
-            const adopted = {
-              ...remote,
-              openingBalance: Number(remote.openingBalance) || sess.openingBalance,
-            };
-            setSession(adopted);
-            writePosCaixaCache(branchId, adopted);
-            return adopted;
-          }
-        }
-      } catch (err) {
-        console.warn('[usePosCaixa] server open sync:', err);
+      const adopted = await syncOpenSessionToCity(sess, branchName || branchId);
+      if (adopted) {
+        patchLocalCaixaSession(adopted.id, { pendingCitySync: false });
+        setSession(adopted);
+        writePosCaixaCache(branchId, adopted);
+        return adopted;
       }
 
-      return sess;
+      const offlineOpen = { ...sess, pendingCitySync: true };
+      patchLocalCaixaSession(sess.id, { pendingCitySync: true });
+      setSession(offlineOpen);
+      writePosCaixaCache(branchId, offlineOpen);
+      return offlineOpen;
     },
     [branchId, branchName, caixa],
   );

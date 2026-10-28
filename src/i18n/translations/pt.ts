@@ -470,6 +470,9 @@ export const pt: TranslationKeys = {
       closeError: "Não foi possível fechar a caixa no servidor — verifique a ligação e tente novamente antes de abrir um novo turno",
       closedToast: "Caixa fechada",
       requiredToSell: "Abra a caixa primeiro",
+      priorDayMustClose: "Feche primeiro a caixa de ontem",
+      priorDayMustCloseDesc:
+        "O turno de ontem ainda está aberto. Conte o dinheiro, feche esse dia e depois abra a sessão de hoje antes de vender.",
       reconcileTitle: "Fechar turno — conferência de caixa",
       openingBalanceLabel: "Fundo de maneio",
       cashInLabel: "Entradas (vendas + depósitos)",
@@ -3755,6 +3758,10 @@ export const pt: TranslationKeys = {
       failed: "A actualização falhou. Os ficheiros anteriores foram mantidos ou restaurados.",
       rolledBack: "Os ficheiros anteriores foram restaurados automaticamente.",
       safetyHint: "O pacote é verificado por checksum, só o backend e o ecrã são substituídos, e a base de dados não é tocada. A versão continua 1.3.8.",
+      popupTitle: "Há uma actualização do NEXOR",
+      popupBody:
+        "Foi publicado um pacote mais recente ({build}) para este servidor da cidade. Actualize agora — as caixas passam a usá-lo sozinhas. A versão continua 1.3.8.",
+      popupLater: "Mais tarde",
     },
     company: {
       title: "Definições da empresa",
@@ -5278,6 +5285,8 @@ export const pt: TranslationKeys = {
     confirmDenied: "Não tem permissão para confirmar uma fatura de compra.",
     cannotEditOthersDraft: "Só pode editar o seu próprio rascunho até um administrador confirmar.",
     cannotEditConfirmed: "Esta fatura de compra já está confirmada.",
+    cannotEditConfirmedAdminOnly: "Só um administrador pode editar uma fatura de compra confirmada.",
+    cannotEditAfter24h: "Esta compra já não pode ser editada — passaram mais de 24 horas desde a criação.",
     savedToOtherWarehouseTitle: "Gravada noutro armazém",
     savedToOtherWarehouseDesc:
       "Esta compra foi gravada em {warehouse}. O stock foi actualizado aí. Mude a filial na barra superior para a ver nos diários e relatórios filtrados por filial.",

@@ -459,28 +459,9 @@ const App = () => {
       if (unsubscribed) return;
 
       if (s.status === "available") {
-        const dismissed = sessionStorage.getItem("nexor_update_dismissed");
-        if (dismissed === s.version) return;
-
-        toast.dismiss(UPDATE_TOAST_ID);
-        toast("Update available", {
-          id: UPDATE_TOAST_ID,
-          description: s.version ? `Version ${s.version} is ready to download.` : "A new version is ready to download.",
-          duration: Infinity,
-          action: {
-            label: "Download",
-            onClick: () => {
-              void updater.download?.();
-            },
-          },
-          cancel: {
-            label: "Later",
-            onClick: () => {
-              if (s.version) sessionStorage.setItem("nexor_update_dismissed", s.version);
-              toast.dismiss(UPDATE_TOAST_ID);
-            },
-          },
-        });
+        // Same-version installer toasts are noise. The city server popup
+        // (CityServerUpdatePrompt) is the real "new pack is published" notice.
+        return;
       } else if (s.status === "downloaded") {
         toast.dismiss(UPDATE_TOAST_ID);
         setUpdateReadyVersion(s.version ?? null);

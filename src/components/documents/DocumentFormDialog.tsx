@@ -1317,7 +1317,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       <DialogContent className={cn(
         'p-0 [&>button[data-dialog-close]]:hidden',
         isSalesWorkspace
-          ? 'flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-0 overflow-hidden sm:rounded-xl'
+          ? 'nexor-fs-dialog flex h-[96vh] max-h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-0 overflow-hidden sm:rounded-xl'
           : 'max-h-[90vh] max-w-5xl overflow-y-auto',
       )}>
         <div className={cn(
