@@ -4,6 +4,7 @@ import type { Expense } from '@/types/accounting';
 import type { User } from '@/types/erp';
 import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { timestampLocalDate } from '@/lib/workingDayAccess';
+import { salesRowsMatch } from '@/lib/sync/pendingSalesCache';
 
 const LAST_CLOSED_PREFIX = 'nexor:pos-caixa-last-closed:v1:';
 
@@ -250,21 +251,30 @@ export function saleInShift(sale: Sale, session: CaixaSession | null | undefined
   return true;
 }
 
+function isProvisionalShiftSale(sale: Sale): boolean {
+  const inv = String(sale.invoiceNumber || '').trim().toUpperCase();
+  return sale.pendingSync === true || inv.startsWith('OFF-') || inv.startsWith('LOCAL-');
+}
+
+function preferShiftSale(current: Sale, incoming: Sale): Sale {
+  const currentProv = isProvisionalShiftSale(current);
+  const incomingProv = isProvisionalShiftSale(incoming);
+  if (currentProv !== incomingProv) return currentProv ? incoming : current;
+  if ((incoming.items?.length ?? 0) > (current.items?.length ?? 0)) return incoming;
+  return current;
+}
+
 export function dedupeShiftSales(rows: Sale[]): Sale[] {
   const deduped: Sale[] = [];
   for (const sale of rows) {
-    const idx = deduped.findIndex((existing) => {
-      const sameInvoice =
-        sale.invoiceNumber
-        && existing.invoiceNumber
-        && sale.invoiceNumber.trim().toUpperCase() === existing.invoiceNumber.trim().toUpperCase();
-      return sameInvoice || existing.id === sale.id;
-    });
-    if (idx < 0) {
-      deduped.push(sale);
-    } else if ((sale.items?.length ?? 0) > (deduped[idx].items?.length ?? 0)) {
-      deduped[idx] = sale;
-    }
+    const idx = deduped.findIndex((existing) =>
+      salesRowsMatch(
+        existing as unknown as Record<string, unknown>,
+        sale as unknown as Record<string, unknown>,
+      ),
+    );
+    if (idx < 0) deduped.push(sale);
+    else deduped[idx] = preferShiftSale(deduped[idx], sale);
   }
   return deduped;
 }

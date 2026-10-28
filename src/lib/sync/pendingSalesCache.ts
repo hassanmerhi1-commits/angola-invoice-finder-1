@@ -1,4 +1,5 @@
 import { branchIdsEquivalent } from '@/lib/branchAccess';
+import { timestampLocalDate } from '@/lib/workingDayAccess';
 
 const CACHE_KEY = 'nexor:pending-sales:v1';
 
@@ -65,9 +66,11 @@ export function salesRowsMatch(a: PendingSaleRow, b: PendingSaleRow): boolean {
 
   if (aId && (aId === bId || aId === bCrid)) return true;
   if (aCrid && (aCrid === bId || aCrid === bCrid)) return true;
-  if (aInv && aInv === bInv && !aInv.startsWith('OFF-') && !aInv.startsWith('LOCAL-')) return true;
+  if (aInv && aInv === bInv) return true;
 
-  // Official city sale vs till OFF- stub: same cashier, branch, total, and checkout time.
+  // Official city sale vs till OFF- stub. The stub is often stamped later than
+  // the real invoice (retry, or the response arrived late), so a 2-minute
+  // window left both rows on the shift list.
   if (isOfflineInvoice(a) === isOfflineInvoice(b)) return false;
   const aBranch = rowString(a, 'branchId', 'branch_id');
   const bBranch = rowString(b, 'branchId', 'branch_id');
@@ -79,12 +82,21 @@ export function salesRowsMatch(a: PendingSaleRow, b: PendingSaleRow): boolean {
   if (aPeople.length > 0 && bPeople.length > 0 && !aPeople.some((key) => bPeople.includes(key))) {
     return false;
   }
+  const aPay = rowString(a, 'paymentMethod', 'payment_method').toLowerCase();
+  const bPay = rowString(b, 'paymentMethod', 'payment_method').toLowerCase();
+  if (aPay && bPay && aPay !== bPay) return false;
   const aTotal = Number(a.total);
   const bTotal = Number(b.total);
-  if (!Number.isFinite(aTotal) || Math.abs(aTotal - bTotal) > 0.05) return false;
+  if (!Number.isFinite(aTotal) || !Number.isFinite(bTotal)) return false;
+  const sameMoney = Math.abs(aTotal - bTotal) <= 0.05
+    || Math.round(aTotal * 100) === Math.round(bTotal * 100);
+  if (!sameMoney) return false;
   const aMs = new Date(String(a.created_at || a.createdAt || '')).getTime();
   const bMs = new Date(String(b.created_at || b.createdAt || '')).getTime();
   if (!Number.isFinite(aMs) || !Number.isFinite(bMs)) return false;
+  const aDay = timestampLocalDate(a.created_at || a.createdAt);
+  const bDay = timestampLocalDate(b.created_at || b.createdAt);
+  if (aDay && bDay) return aDay === bDay;
   return Math.abs(aMs - bMs) <= 120_000;
 }
 
