@@ -1,6 +1,6 @@
 // AUTO-GENERATED from "PGC (novo com IVA).xlsx" — do not edit by hand.
 // Angola Plano Geral de Contabilidade (Decreto n.º 82/2001). Codes use no-dot numbering
-// (main = 11, first sub = 111). 294 accounts.
+// (main = 11, first sub = 111). 329 accounts.
 
 const PGC_ACCOUNTS = [
   {
@@ -1944,8 +1944,251 @@ const PGC_ACCOUNTS = [
     "account_type": "expense",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "75"
+  },
+  {
+    "code": "75200001",
+    "name": "Água",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200002",
+    "name": "Electricidade",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200003",
+    "name": "Combustíveis e outros fluidos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200004",
+    "name": "Conservação e reparação",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200005",
+    "name": "Material de protecção, segurança e conforto",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200006",
+    "name": "Ferramentas e utensílios de desgaste rápido",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200007",
+    "name": "Material de escritório",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200008",
+    "name": "Livros e documentação técnica",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200009",
+    "name": "Outros fornecimentos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200010",
+    "name": "Comunicação",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200011",
+    "name": "Rendas e alugueres",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200012",
+    "name": "Seguros",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200013",
+    "name": "Deslocações e estadas",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200014",
+    "name": "Despesas de representação",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200015",
+    "name": "Conservação e reparação",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200016",
+    "name": "Vigilância e segurança",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200017",
+    "name": "Limpeza, higiene e conforto",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200018",
+    "name": "Publicidade e propaganda",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200019",
+    "name": "Contencioso e notariado",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200020",
+    "name": "Comissões a intermediários",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "7521",
+    "name": "Assistência técnica",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "752"
+  },
+  {
+    "code": "75210001",
+    "name": "Estrangeira",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7521"
+  },
+  {
+    "code": "75210002",
+    "name": "Nacional",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7521"
+  },
+  {
+    "code": "75200021",
+    "name": "Trabalhos executados no exterior",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200022",
+    "name": "Honorários e avenças",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200023",
+    "name": "Royalties",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
+  },
+  {
+    "code": "75200024",
+    "name": "Outros serviços",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "752"
   },
   {
     "code": "753",
@@ -1953,8 +2196,80 @@ const PGC_ACCOUNTS = [
     "account_type": "expense",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "75"
+  },
+  {
+    "code": "7531",
+    "name": "Indirectos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "753"
+  },
+  {
+    "code": "75310001",
+    "name": "Imposto de selo",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7531"
+  },
+  {
+    "code": "75310002",
+    "name": "IVA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7531"
+  },
+  {
+    "code": "75310003",
+    "name": "Outros impostos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7531"
+  },
+  {
+    "code": "7532",
+    "name": "Directos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "753"
+  },
+  {
+    "code": "75320001",
+    "name": "Imposto de capitais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7532"
+  },
+  {
+    "code": "75320002",
+    "name": "Contribuição predial",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7532"
+  },
+  {
+    "code": "75320003",
+    "name": "Outros impostos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7532"
   },
   {
     "code": "754",
