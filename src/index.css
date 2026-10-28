@@ -411,26 +411,22 @@
   html.nexor-electron-win:has([data-topnav]) .nexor-electron-drag {
     display: none;
   }
-  html.nexor-electron-win {
-    --nexor-titlebar-h: env(titlebar-area-height, 32px);
-    --nexor-caption-inset: 160px;
-  }
-  html.nexor-electron-win .nexor-title-drag-row {
+  html.nexor-has-caption-overlay .nexor-title-drag-row {
     -webkit-app-region: drag;
-    padding-right: var(--nexor-caption-inset);
+    padding-right: 160px;
   }
-  /* Keep dialogs out of the Windows min/max/close overlay. */
-  html.nexor-electron-win [data-radix-dialog-content] {
-    top: calc(50% + (var(--nexor-titlebar-h) / 2)) !important;
-    max-height: calc(100dvh - var(--nexor-titlebar-h) - 16px) !important;
-  }
-  html.nexor-electron-win [data-radix-dialog-content].nexor-fs-dialog {
-    top: calc(var(--nexor-titlebar-h) + 6px) !important;
+  /*
+   * Native min/restore/close sit on top of the webview. Fullscreen dialogs must
+   * stay inside the titlebar-area (left of those buttons, below the overlay).
+   */
+  html.nexor-has-caption-overlay .nexor-fs-dialog {
+    top: calc(env(titlebar-area-height, 32px) + 8px) !important;
+    left: calc(env(titlebar-area-x, 0px) + (env(titlebar-area-width, 100vw) / 2)) !important;
     transform: translate(-50%, 0) !important;
-    height: calc(100dvh - var(--nexor-titlebar-h) - 12px) !important;
-    max-height: calc(100dvh - var(--nexor-titlebar-h) - 12px) !important;
-    width: min(98vw, calc(100vw - 12px)) !important;
-    max-width: min(98vw, calc(100vw - 12px)) !important;
+    width: min(98vw, calc(env(titlebar-area-width, 100vw) - 16px)) !important;
+    max-width: min(98vw, calc(env(titlebar-area-width, 100vw) - 16px)) !important;
+    height: calc(100dvh - env(titlebar-area-height, 32px) - 16px) !important;
+    max-height: calc(100dvh - env(titlebar-area-height, 32px) - 16px) !important;
   }
   html.nexor-electron-win .nexor-title-drag-row button,
   html.nexor-electron-win .nexor-title-drag-row a,

@@ -3809,18 +3809,9 @@ function chromeForTheme(id) {
   return WINDOW_CHROME[id] || WINDOW_CHROME.medium;
 }
 
-/** Windows caption buttons sit on a 32px overlay. Must be set at BrowserWindow create. */
+/** Standard Windows chrome — min/max/close stay in the OS title bar, never over invoices. */
 function windowFrameOptions(chrome) {
-  const frame = { backgroundColor: chrome.background };
-  if (process.platform === 'win32') {
-    frame.titleBarStyle = 'hidden';
-    frame.titleBarOverlay = {
-      color: chrome.background,
-      symbolColor: chrome.symbol,
-      height: 32,
-    };
-  }
-  return frame;
+  return { backgroundColor: chrome.background };
 }
 
 function applyNativeWindowTheme(themeId = readStoredColorTheme()) {
@@ -3832,15 +3823,6 @@ function applyNativeWindowTheme(themeId = readStoredColorTheme()) {
   } catch (_) { /* ignore */ }
   for (const win of BrowserWindow.getAllWindows()) {
     try { win.setBackgroundColor(chrome.background); } catch (_) { /* ignore */ }
-    try {
-      if (typeof win.setTitleBarOverlay === 'function') {
-        win.setTitleBarOverlay({
-          color: chrome.background,
-          symbolColor: chrome.symbol,
-          height: 32,
-        });
-      }
-    } catch (_) { /* overlay only if the window was created with it */ }
   }
 }
 
