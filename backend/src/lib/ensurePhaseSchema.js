@@ -1397,6 +1397,8 @@ async function ensurePhaseSchema(db) {
     await ensureStockMovementLookupIndexes(db);
     await ensureAuditLogActions(db);
     await ensurePgcChartOfAccounts(db);
+    const { ensureAccount75Detail } = require('./ensureAccount75Detail');
+    await ensureAccount75Detail(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
       console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);
@@ -1464,6 +1466,8 @@ async function ensurePhaseSchema(db) {
     await ensureSoShipAndLocationColumns(db);
     await ensureStockMovementLookupIndexes(db);
     await ensurePgcChartOfAccounts(db);
+    const { ensureAccount75Detail } = require('./ensureAccount75Detail');
+    await ensureAccount75Detail(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
       console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);
