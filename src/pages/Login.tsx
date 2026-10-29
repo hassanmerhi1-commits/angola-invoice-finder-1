@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useLayoutEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useERP';
 import { useCompanyLogo } from '@/hooks/useCompanyLogo';
@@ -48,6 +48,14 @@ export default function Login() {
   const { companyName, logo } = useCompanyLogo();
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  useLayoutEffect(() => {
+    document.documentElement.classList.add('nexor-login-route');
+    document.documentElement.style.setProperty('--nexor-ui-fit', '1');
+    return () => {
+      document.documentElement.classList.remove('nexor-login-route');
+    };
+  }, []);
 
   useEffect(() => {
     if (!window.electronAPI?.db?.getStatus) return;
@@ -203,9 +211,9 @@ export default function Login() {
   const labelClass = 'text-[11px] font-semibold uppercase text-muted-foreground';
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f3f6f9] text-[#1a2332]">
+    <div className="min-h-screen bg-[#f3f6f9] text-[#1a2332]">
       <TillCityUiBanner />
-      <div className="flex flex-1 min-h-0">
+      <div className="flex min-h-screen">
         <div className="hidden lg:flex w-[44%] flex-col items-center justify-center text-center px-10 border-r border-[#d5dde6] bg-white">
           <LoginMark logoSrc={logoSrc} companyName={companyName} size="lg" />
           <h1 className="mt-[18px] mb-2 text-[28px] font-semibold text-[#1a2332]">{companyName}</h1>

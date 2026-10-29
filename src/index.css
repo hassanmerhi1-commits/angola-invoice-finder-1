@@ -347,6 +347,18 @@
     zoom: var(--nexor-ui-fit, 1);
   }
 
+  /* Login must not be zoomed or clipped. On some PCs that leaves a blank white window. */
+  html.nexor-login-route,
+  html.nexor-login-route body,
+  html.nexor-login-route #root {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+  html.nexor-login-route #root {
+    zoom: 1;
+  }
+
   /* Text size: zoom page content only — keeps TopNav chrome from wrapping/crushing. */
   html[data-text-size='small'] [data-nexor-scale] {
     zoom: 0.9;
