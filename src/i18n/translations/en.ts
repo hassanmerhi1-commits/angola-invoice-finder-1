@@ -2819,7 +2819,7 @@ export const en = {
 
     editTitle: "Edit expense",
     newTitle: "New expense",
-    dialogDescription: "What was spent, how much, and where it was paid from.",
+    dialogDescription: "What was spent, which chart account it is written to, and where the money left.",
     selectCashPlaceholder: "Select cash register",
     caixaLoading: "Loading cash registers…",
     noCashRegisters: "No cash registers available",
@@ -2843,6 +2843,13 @@ export const en = {
     documentRef: "Invoice / receipt",
     bankAccount: "Bank account",
     payFrom: "Pay from",
+    chartAccount: "Chart account",
+    chartAccountPlaceholder: "Choose the account",
+    chartAccountRequired: "Choose the chart account this payment is written to",
+    chartAccountLoading: "Loading the chart…",
+    moneyLeaves: "Money leaves {account}",
+    moneyLeavesTill: "Money leaves this till",
+    moneyLeavesBank: "Money leaves this bank",
     categories: {
       transport: "Transport",
       utilities: "Utilities / premises",
@@ -3344,7 +3351,7 @@ export const en = {
       receipt: "Receipt",
       receiveMethod: "Receive Method",
       creditAmount: "Credit Amount",
-      payment: "Payment",
+      payment: "Daily Payments",
       chequePayment: "Cheque Payment",
       receivables: "Receivables (clients)",
       payables: "Payables (suppliers)",
@@ -3464,6 +3471,7 @@ export const en = {
     documentFlow: {
       salesInvoice: "Sales Invoice",
       statement: "Account Statement",
+      supplierPayments: "Supplier Payments",
     },
     quickActions: {
       posSales: "POS / Sales",

@@ -299,6 +299,8 @@ export interface Expense {
   branchId: string;
   branchName: string;
   category: ExpenseCategory;
+  /** Chart account debited when this expense is paid. */
+  glAccountCode?: string;
   description: string;
   amount: number;
   taxAmount?: number; // IVA if applicable

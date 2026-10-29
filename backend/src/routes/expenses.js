@@ -21,6 +21,7 @@ const {
   assertCanUsePostingDate,
   assertCanEditHistorical,
 } = require('../lib/workingDayAccess');
+const { expenseAccountRejection } = require('../lib/expenseGlPick');
 
 function sameMoney(a, b) {
   return Number(a || 0) === Number(b || 0);
@@ -44,7 +45,29 @@ function expenseContentChanged(prior, next) {
     || !sameText(prior.payee_name, next.payeeName)
     || !sameText(prior.payee_nif, next.payeeNif)
     || !sameText(prior.invoice_number, next.invoiceNumber)
-    || !sameText(prior.notes, next.notes);
+    || !sameText(prior.notes, next.notes)
+    || !sameText(prior.gl_account_code, next.glAccountCode);
+}
+
+async function assertExpensePostingAccount(code) {
+  const clean = String(code || '').trim();
+  if (!clean) {
+    const err = new Error('Choose the chart account this payment is written to');
+    err.status = 400;
+    throw err;
+  }
+  const result = await db.query(
+    `SELECT code, is_header, is_active, account_type
+       FROM chart_of_accounts WHERE code = $1 LIMIT 1`,
+    [clean],
+  );
+  const reason = expenseAccountRejection(result.rows[0]);
+  if (reason) {
+    const err = new Error(reason);
+    err.status = 400;
+    throw err;
+  }
+  return String(result.rows[0].code);
 }
 
 const BANK_GL = '431';
@@ -117,9 +140,9 @@ async function applyBankAccountDelta(bankAccountId, delta) {
 }
 
 async function postBankExpenseGl({
-  branchId, amount, category, description, referenceId, createdBy, bankAccountId,
+  branchId, amount, category, description, referenceId, createdBy, bankAccountId, accountCode,
 }) {
-  const expenseCode = expenseGlAccount(category);
+  const expenseCode = String(accountCode || '').trim() || expenseGlAccount(category);
   const amt = Number(amount);
   if (!branchId || !Number.isFinite(amt) || amt <= 0) {
     throw new Error('Invalid bank expense GL params');
@@ -178,6 +201,7 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
   const applyBalances = opts.applyBalances !== false;
   let glError = null;
   if (!row.branchId || row.totalAmount <= 0) return { glError };
+  const debitCode = String(row.glAccountCode || '').trim() || expenseGlAccount(row.category);
 
   if (row.paymentSource === 'caixa') {
     const glBranchId = await treasuryBranchFromCaixa(row.caixaId, row.branchId);
@@ -187,7 +211,7 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
         branchId: glBranchId,
         amount: row.totalAmount,
         direction: 'out',
-        counterAccountCode: expenseGlAccount(row.category),
+        counterAccountCode: debitCode,
         description: `Despesa: ${row.description}`,
         referenceType: 'expense',
         referenceId: row.id,
@@ -248,6 +272,7 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
         branchId: glBranchId,
         amount: row.totalAmount,
         category: row.category,
+        accountCode: debitCode,
         description: row.description,
         referenceId: row.id,
         createdBy: paidBy,
@@ -281,6 +306,7 @@ function mapRow(row) {
     paymentSource: row.payment_source,
     caixaId: row.caixa_id,
     bankAccountId: row.bank_account_id,
+    glAccountCode: row.gl_account_code || '',
     payeeName: row.payee_name,
     payeeNif: row.payee_nif,
     invoiceNumber: row.invoice_number,
@@ -302,6 +328,7 @@ async function ensureExpensesTable() {
   if (db.engine === 'postgres') {
     try {
       await db.query('ALTER TABLE expenses ADD COLUMN IF NOT EXISTS payee_nif VARCHAR(32)');
+      await db.query('ALTER TABLE expenses ADD COLUMN IF NOT EXISTS gl_account_code VARCHAR(32)');
     } catch (_) { /* table may not exist yet; 053 creates it */ }
     return;
   }
@@ -337,6 +364,7 @@ async function ensureExpensesTable() {
       CREATE INDEX IF NOT EXISTS idx_expenses_branch ON expenses(branch_id);
     `);
     try { db.sqlite.exec('ALTER TABLE expenses ADD COLUMN payee_nif TEXT'); } catch (_) { /* already present */ }
+    try { db.sqlite.exec('ALTER TABLE expenses ADD COLUMN gl_account_code TEXT'); } catch (_) { /* already present */ }
   } catch (_) {}
 }
 
@@ -430,6 +458,18 @@ module.exports = function expensesRouter(broadcastTable) {
       const category = wasAlreadyPaid
         ? (priorRow.category || 'other')
         : (body.category || 'other');
+      let glAccountCode = wasAlreadyPaid
+        ? String(priorRow.gl_account_code || '').trim()
+        : String(body.glAccountCode || body.gl_account_code || '').trim();
+      if (!wasAlreadyPaid) {
+        try {
+          glAccountCode = glAccountCode
+            ? await assertExpensePostingAccount(glAccountCode)
+            : await assertExpensePostingAccount(expenseGlAccount(category));
+        } catch (glPickErr) {
+          return res.status(glPickErr.status || 400).json({ error: glPickErr.message });
+        }
+      }
       try {
         if (!priorRow) {
           assertCanUsePostingDate(req.user, body.createdAt || body.created_at || now);
@@ -446,6 +486,7 @@ module.exports = function expensesRouter(broadcastTable) {
           payeeNif: body.payeeNif || body.payee_nif || null,
           invoiceNumber: body.invoiceNumber || body.invoice_number || null,
           notes: body.notes || null,
+          glAccountCode,
         })) {
           assertCanEditHistorical(req.user, priorRow.created_at);
         }
@@ -460,9 +501,9 @@ module.exports = function expensesRouter(broadcastTable) {
           id, expense_number, branch_id, branch_name, category, description,
           amount, tax_amount, total_amount, payment_source, caixa_id, bank_account_id,
           payee_name, payee_nif, invoice_number, status, created_by, approved_by, approved_at,
-          paid_by, paid_at, transaction_id, notes, created_at, updated_at
+          paid_by, paid_at, transaction_id, notes, created_at, updated_at, gl_account_code
         ) VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
         )
         ON CONFLICT (id) DO UPDATE SET
           expense_number = EXCLUDED.expense_number,
@@ -487,6 +528,7 @@ module.exports = function expensesRouter(broadcastTable) {
           paid_at = EXCLUDED.paid_at,
           transaction_id = EXCLUDED.transaction_id,
           notes = EXCLUDED.notes,
+          gl_account_code = EXCLUDED.gl_account_code,
           updated_at = EXCLUDED.updated_at`,
         [
           id,
@@ -514,6 +556,7 @@ module.exports = function expensesRouter(broadcastTable) {
           body.notes || null,
           body.createdAt || body.created_at || now,
           now,
+          glAccountCode || null,
         ],
       );
 

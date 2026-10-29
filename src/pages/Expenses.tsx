@@ -21,6 +21,14 @@ import {
   createCaixa,
 } from '@/lib/accountingStorage';
 import { Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
+import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
+import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
+import {
+  EXPENSE_CATEGORY_GL,
+  caixaGlCodeForTill,
+  defaultExpenseAccountCode,
+  expensePostingAccounts,
+} from '@/lib/expenseAccountPick';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { enUS } from 'date-fns/locale';
@@ -119,6 +127,7 @@ interface ExpenseFormData {
   payeeNif: string;
   invoiceNumber: string;
   notes: string;
+  glAccountCode: string;
 }
 
 const initialFormData: ExpenseFormData = {
@@ -133,6 +142,7 @@ const initialFormData: ExpenseFormData = {
   payeeNif: '',
   invoiceNumber: '',
   notes: '',
+  glAccountCode: '',
 };
 
 export default function Expenses() {
@@ -144,6 +154,7 @@ export default function Expenses() {
   const { currentBranch, apiBranchId, treasuryAllBranches, userBranch } = useBranchScope();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { accounts: chartAccounts, isLoading: chartLoading } = useChartOfAccounts();
   const canPayFromBank = !!user && userHasPermission(user.role, user.permissionOverrides, 'bank_manage');
   const canPayStaff = !!user && (
     user.role !== 'cashier'
@@ -158,6 +169,10 @@ export default function Expenses() {
   const canCreateExpense = !!user && userHasPermission(user.role, user.permissionOverrides, 'expense_create');
   const expenseNeedsApproval = !!user && user.role === 'cashier' && !canApproveExpense;
   const visibleCategories = EXPENSE_CATEGORIES.filter((cat) => canPayStaff || cat.value !== 'staff');
+  const postingAccounts = useMemo(
+    () => expensePostingAccounts(chartAccounts),
+    [chartAccounts],
+  );
 
   const [expenses, setExpenses] = useState<Expense[]>(
     () => getCachedList<Expense[]>(`expenses:${apiBranchId ?? 'all'}`) ?? [],
@@ -176,6 +191,39 @@ export default function Expenses() {
   const [isCreatingCaixa, setIsCreatingCaixa] = useState(false);
   const [formData, setFormData] = useState<ExpenseFormData>(initialFormData);
   const [editingId, setEditingId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isDialogOpen || editingId) return;
+    setFormData((current) => {
+      if (current.glAccountCode) return current;
+      const next = defaultExpenseAccountCode(current.category, chartAccounts);
+      if (!next) return current;
+      return { ...current, glAccountCode: next };
+    });
+  }, [isDialogOpen, editingId, chartAccounts]);
+  const moneyLeavesLabel = useMemo(() => {
+    if (formData.paymentSource === 'bank') {
+      const bank = bankAccounts.find((account) => account.id === formData.bankAccountId);
+      if (!bank) return t.expensesUi.moneyLeavesBank;
+      const code = String(bank.glAccountCode || '431').trim();
+      const name = [bank.bankName, bank.accountNumber].filter(Boolean).join(' ');
+      return t.expensesUi.moneyLeaves.replace('{account}', `${code} ${name}`.trim());
+    }
+    const caixa = caixas.find((row) => row.id === formData.caixaId);
+    const code = caixaGlCodeForTill(chartAccounts, caixa);
+    if (!code) return t.expensesUi.moneyLeavesTill;
+    const account = chartAccounts.find((row) => row.code === code);
+    const name = account ? resolveAccountDisplayName(account, language, t) : (caixa?.name || '');
+    return t.expensesUi.moneyLeaves.replace('{account}', `${code} ${name}`.trim());
+  }, [
+    formData.paymentSource,
+    formData.bankAccountId,
+    formData.caixaId,
+    bankAccounts,
+    caixas,
+    chartAccounts,
+    language,
+    t,
+  ]);
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -384,6 +432,7 @@ export default function Expenses() {
         payeeNif: expense.payeeNif || '',
         invoiceNumber: expense.invoiceNumber || '',
         notes: expense.notes || '',
+        glAccountCode: expense.glAccountCode || '',
       });
     } else {
       setEditingId(null);
@@ -391,6 +440,7 @@ export default function Expenses() {
         ...initialFormData,
         caixaId: caixas[0]?.id || '',
         bankAccountId: bankAccounts[0]?.id || '',
+        glAccountCode: defaultExpenseAccountCode(initialFormData.category, chartAccounts),
       });
     }
     setIsDialogOpen(true);
@@ -420,16 +470,21 @@ export default function Expenses() {
       ...initialFormData,
       category: formData.category,
       paymentSource: formData.paymentSource,
+      glAccountCode: defaultExpenseAccountCode(formData.category, chartAccounts),
       caixaId: caixas[0]?.id || '',
       bankAccountId: bankAccounts[0]?.id || '',
     });
-  }, [formData.category, formData.paymentSource, caixas, bankAccounts]);
+  }, [formData.category, formData.paymentSource, caixas, bankAccounts, chartAccounts]);
 
   type ExpenseSubmitAction = 'save' | 'save_and_new' | 'save_and_pay' | 'save_pay_and_new';
 
   const validateForm = (): boolean => {
     if (!formData.description.trim()) {
       toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.descriptionRequired, variant: 'destructive' });
+      return false;
+    }
+    if (!String(formData.glAccountCode || '').trim()) {
+      toast({ title: t.expensesUi.toastErrorTitle, description: t.expensesUi.chartAccountRequired, variant: 'destructive' });
       return false;
     }
     if (formData.amount <= 0) {
@@ -515,6 +570,7 @@ export default function Expenses() {
           formData.invoiceNumber || undefined,
           formData.notes || undefined,
           expenseNeedsApproval ? 'pending_approval' : 'draft',
+          formData.glAccountCode,
         );
 
         if (payNow) {
@@ -897,7 +953,12 @@ export default function Expenses() {
                       <TableCell>
                         <span className="flex items-center gap-2">
                           <span>{getCategoryIcon(expense.category)}</span>
-                          <span className="text-sm">{getCategoryLabel(expense.category)}</span>
+                          <span className="text-sm">
+                            {getCategoryLabel(expense.category)}
+                            {expense.glAccountCode ? (
+                              <span className="ml-2 font-mono text-xs text-muted-foreground">{expense.glAccountCode}</span>
+                            ) : null}
+                          </span>
                         </span>
                       </TableCell>
                       <TableCell className="max-w-[200px] truncate">{expense.description}</TableCell>
@@ -1051,7 +1112,20 @@ export default function Expenses() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>{t.expensesUi.colCategory} *</Label>
-                  <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v as ExpenseCategory })}>
+                  <Select value={formData.category} onValueChange={(v) => {
+                    const category = v as ExpenseCategory;
+                    const root = EXPENSE_CATEGORY_GL[category];
+                    const current = formData.glAccountCode;
+                    const stillFits = !!current && (current === root || current.startsWith(root));
+                    const stillPosting = postingAccounts.some((account) => account.code === current);
+                    setFormData({
+                      ...formData,
+                      category,
+                      glAccountCode: stillFits && stillPosting
+                        ? current
+                        : defaultExpenseAccountCode(category, chartAccounts),
+                    });
+                  }}>
                     <SelectTrigger className="h-10">
                       <SelectValue />
                     </SelectTrigger>
@@ -1097,6 +1171,33 @@ export default function Expenses() {
                     )}
                   </div>
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>{t.expensesUi.chartAccount} *</Label>
+                <Select
+                  value={formData.glAccountCode || undefined}
+                  onValueChange={(code) => setFormData({ ...formData, glAccountCode: code })}
+                  disabled={chartLoading && postingAccounts.length === 0}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder={chartLoading ? t.expensesUi.chartAccountLoading : t.expensesUi.chartAccountPlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {postingAccounts.length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        {chartLoading ? t.expensesUi.chartAccountLoading : t.expensesUi.chartAccountPlaceholder}
+                      </SelectItem>
+                    ) : (
+                      postingAccounts.map((account) => (
+                        <SelectItem key={account.id} value={account.code}>
+                          {account.code} {resolveAccountDisplayName(account, language, t)}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{moneyLeavesLabel}</p>
               </div>
 
               {formData.paymentSource === 'caixa' ? (

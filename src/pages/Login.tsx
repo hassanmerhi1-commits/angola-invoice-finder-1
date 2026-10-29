@@ -18,7 +18,7 @@ const loginSchema = z.object({
   password: z.string().min(1, 'Password is required').max(128, 'Password too long'),
 });
 
-function LoginWatchEmblem({
+function LoginMark({
   logoSrc,
   companyName,
   size,
@@ -27,20 +27,9 @@ function LoginWatchEmblem({
   companyName: string;
   size: 'lg' | 'sm';
 }) {
-  const mark = size === 'lg' ? 'w-[88px] h-[88px]' : 'w-14 h-14';
-  const img = size === 'lg' ? 'w-14 h-14' : 'w-8 h-8';
-  const ring = size === 'lg'
-    ? 'shadow-[inset_0_0_0_6px_rgba(255,255,255,0.12)]'
-    : 'shadow-[inset_0_0_0_4px_rgba(255,255,255,0.12)]';
+  const img = size === 'lg' ? 'h-16 w-16' : 'h-12 w-12';
   return (
-    <div className="nexor-login-emblem mx-auto" data-size={size}>
-      <span className="nexor-login-bezel-track" aria-hidden />
-      <span className="nexor-login-bezel nexor-login-bezel--gold" aria-hidden />
-      <span className="nexor-login-bezel nexor-login-bezel--teal" aria-hidden />
-      <div className={`relative z-[1] ${mark} rounded-full bg-[radial-gradient(circle_at_35%_30%,#4aa3c7,#1b4f6b_55%,#0d2433)] flex items-center justify-center overflow-hidden ${ring}`}>
-        <img src={logoSrc} alt={companyName} className={`${img} object-contain`} />
-      </div>
-    </div>
+    <img src={logoSrc} alt={companyName} className={`${img} mx-auto object-contain`} />
   );
 }
 
@@ -210,32 +199,29 @@ export default function Login() {
   }, [t, toast]);
 
   const logoSrc = logo || defaultLogo;
-  const fieldClass =
-    'h-11 rounded-lg bg-[#0b101b] border-[#2a3444] text-white placeholder:text-[#6b7788] focus-visible:ring-[#1a8aa8] focus-visible:ring-offset-0';
-  const labelClass = 'text-[11px] font-semibold uppercase text-[#9aa6b5]';
+  const fieldClass = 'h-11 rounded-lg bg-white text-foreground';
+  const labelClass = 'text-[11px] font-semibold uppercase text-muted-foreground';
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
+    <div className="min-h-screen flex flex-col bg-[#f3f6f9] text-[#1a2332]">
       <TillCityUiBanner />
       <div className="flex flex-1 min-h-0">
-        <div className="hidden lg:flex w-[44%] relative flex-col items-center justify-center text-center px-10 border-r border-white/[0.06]">
-          <LoginWatchEmblem logoSrc={logoSrc} companyName={companyName} size="lg" />
-          <h1 className="relative mt-[18px] mb-2 text-[28px] font-semibold">{companyName}</h1>
-          <p className="relative m-0 max-w-[240px] text-[13px] text-[#8b97a8]">{t.auth.tagline}</p>
+        <div className="hidden lg:flex w-[44%] flex-col items-center justify-center text-center px-10 border-r border-[#d5dde6] bg-white">
+          <LoginMark logoSrc={logoSrc} companyName={companyName} size="lg" />
+          <h1 className="mt-[18px] mb-2 text-[28px] font-semibold text-[#1a2332]">{companyName}</h1>
+          <p className="m-0 max-w-[240px] text-[13px] text-[#5c6b7a]">{t.auth.tagline}</p>
         </div>
 
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="w-full max-w-[360px]">
             <div className="lg:hidden text-center mb-6">
-              <LoginWatchEmblem logoSrc={logoSrc} companyName={companyName} size="sm" />
-              <h1 className="mt-3 text-xl font-semibold">{companyName}</h1>
-              <p className="mt-1 text-xs text-[#8b97a8]">{t.auth.tagline}</p>
+              <LoginMark logoSrc={logoSrc} companyName={companyName} size="sm" />
+              <h1 className="mt-3 text-xl font-semibold text-[#1a2332]">{companyName}</h1>
+              <p className="mt-1 text-xs text-[#5c6b7a]">{t.auth.tagline}</p>
             </div>
 
-            <div className="relative rounded-[18px] border border-white/[0.08] bg-[rgba(18,24,38,0.72)] px-[26px] pt-7 pb-5">
-              <div className="absolute left-4 right-4 top-0 h-0.5 bg-[#c4a574]" />
-
-              <h2 className="text-xl font-semibold mb-[18px]">{t.auth.welcomeBack}</h2>
+            <div className="rounded-[18px] border border-[#d5dde6] bg-white px-[26px] pt-7 pb-5 shadow-sm">
+              <h2 className="text-xl font-semibold mb-[18px] text-[#1a2332]">{t.auth.welcomeBack}</h2>
 
               {lastConnectionError && (
                 <Alert variant="destructive" className="mb-4">
@@ -312,7 +298,7 @@ export default function Login() {
                     <Button
                       type="button"
                       variant="link"
-                      className="px-0 h-auto text-[#8b97a8]"
+                      className="px-0 h-auto text-[#5c6b7a]"
                       onClick={() => { setMfaToken(null); setMfaCode(''); }}
                     >
                       Back to password
@@ -333,10 +319,10 @@ export default function Login() {
                 </Button>
               </form>
 
-              <div className="mt-3.5 text-xs text-[#7d8896]">
+              <div className="mt-3.5 text-xs text-[#5c6b7a]">
                 <button
                   type="button"
-                  className={language === 'pt' ? 'text-[#e8eef5] font-semibold' : 'hover:text-[#e8eef5]'}
+                  className={language === 'pt' ? 'text-[#1a2332] font-semibold' : 'hover:text-[#1a2332]'}
                   onClick={() => setLanguage('pt')}
                 >
                   PT
@@ -344,7 +330,7 @@ export default function Login() {
                 <span className="mx-1.5">|</span>
                 <button
                   type="button"
-                  className={language === 'en' ? 'text-[#e8eef5] font-semibold' : 'hover:text-[#e8eef5]'}
+                  className={language === 'en' ? 'text-[#1a2332] font-semibold' : 'hover:text-[#1a2332]'}
                   onClick={() => setLanguage('en')}
                 >
                   EN
@@ -353,7 +339,7 @@ export default function Login() {
             </div>
 
             {!mfaToken && (
-              <p className="mt-4 text-center text-[11px] text-[#7d8896]">{t.auth.defaultAdminHint}</p>
+              <p className="mt-4 text-center text-[11px] text-[#5c6b7a]">{t.auth.defaultAdminHint}</p>
             )}
           </div>
         </div>

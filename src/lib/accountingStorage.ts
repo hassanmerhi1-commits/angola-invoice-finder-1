@@ -1333,6 +1333,7 @@ function expenseToApiPayload(expense: Expense): Record<string, unknown> {
     paidAt: expense.paidAt,
     transactionId: expense.transactionId,
     notes: expense.notes,
+    glAccountCode: expense.glAccountCode || '',
   };
 }
 
@@ -1480,6 +1481,7 @@ export async function createExpense(
   invoiceNumber?: string,
   notes?: string,
   status?: Expense['status'],
+  glAccountCode?: string,
 ): Promise<Expense> {
   const expense: Expense = {
     id: newUuid(),
@@ -1501,6 +1503,7 @@ export async function createExpense(
     requestedBy,
     requestedAt: new Date().toISOString(),
     notes,
+    glAccountCode: String(glAccountCode || '').trim() || undefined,
     createdAt: new Date().toISOString(),
   };
   await saveExpense(expense);
@@ -1593,7 +1596,7 @@ export async function payExpense(
         branchId: expense.branchId,
         amount: expense.totalAmount,
         direction: 'out',
-        counterAccountCode: expenseGlAccount(expense.category),
+        counterAccountCode: String(expense.glAccountCode || '').trim() || expenseGlAccount(expense.category),
         description: `Despesa: ${expense.description}`,
         referenceType: 'expense',
         referenceId: expense.id,
@@ -2125,6 +2128,7 @@ function mapExpenseFromDb(row: any): Expense {
     paidAt: row.paid_at || row.paidAt,
     transactionId: row.transaction_id || row.transactionId,
     notes: row.notes,
+    glAccountCode: String(row.gl_account_code || row.glAccountCode || '').trim() || undefined,
     createdAt: row.created_at || row.createdAt || '',
     updatedAt: row.updated_at || row.updatedAt,
   };
@@ -2145,6 +2149,7 @@ function mapExpenseToDb(expense: Expense): any {
     paid_by: expense.paidBy || '', paid_at: expense.paidAt || '',
     transaction_id: expense.transactionId || '',
     notes: expense.notes || '',
+    gl_account_code: expense.glAccountCode || '',
   };
 }
 

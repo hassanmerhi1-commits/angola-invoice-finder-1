@@ -151,7 +151,8 @@ async function syncCaixaGlFromRecord(table, record) {
       branchId: String(branchId),
       amount,
       direction: 'out',
-      counterAccountCode: expenseGlAccount(category),
+      counterAccountCode: String(pick(data, 'gl_account_code', 'glAccountCode') || '').trim()
+        || expenseGlAccount(category),
       description: `Despesa: ${description}`,
       referenceType: 'expense',
       referenceId: String(id),

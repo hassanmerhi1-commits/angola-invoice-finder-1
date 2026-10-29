@@ -28,6 +28,7 @@ const testFiles = [
   'test/agtFeSpec.test.js',
   'test/expensePaymentScope.test.js',
   'test/expenseApprovers.test.js',
+  'test/expenseGlPick.test.js',
   'test/notificationVisibility.test.js',
   'test/rolePermissions.test.js',
   'test/caixaOpenAccess.test.js',

@@ -339,10 +339,7 @@
     @apply bg-background text-foreground antialiased;
     overflow: hidden;
     font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-    background-image:
-      radial-gradient(ellipse 90% 55% at 0% -5%, hsl(var(--nexor-body-glow-a) / 0.14), transparent 55%),
-      radial-gradient(ellipse 70% 45% at 100% 0%, hsl(var(--nexor-body-glow-b) / 0.12), transparent 50%),
-      radial-gradient(ellipse 50% 35% at 80% 100%, hsl(var(--nexor-body-glow-c) / 0.08), transparent 45%);
+    background-color: #f3f6f9;
   }
 
   /* Fit tills with a single zoom. Transform + larger layout box was clipped by body overflow. */
@@ -484,51 +481,6 @@
     border-color: hsl(var(--border)) !important;
   }
 
-  /* Login watch bezel (option F) */
-  .nexor-login-emblem {
-    position: relative;
-    display: grid;
-    place-items: center;
-  }
-  .nexor-login-emblem[data-size='lg'] {
-    width: 232px;
-    height: 232px;
-  }
-  .nexor-login-emblem[data-size='sm'] {
-    width: 148px;
-    height: 148px;
-  }
-  .nexor-login-bezel-track,
-  .nexor-login-bezel {
-    position: absolute;
-    border-radius: 50%;
-    pointer-events: none;
-  }
-  .nexor-login-emblem[data-size='lg'] .nexor-login-bezel-track,
-  .nexor-login-emblem[data-size='lg'] .nexor-login-bezel--gold {
-    inset: 16px;
-  }
-  .nexor-login-emblem[data-size='sm'] .nexor-login-bezel-track,
-  .nexor-login-emblem[data-size='sm'] .nexor-login-bezel--gold {
-    inset: 10px;
-  }
-  .nexor-login-bezel--teal {
-    inset: 0;
-  }
-  .nexor-login-bezel-track {
-    border: 1px solid rgba(196, 165, 116, 0.28);
-  }
-  /*
-   * Static rings only. A masked conic-gradient with transform:rotate is a GPU
-   * layer; on some Windows graphics drivers the mask scales to the viewport
-   * and the login window stays black (desktop app and browser).
-   */
-  .nexor-login-bezel--gold {
-    border: 1.5px solid rgba(196, 165, 116, 0.72);
-  }
-  .nexor-login-bezel--teal {
-    border: 1px solid rgba(26, 138, 168, 0.55);
-  }
 }
 
 /* Modern scrollbar */

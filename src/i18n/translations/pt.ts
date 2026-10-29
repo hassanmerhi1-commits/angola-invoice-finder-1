@@ -2821,7 +2821,7 @@ export const pt: TranslationKeys = {
 
     editTitle: "Editar Despesa",
     newTitle: "Nova Despesa",
-    dialogDescription: "O que foi gasto, o valor, e de onde foi pago.",
+    dialogDescription: "O que foi gasto, a conta do plano, e de onde saiu o dinheiro.",
     selectCashPlaceholder: "Seleccione a caixa",
     caixaLoading: "A carregar caixas…",
     noCashRegisters: "Nenhuma caixa disponível",
@@ -2845,6 +2845,13 @@ export const pt: TranslationKeys = {
     documentRef: "Factura / recibo",
     bankAccount: "Conta bancária",
     payFrom: "Pagar de",
+    chartAccount: "Conta do plano",
+    chartAccountPlaceholder: "Escolha a conta",
+    chartAccountRequired: "Escolha a conta do plano onde esta despesa fica registada",
+    chartAccountLoading: "A carregar o plano…",
+    moneyLeaves: "O dinheiro sai de {account}",
+    moneyLeavesTill: "O dinheiro sai desta caixa",
+    moneyLeavesBank: "O dinheiro sai deste banco",
     categories: {
       transport: "Transporte",
       utilities: "Utilidades / instalações",
@@ -3347,7 +3354,7 @@ export const pt: TranslationKeys = {
       receipt: "Recibo",
       receiveMethod: "Forma de Receber",
       creditAmount: "Valor Crédito",
-      payment: "Pagamento",
+      payment: "Pagamentos do dia",
       chequePayment: "Pagamento por Cheque",
       receivables: "Contas a receber (clientes)",
       payables: "Contas a pagar (fornecedores)",
@@ -3467,6 +3474,7 @@ export const pt: TranslationKeys = {
     documentFlow: {
       salesInvoice: "Fatura De Venda",
       statement: "Extracto de Conta",
+      supplierPayments: "Pagamentos a fornecedores",
     },
     quickActions: {
       posSales: "POS / Vendas",

@@ -9,6 +9,11 @@
 // the exact number that will be assigned on save.
 
 export const ENTITY_ACCOUNT_CODE_LENGTH = 8;
+
+/** Posting accounts the category tabs list. Groups stay on the All tab. */
+export function isEightDigitAccountCode(code: string | null | undefined): boolean {
+  return /^\d{8}$/.test(String(code || '').trim());
+}
 export const SUPPLIER_PARENT_CODE = '321';
 export const CASH_PARENT_CODE = '45';
 

@@ -49,7 +49,7 @@ import {
   isBranchCaixaLeaf,
   isReservedCashCode,
 } from '@/lib/chartOfAccountsEngine';
-import { isCashCategoryParent, isCompactCategoryParent, nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
+import { isCashCategoryParent, isCompactCategoryParent, isEightDigitAccountCode, nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
 
 // Category tabs
 // Angola PGC (novo com IVA) — no-dot numbering. Tabs map to PGC class/main codes:
@@ -323,30 +323,37 @@ export default function ChartOfAccounts() {
     [accounts],
   );
 
+  const accountBelongsToTab = useCallback((account: Account) => {
+    const override = resolveDisplayTab(account, accountsById);
+    if (override) return override === activeTab;
+    return currentTabConfig.filter(account);
+  }, [accountsById, activeTab, currentTabConfig]);
+
   const filteredAccounts = useMemo(() => {
+    const onAll = activeTab === 'todos';
     if (!searchQuery) {
-      if (activeTab === 'todos') return accounts;
-      return accounts.filter((account) => {
-        const override = resolveDisplayTab(account, accountsById);
-        if (override) return override === activeTab;
-        return currentTabConfig.filter(account);
-      });
+      if (onAll) return accounts;
+      // Category tabs list the 8-digit accounts only. Groups stay on All.
+      return accounts.filter((account) => isEightDigitAccountCode(account.code) && accountBelongsToTab(account));
     }
 
     // A search covers the whole chart: scoping it to the open tab meant a supplier
-    // could not be found from any other tab. Ancestors of each hit come along so the
-    // row still renders in its branch instead of disappearing with its parent.
+    // could not be found from any other tab. On All, ancestors of each hit come
+    // along so the row still renders in its branch. Other tabs stay a list of
+    // 8-digit accounts.
     const byId = new Map(accounts.map((a) => [coaIdKey(a.id), a]));
     const keep = new Set<string>();
     for (const a of accounts) {
       if (!matchesQuery(a)) continue;
+      if (!onAll && !isEightDigitAccountCode(a.code)) continue;
       keep.add(coaIdKey(a.id));
+      if (!onAll) continue;
       for (const pid of ancestorIdsOf(a, byId)) {
         if (byId.has(pid)) keep.add(pid);
       }
     }
     return accounts.filter((a) => keep.has(coaIdKey(a.id)));
-  }, [accounts, accountsById, activeTab, currentTabConfig, searchQuery, matchesQuery]);
+  }, [accounts, activeTab, searchQuery, matchesQuery, accountBelongsToTab]);
 
   const searchHitCount = useMemo(
     () => (searchQuery ? filteredAccounts.filter(matchesQuery).length : 0),
@@ -400,28 +407,43 @@ export default function ChartOfAccounts() {
   };
   const collapseAll = () => setExpandedIds(new Set());
 
-  // A hit deep in the tree is useless behind a collapsed parent, so opening or clearing
-  // the search reopens every branch of the current view. Keyed on the term alone: a
+  // A hit deep in the All tree is useless behind a collapsed parent, so a search opens
+  // every branch. Clearing the search returns to collapsed. The first empty query
+  // must not wipe a branch another page just opened. Keyed on the term alone: a
   // background refresh must not undo a collapse the user just made.
+  const prevSearchQuery = useRef<string | null>(null);
   useEffect(() => {
+    const prev = prevSearchQuery.current;
+    prevSearchQuery.current = searchQuery;
+    if (!searchQuery) {
+      if (prev) setExpandedIds(new Set());
+      return;
+    }
     const rows = filteredAccountsRef.current;
     if (rows.length === 0) return;
     setExpandedIds(new Set(idsOfAccountsWithChildren(rows, childrenByParentRef.current)));
   }, [searchQuery]);
 
-  // Default-open every parent that has children (311/321, caixa, banks, …), not only is_header.
-  // New accounts expand their ancestors so a fresh supplier/customer/caixa is never left collapsed.
+  // All opens collapsed. Other tabs are a flat 8-digit list. A new account still
+  // opens its ancestors so a fresh supplier/customer/caixa is not left hidden on All.
   useEffect(() => {
     if (filteredAccounts.length === 0) return;
-    const tabChanged = treeExpandTab.current !== activeTab;
+    const previousTab = treeExpandTab.current;
+    const tabChanged = previousTab !== activeTab;
     treeExpandTab.current = activeTab;
 
     const toExpand = new Set<string>();
     if (tabChanged) {
+      for (const a of filteredAccounts) seenCoaIds.current.add(coaIdKey(a.id));
+      if (activeTab === 'todos') {
+        // First paint is already collapsed. Collapse again only when returning
+        // from another tab, so a ledger opened from elsewhere stays visible.
+        if (!searchQuery && previousTab !== null) setExpandedIds(new Set());
+        return;
+      }
       for (const id of idsOfAccountsWithChildren(filteredAccounts, childrenByParent)) {
         toExpand.add(id);
       }
-      for (const a of filteredAccounts) seenCoaIds.current.add(coaIdKey(a.id));
     } else {
       const newcomers = filteredAccounts.filter((a) => !seenCoaIds.current.has(coaIdKey(a.id)));
       if (newcomers.length === 0) return;
@@ -436,7 +458,7 @@ export default function ChartOfAccounts() {
       for (const id of toExpand) next.add(id);
       return next;
     });
-  }, [activeTab, filteredAccounts, childrenByParent, filteredById]);
+  }, [activeTab, filteredAccounts, childrenByParent, filteredById, searchQuery]);
 
   const openCreateDialog = (tabOverride?: string) => {
     const tabKey = tabOverride ?? activeTab;
