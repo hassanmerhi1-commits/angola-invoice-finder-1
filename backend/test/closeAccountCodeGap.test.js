@@ -267,6 +267,9 @@ describe('close deleted leaf code gap', () => {
         if (/^SAVEPOINT/i.test(text) || /^RELEASE SAVEPOINT/i.test(text) || /^ROLLBACK TO SAVEPOINT/i.test(text)) {
           return { rows: [] };
         }
+        if (/information_schema\.columns/i.test(text)) {
+          return { rows: [{ data_type: 'uuid' }] };
+        }
         if (/SELECT id, code, parent_id/i.test(text)) {
           return {
             rows: [

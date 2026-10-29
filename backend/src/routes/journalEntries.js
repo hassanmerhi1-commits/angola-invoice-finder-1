@@ -139,23 +139,24 @@ module.exports = function(broadcastTable) {
 
       const where = `WHERE ${conditions.join(' AND ')}`;
 
-      const countResult = await db.query(
-        `SELECT COUNT(*) AS total,
-                COALESCE(SUM(je.total_debit), 0) AS total_debit,
-                COALESCE(SUM(je.total_credit), 0) AS total_credit
-         ${ENTRY_FROM}
-         ${where}`,
-        params,
-      );
-      const total = Number(countResult.rows[0]?.total || 0);
-      const totalDebit = Number(countResult.rows[0]?.total_debit || 0);
-      const totalCredit = Number(countResult.rows[0]?.total_credit || 0);
-
       const listParams = [...params, limit, offset];
       const query = `${ENTRY_HEADER_SELECT} ${where}
          ORDER BY je.entry_date DESC, je.created_at DESC
          LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`;
-      const result = await db.query(query, listParams);
+      const [countResult, result] = await Promise.all([
+        db.query(
+          `SELECT COUNT(*) AS total,
+                  COALESCE(SUM(je.total_debit), 0) AS total_debit,
+                  COALESCE(SUM(je.total_credit), 0) AS total_credit
+           ${ENTRY_FROM}
+           ${where}`,
+          params,
+        ),
+        db.query(query, listParams),
+      ]);
+      const total = Number(countResult.rows[0]?.total || 0);
+      const totalDebit = Number(countResult.rows[0]?.total_debit || 0);
+      const totalCredit = Number(countResult.rows[0]?.total_credit || 0);
 
       if (includeLines) {
         for (const entry of result.rows) {

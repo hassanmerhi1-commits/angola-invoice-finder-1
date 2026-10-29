@@ -12,6 +12,7 @@ const PREFETCH_BY_PATH: Record<string, () => Promise<unknown>> = {
   '/invoices': () => import('@/pages/Invoices'),
   '/suppliers': () => import('@/pages/Suppliers'),
   '/journals': () => import('@/pages/Journals'),
+  '/settings': () => import('@/pages/Settings'),
 };
 
 const warmed = new Set<string>();
@@ -34,6 +35,8 @@ export function prefetchCoreRoutes(): void {
     '/purchase-invoices',
     '/chart-of-accounts',
     '/invoices',
+    '/journals',
+    '/settings',
   ]) {
     prefetchRoute(path);
   }

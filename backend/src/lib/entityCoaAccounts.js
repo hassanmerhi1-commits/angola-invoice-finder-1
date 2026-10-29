@@ -665,22 +665,42 @@ async function promoteToCategoryHeader(client, parentId) {
   ).catch(() => {});
 }
 
+let journalAccountIdKind = null;
+
+/** PostgreSQL stores the account UUID. Writing a chart code into that column aborts the renumber. */
+async function journalAccountIdKindOf(client) {
+  if (journalAccountIdKind) return journalAccountIdKind;
+  try {
+    const found = await client.query(
+      `SELECT data_type
+         FROM information_schema.columns
+        WHERE table_name = 'journal_entry_lines' AND column_name = 'account_id'
+        LIMIT 1`,
+    );
+    const kind = String(found.rows?.[0]?.data_type || '').toLowerCase();
+    journalAccountIdKind = kind === 'uuid' ? 'uuid' : 'text';
+  } catch (_) {
+    journalAccountIdKind = 'text';
+  }
+  return journalAccountIdKind;
+}
+
 let rewriteSavepointSeq = 0;
 
-/**
- * One statement must not abort the whole renumber. On PostgreSQL,
- * journal_entry_lines.account_id is a UUID, so writing a chart code into it
- * fails even when no row matches. A caught error still kills the transaction,
- * which is why 31100005 and 31100014 stayed put. A savepoint keeps the
- * chart update alive. Lines stored by UUID stay on the same account.
- */
 async function runRewrite(client, sql, params) {
   const name = `coa_rw_${++rewriteSavepointSeq}`;
-  await client.query(`SAVEPOINT ${name}`);
+  let savepoint = false;
+  try {
+    await client.query(`SAVEPOINT ${name}`);
+    savepoint = true;
+  } catch (_) {
+    savepoint = false;
+  }
   try {
     await client.query(sql, params);
-    await client.query(`RELEASE SAVEPOINT ${name}`);
-  } catch (_) {
+    if (savepoint) await client.query(`RELEASE SAVEPOINT ${name}`);
+  } catch (err) {
+    if (!savepoint) throw err;
     try { await client.query(`ROLLBACK TO SAVEPOINT ${name}`); } catch (_) { /* already cleared */ }
     try { await client.query(`RELEASE SAVEPOINT ${name}`); } catch (_) { /* already cleared */ }
   }
@@ -688,13 +708,16 @@ async function runRewrite(client, sql, params) {
 
 async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
   if (!oldCode || !newCode || oldCode === newCode) return;
-  await runRewrite(
-    client,
-    `UPDATE journal_entry_lines
-        SET account_id = $1
-      WHERE CAST(account_id AS TEXT) = CAST($2 AS TEXT)`,
-    [newCode, oldCode],
-  );
+  // UUID lines already point at the account. Do not write a chart code into that column.
+  if ((await journalAccountIdKindOf(client)) !== 'uuid') {
+    await runRewrite(
+      client,
+      `UPDATE journal_entry_lines
+          SET account_id = $1
+        WHERE CAST(account_id AS TEXT) = CAST($2 AS TEXT)`,
+      [newCode, oldCode],
+    );
+  }
   await runRewrite(
     client,
     `UPDATE purchase_invoices

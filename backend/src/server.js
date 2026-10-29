@@ -187,7 +187,15 @@ app.get(['/api/openapi.yaml', '/api/v1/openapi.yaml'], (_req, res) => {
 
 const webappPath = path.join(__dirname, '../webapp');
 if (!fs.existsSync(webappPath)) fs.mkdirSync(webappPath, { recursive: true });
-app.use('/app', express.static(webappPath, { index: false, fallthrough: true }));
+app.use('/app', express.static(webappPath, {
+  index: false,
+  fallthrough: true,
+  setHeaders(res, filePath) {
+    if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  },
+}));
 
 function webappEntryAssetsExist(indexHtml) {
   const names = [...String(indexHtml || '').matchAll(/\/app\/assets\/([^"'>\s]+\.js)/g)].map((m) => m[1]);

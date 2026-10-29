@@ -902,7 +902,7 @@ async function countMisfiledClassifyLines(db) {
   const r = await db.query(
     `SELECT COUNT(*) AS n
      FROM journal_entry_lines jel
-     INNER JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+     INNER JOIN chart_of_accounts coa ON coa.id = jel.account_id
      WHERE ${entityLeafCodeClause('coa')}
        AND ${classifyNameClause('coa')}`,
   ).catch(() => ({ rows: [{ n: 0 }] }));
@@ -1350,22 +1350,12 @@ async function repairParentEntityCoaPostings(db, opts = {}) {
 
 async function countParentEntityLines(db) {
   const r = await db.query(
-    `SELECT COUNT(*)::int AS n
+    `SELECT COUNT(*) AS n
      FROM journal_entry_lines jel
-     LEFT JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
-     WHERE CAST(coa.code AS TEXT) IN ('321', '311')
-        OR CAST(jel.account_id AS TEXT) IN ('321', '311')`,
-  ).catch(async () => {
-    // SQLite may not like ::int
-    const r2 = await db.query(
-      `SELECT COUNT(*) AS n
-       FROM journal_entry_lines jel
-       LEFT JOIN chart_of_accounts coa ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
-       WHERE CAST(coa.code AS TEXT) IN ('321', '311')
-          OR CAST(jel.account_id AS TEXT) IN ('321', '311')`,
-    ).catch(() => ({ rows: [{ n: 0 }] }));
-    return r2;
-  });
+     WHERE jel.account_id IN (
+       SELECT id FROM chart_of_accounts WHERE code IN ('321', '311')
+     )`,
+  ).catch(() => ({ rows: [{ n: 0 }] }));
   return Number(r.rows?.[0]?.n) || 0;
 }
 

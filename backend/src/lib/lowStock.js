@@ -126,8 +126,14 @@ async function queryLowStockProducts(opts = {}) {
  * Distinct SKU count matching queryLowStockProducts (no row limit).
  * @param {{ branchId?: string }} [opts]
  */
+const lowStockCountCache = new Map();
+const LOW_STOCK_COUNT_TTL_MS = 60_000;
+
 async function countLowStockProducts(opts = {}) {
   const branchId = normalizeBranchId(opts.branchId);
+  const cacheKey = branchId || '*';
+  const hit = lowStockCountCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < LOW_STOCK_COUNT_TTL_MS) return hit.count;
   const skuKey = sqlMovementSkuKey('pm');
   const params = branchId ? [branchId] : [];
 
@@ -142,7 +148,9 @@ async function countLowStockProducts(opts = {}) {
 
   const result = await db.query(sql, params);
   const n = Number(result.rows?.[0]?.count);
-  return Number.isFinite(n) ? n : 0;
+  const count = Number.isFinite(n) ? n : 0;
+  lowStockCountCache.set(cacheKey, { at: Date.now(), count });
+  return count;
 }
 
 module.exports = {

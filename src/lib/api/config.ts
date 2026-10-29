@@ -815,13 +815,13 @@ export async function getApiUrlAsync(options?: { waitForPortMs?: number }): Prom
 
   if (electronResolvedBase) {
     if (Date.now() - electronCacheVerifiedAt > ELECTRON_CACHE_VERIFY_MS) {
-      const ok = await verifyElectronCachedBase();
       electronCacheVerifiedAt = Date.now();
-      if (!ok) {
-        invalidateElectronApiBaseCache();
-      }
+      const checking = electronResolvedBase;
+      void verifyElectronCachedBase().then((ok) => {
+        if (!ok && electronResolvedBase === checking) invalidateElectronApiBaseCache();
+      });
     }
-    if (electronResolvedBase) return electronResolvedBase;
+    return electronResolvedBase;
   }
 
   const waitMs = options?.waitForPortMs ?? 12000;
