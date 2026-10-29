@@ -685,6 +685,138 @@ async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
       WHERE CAST(gl_account_code AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
   ).catch(() => {});
+  await client.query(
+    `UPDATE expenses
+        SET gl_account_code = $1
+      WHERE CAST(gl_account_code AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  ).catch(() => {});
+}
+
+function retiredLeafCode(id) {
+  return `z${String(id || '').replace(/-/g, '').slice(0, 19)}`;
+}
+
+/**
+ * Active 8-digit leaves under one parent become 00001, 00002, 00003…
+ * in their current order. A hidden (inactive) leaf is parked off the
+ * number line so it cannot leave a hole such as 31100005 then 31100014.
+ * A leaf under another parent is not in this list.
+ */
+function planLeafCodeCompaction(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const byParent = new Map();
+  for (const row of list) {
+    const parentId = row?.parent_id || null;
+    if (!parentId) continue;
+    const key = String(parentId);
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(row);
+  }
+  const parentCodeById = new Map(
+    list.map((row) => [String(row?.id || ''), String(row?.code || '').trim()]),
+  );
+  const moves = [];
+  for (const [parentId, children] of byParent) {
+    const parentCode = parentCodeById.get(parentId) || '';
+    if (!parentCode || parentCode.length >= ENTITY_ACCOUNT_CODE_LENGTH || parentCode.startsWith('z')) continue;
+
+    const active = [];
+    for (const row of children) {
+      if (isTruthyFlag(row.is_header)) continue;
+      const seq = eightDigitLeafSuffix(parentCode, row.code);
+      if (seq == null) continue;
+      if (isActiveFlag(row.is_active)) active.push({ ...row, seq });
+      else if (!String(row.code || '').startsWith('z')) {
+        moves.push({
+          id: row.id,
+          oldCode: String(row.code),
+          newCode: retiredLeafCode(row.id),
+        });
+      }
+    }
+    active.sort((a, b) => a.seq - b.seq || String(a.id).localeCompare(String(b.id)));
+    active.forEach((row, index) => {
+      const newCode = eightDigitCodeForSuffix(parentCode, index + 1);
+      if (String(row.code) !== newCode) {
+        moves.push({ id: row.id, oldCode: String(row.code), newCode });
+      }
+    });
+  }
+  return moves;
+}
+
+async function applyLeafCodeMoves(client, moves) {
+  if (!moves.length) return [];
+  const parked = moves.filter((move) => String(move.newCode).startsWith('z'));
+  const packed = moves
+    .filter((move) => !String(move.newCode).startsWith('z'))
+    .sort((a, b) => String(a.oldCode).localeCompare(String(b.oldCode), undefined, { numeric: true }));
+
+  for (const move of parked) {
+    await rewriteStoredSupplierAccountCode(client, move.oldCode, move.newCode);
+  }
+  for (const move of packed) {
+    await rewriteStoredSupplierAccountCode(client, move.oldCode, move.newCode);
+  }
+  for (const move of moves) {
+    await client.query(
+      'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [retiredLeafCode(move.id), move.id],
+    );
+  }
+  const finals = packed
+    .slice()
+    .sort((a, b) => String(a.newCode).localeCompare(String(b.newCode), undefined, { numeric: true }));
+  for (const move of finals) {
+    await client.query(
+      'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [move.newCode, move.id],
+    );
+  }
+  for (const move of parked) {
+    await client.query(
+      'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [move.newCode, move.id],
+    );
+  }
+  return moves;
+}
+
+/** Close existing 8-digit holes on every parent. Safe to run on each server start. */
+async function compactLeafCodeGaps(client) {
+  const all = await client.query(
+    'SELECT id, code, parent_id, is_header, is_active FROM chart_of_accounts',
+  );
+  const moves = planLeafCodeCompaction(all.rows || []);
+  return applyLeafCodeMoves(client, moves);
+}
+
+async function ensureLeafCodeGapsClosed(db) {
+  if (!db || typeof db.query !== 'function') return { moved: 0 };
+  let client = db;
+  let release = null;
+  try {
+    if (db.pool && typeof db.pool.connect === 'function') {
+      client = await db.pool.connect();
+      release = () => client.release();
+      await client.query('BEGIN');
+    }
+    const moved = await compactLeafCodeGaps(client);
+    if (release) await client.query('COMMIT');
+    if (moved.length) {
+      console.log(`[SCHEMA] Closed ${moved.length} chart account number gap(s)`);
+    }
+    return { moved: moved.length };
+  } catch (err) {
+    if (release) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* already closed */ }
+    }
+    console.warn('[SCHEMA] chart number gaps:', err.message);
+    return { moved: 0, error: err.message };
+  } finally {
+    if (release) release();
+  }
 }
 
 function eightDigitLeafSuffix(parentCode, code) {
@@ -735,7 +867,7 @@ async function closeDeletedLeafCodeGap(client, account) {
     .filter((row) => row.seq != null && row.seq > deletedSeq && !isTruthyFlag(row.is_header))
     .sort((a, b) => a.seq - b.seq);
 
-  const tombstone = `z${String(account.id).replace(/-/g, '').slice(0, 19)}`;
+  const tombstone = retiredLeafCode(account.id);
   await client.query(
     'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
     [tombstone, account.id],
@@ -941,4 +1073,7 @@ module.exports = {
   recodeOccupyingLeaf,
   claimChartAccountCode,
   closeDeletedLeafCodeGap,
+  planLeafCodeCompaction,
+  compactLeafCodeGaps,
+  ensureLeafCodeGapsClosed,
 };

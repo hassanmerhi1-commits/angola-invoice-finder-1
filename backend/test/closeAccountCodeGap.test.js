@@ -12,10 +12,11 @@ const { createSqliteHarness, BACKEND_SRC } = require('./helpers/sqliteHarness');
 describe('close deleted leaf code gap', () => {
   let harness;
   let closeDeletedLeafCodeGap;
+  let compactLeafCodeGaps;
 
   before(() => {
     harness = createSqliteHarness();
-    ({ closeDeletedLeafCodeGap } = require(path.join(BACKEND_SRC, 'lib/entityCoaAccounts')));
+    ({ closeDeletedLeafCodeGap, compactLeafCodeGaps } = require(path.join(BACKEND_SRC, 'lib/entityCoaAccounts')));
   });
 
   after(() => harness.dispose());
@@ -100,5 +101,156 @@ describe('close deleted leaf code gap', () => {
       [journalId],
     );
     assert.equal(String(line.rows[0].account_id), '11100002');
+  });
+
+  it('packs existing holes so 00005 is followed by the next account, on every parent', async () => {
+    const parentId = randomUUID();
+    const otherParentId = randomUUID();
+    const firstId = randomUUID();
+    const hiddenId = randomUUID();
+    const jumpedId = randomUUID();
+    const otherLeafId = randomUUID();
+    const keptJournalId = randomUUID();
+    const hiddenJournalId = randomUUID();
+
+    await harness.withClient(async (client) => {
+      await client.query(
+        `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '918', 'Gap parent', 'asset', 'debit', NULL, 2, 1, 1)`,
+        [parentId],
+      );
+      await client.query(
+        `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '9181', 'Other group', 'asset', 'debit', $2, 3, 1, 1)`,
+        [otherParentId, parentId],
+      );
+      const leaves = [
+        [firstId, '91800005', 'Fifth', parentId, 1],
+        [hiddenId, '91800006', 'Hidden', parentId, 0],
+        [jumpedId, '91800014', 'Fourteenth', parentId, 1],
+        [otherLeafId, '91810001', 'Other group leaf', otherParentId, 1],
+      ];
+      for (const [id, code, name, parent, active] of leaves) {
+        await client.query(
+          `INSERT INTO chart_of_accounts
+             (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+           VALUES ($1, $2, $3, 'asset', 'debit', $4, 4, 0, $5)`,
+          [id, code, name, parent, active],
+        );
+      }
+      await client.query(
+        `INSERT INTO journal_entries (id, entry_number, entry_date, description, is_posted)
+         VALUES ($1, $2, date('now'), 'kept', 1)`,
+        [keptJournalId, `JE-${keptJournalId.slice(0, 8)}`],
+      );
+      await client.query(
+        `INSERT INTO journal_entries (id, entry_number, entry_date, description, is_posted)
+         VALUES ($1, $2, date('now'), 'hidden', 1)`,
+        [hiddenJournalId, `JE-${hiddenJournalId.slice(0, 8)}`],
+      );
+      await client.query(
+        `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, debit_amount, credit_amount)
+         VALUES ($1, $2, '91800014', 10, 0)`,
+        [randomUUID(), keptJournalId],
+      );
+      await client.query(
+        `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, debit_amount, credit_amount)
+         VALUES ($1, $2, '91800006', 4, 0)`,
+        [randomUUID(), hiddenJournalId],
+      );
+
+      const moved = await compactLeafCodeGaps(client);
+      const packed = moved.filter((row) => String(row.oldCode).startsWith('918') && !String(row.newCode).startsWith('z'));
+      assert.deepEqual(
+        packed.map((row) => `${row.oldCode}->${row.newCode}`).sort(),
+        ['91800005->91800001', '91800014->91800002'],
+      );
+    });
+
+    const rows = await harness.db.query(
+      `SELECT id, code FROM chart_of_accounts WHERE id IN ($1, $2, $3, $4)`,
+      [firstId, hiddenId, jumpedId, otherLeafId],
+    );
+    const byId = new Map(rows.rows.map((row) => [row.id, row.code]));
+    assert.equal(byId.get(firstId), '91800001');
+    assert.equal(byId.get(jumpedId), '91800002');
+    assert.equal(byId.get(otherLeafId), '91810001');
+    assert.equal(String(byId.get(hiddenId)).startsWith('z'), true);
+
+    const kept = await harness.db.query(
+      'SELECT account_id FROM journal_entry_lines WHERE journal_entry_id = $1',
+      [keptJournalId],
+    );
+    const hidden = await harness.db.query(
+      'SELECT account_id FROM journal_entry_lines WHERE journal_entry_id = $1',
+      [hiddenJournalId],
+    );
+    assert.equal(String(kept.rows[0].account_id), '91800002');
+    assert.equal(String(hidden.rows[0].account_id), String(byId.get(hiddenId)));
+
+    const again = await harness.withClient(async (client) => compactLeafCodeGaps(client));
+    assert.equal(again.length, 0);
+  });
+
+  it('does not mix history when one account takes the number another account leaves', async () => {
+    const parentId = randomUUID();
+    const lowId = randomUUID();
+    const highId = randomUUID();
+    const lowJournalId = randomUUID();
+    const highJournalId = randomUUID();
+
+    await harness.withClient(async (client) => {
+      await client.query(
+        `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '919', 'Chain parent', 'asset', 'debit', NULL, 2, 1, 1)`,
+        [parentId],
+      );
+      for (const [id, code, name] of [
+        [lowId, '91900002', 'Low'],
+        [highId, '91900004', 'High'],
+      ]) {
+        await client.query(
+          `INSERT INTO chart_of_accounts
+             (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+           VALUES ($1, $2, $3, 'asset', 'debit', $4, 3, 0, 1)`,
+          [id, code, name, parentId],
+        );
+      }
+      await client.query(
+        `INSERT INTO journal_entries (id, entry_number, entry_date, description, is_posted)
+         VALUES ($1, $2, date('now'), 'low', 1)`,
+        [lowJournalId, `JE-${lowJournalId.slice(0, 8)}`],
+      );
+      await client.query(
+        `INSERT INTO journal_entries (id, entry_number, entry_date, description, is_posted)
+         VALUES ($1, $2, date('now'), 'high', 1)`,
+        [highJournalId, `JE-${highJournalId.slice(0, 8)}`],
+      );
+      await client.query(
+        `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, debit_amount, credit_amount)
+         VALUES ($1, $2, '91900002', 2, 0)`,
+        [randomUUID(), lowJournalId],
+      );
+      await client.query(
+        `INSERT INTO journal_entry_lines (id, journal_entry_id, account_id, debit_amount, credit_amount)
+         VALUES ($1, $2, '91900004', 4, 0)`,
+        [randomUUID(), highJournalId],
+      );
+      await compactLeafCodeGaps(client);
+    });
+
+    const low = await harness.db.query(
+      'SELECT account_id FROM journal_entry_lines WHERE journal_entry_id = $1',
+      [lowJournalId],
+    );
+    const high = await harness.db.query(
+      'SELECT account_id FROM journal_entry_lines WHERE journal_entry_id = $1',
+      [highJournalId],
+    );
+    assert.equal(String(low.rows[0].account_id), '91900001');
+    assert.equal(String(high.rows[0].account_id), '91900002');
   });
 });
