@@ -298,6 +298,13 @@ async function syncOpenSessionToCity(
       forceNew: true,
     });
     if (openRes.error) {
+      // HTTP rejection is a real answer (permission, validation, SQL). Surface it.
+      // No status means the city was never reached — keep the offline shift.
+      if (openRes.status != null && openRes.status >= 400) {
+        const rejected = new Error(String(openRes.error));
+        rejected.name = 'CaixaOpenRejected';
+        throw rejected;
+      }
       console.warn('[usePosCaixa] pending city open sync:', openRes.error);
       return null;
     }
@@ -305,10 +312,13 @@ async function syncOpenSessionToCity(
     if (!remote?.id || remote.status !== 'open') return null;
     return {
       ...remote,
-      openingBalance: Number(remote.openingBalance) || sess.openingBalance,
+      openingBalance: Number.isFinite(Number(remote.openingBalance))
+        ? Number(remote.openingBalance)
+        : sess.openingBalance,
       pendingCitySync: false,
     };
   } catch (err) {
+    if (err instanceof Error && err.name === 'CaixaOpenRejected') throw err;
     console.warn('[usePosCaixa] pending city open sync:', err);
     return null;
   }
@@ -603,15 +613,23 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       // "open" shift (that ignored the new drawer count and brought old cash back).
       // Crash recovery lives in refresh()/cache on POS mount, not here.
 
-      // Register must already exist on the city. Do not invent a box on this PC.
-      const cx =
-        caixa
-        ?? (await ensureBranchCaixa(branchId, branchName || branchId, {
-          ensureIfEmpty: true,
-        }));
-      setCaixa(cx);
+      // Prefer the branch register. A cashier without caixa_open can still open:
+      // POST /sessions/open creates the row when ensure is refused.
+      let cx = caixa;
+      if (!cx) {
+        try {
+          cx = await ensureBranchCaixa(branchId, branchName || branchId, {
+            ensureIfEmpty: true,
+          });
+        } catch (err) {
+          // Missing caixa_open must not block the shift. Session open creates
+          // the register when the cashier only has pos_access.
+          console.warn('[usePosCaixa] ensure register before open:', err);
+        }
+      }
+      if (cx) setCaixa(cx);
 
-      const sess = await openCaixaSession(cx.id, branchId, openingCash, openedBy);
+      const sess = await openCaixaSession(cx?.id || '', branchId, openingCash, openedBy);
 
       const adopted = await syncOpenSessionToCity(sess, branchName || branchId);
       if (adopted) {

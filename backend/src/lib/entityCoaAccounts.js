@@ -679,6 +679,79 @@ async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
       WHERE CAST(supplier_account_code AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
   ).catch(() => {});
+  await client.query(
+    `UPDATE bank_accounts
+        SET gl_account_code = $1
+      WHERE CAST(gl_account_code AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  ).catch(() => {});
+}
+
+function eightDigitLeafSuffix(parentCode, code) {
+  const parent = String(parentCode || '').trim();
+  const value = String(code || '').trim();
+  if (!parent || parent.length >= ENTITY_ACCOUNT_CODE_LENGTH) return null;
+  if (!/^\d{8}$/.test(value) || !value.startsWith(parent)) return null;
+  const suffix = value.slice(parent.length);
+  if (!/^\d+$/.test(suffix)) return null;
+  const seq = Number(suffix);
+  return Number.isFinite(seq) ? seq : null;
+}
+
+function eightDigitCodeForSuffix(parentCode, seq) {
+  const suffixLen = Math.max(1, ENTITY_ACCOUNT_CODE_LENGTH - String(parentCode || '').length);
+  return `${parentCode}${String(seq).padStart(suffixLen, '0')}`;
+}
+
+/**
+ * After an 8-digit leaf is deleted, later leaves under the same parent move
+ * down one number (11100003 → 11100002). A leaf under a deeper group
+ * (11110001 under 1111) is left alone. The deleted row's code is retired so
+ * the unique number can be reused. Journal lines stored by UUID stay on the
+ * same account; lines stored by the old code are rewritten.
+ */
+async function closeDeletedLeafCodeGap(client, account) {
+  const code = String(account?.code || '').trim();
+  if (!/^\d{8}$/.test(code) || isTruthyFlag(account?.is_header)) return [];
+  const parentId = account?.parent_id || null;
+  if (!parentId) return [];
+  const parent = await client.query(
+    'SELECT id, code FROM chart_of_accounts WHERE id = $1 LIMIT 1',
+    [parentId],
+  );
+  const parentCode = String(parent.rows?.[0]?.code || '').trim();
+  const deletedSeq = eightDigitLeafSuffix(parentCode, code);
+  if (deletedSeq == null) return [];
+
+  const siblings = await client.query(
+    `SELECT id, code, is_header
+       FROM chart_of_accounts
+      WHERE parent_id = $1
+        AND id <> $2`,
+    [parentId, account.id],
+  );
+  const later = (siblings.rows || [])
+    .map((row) => ({ ...row, seq: eightDigitLeafSuffix(parentCode, row.code) }))
+    .filter((row) => row.seq != null && row.seq > deletedSeq && !isTruthyFlag(row.is_header))
+    .sort((a, b) => a.seq - b.seq);
+
+  const tombstone = `z${String(account.id).replace(/-/g, '').slice(0, 19)}`;
+  await client.query(
+    'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+    [tombstone, account.id],
+  );
+
+  const moved = [];
+  for (const row of later) {
+    const newCode = eightDigitCodeForSuffix(parentCode, row.seq - 1);
+    await client.query(
+      'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [newCode, row.id],
+    );
+    await rewriteStoredSupplierAccountCode(client, row.code, newCode);
+    moved.push({ id: row.id, oldCode: String(row.code), newCode });
+  }
+  return moved;
 }
 
 async function assertNotMovingIntoSelf(client, leafId, newParentId) {
@@ -867,4 +940,5 @@ module.exports = {
   moveEntityLeafToParent,
   recodeOccupyingLeaf,
   claimChartAccountCode,
+  closeDeletedLeafCodeGap,
 };

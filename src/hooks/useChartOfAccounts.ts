@@ -9,6 +9,7 @@ import { PGC_ACCOUNTS } from '@/lib/pgcChartOfAccounts';
 import { applyDisplayTabToBranch } from '@/lib/coaDisplayTab';
 import { useTranslation } from '@/i18n';
 import { allowsLocalLedgerWrites, cityLedgerOfflineError } from '@/lib/api/config';
+import { shiftLeafCodesAfterDelete } from '@/lib/entityAccounts';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 
 const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts_v3';
@@ -425,11 +426,7 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       const response = await api.chartOfAccounts.delete(id);
       if (response.error) throw new Error(response.error);
       markCachedListStale('chartOfAccounts');
-      setAccounts((prev) => {
-        const next = prev.filter((a) => a.id !== id);
-        setCachedList('chartOfAccounts', next);
-        return next;
-      });
+      await fetchAccounts({ force: true });
     } catch (err) {
       if (!isOfflineError(err) || !allowsLocalLedgerWrites()) {
         throw isOfflineError(err) ? cityLedgerOfflineError() : err;
@@ -440,7 +437,7 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
         throw new Error('Cannot delete account with child accounts');
       }
 
-      const next = localAccounts.filter(account => account.id !== id);
+      const next = shiftLeafCodesAfterDelete(localAccounts, id);
       saveLocalAccounts(next);
       setAccounts(next);
       setError(null);

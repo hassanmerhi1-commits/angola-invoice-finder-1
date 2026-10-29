@@ -21,6 +21,36 @@ type CodeLike = {
 };
 
 /**
+ * Drop one 8-digit leaf and move every later leaf under the same parent down
+ * one number. 11100003 becomes 11100002. A leaf under another group stays.
+ */
+export function shiftLeafCodesAfterDelete<T extends CodeLike & { id?: string | null; parent_id?: string | null }>(
+  accounts: T[],
+  deletedId: string,
+): T[] {
+  const deleted = (accounts || []).find((a) => String(a.id || '') === String(deletedId));
+  const rest = (accounts || []).filter((a) => String(a.id || '') !== String(deletedId));
+  const code = String(deleted?.code || '').trim();
+  const parentId = deleted?.parent_id || null;
+  const parentCode = String(
+    (accounts || []).find((a) => parentId && String(a.id || '') === String(parentId))?.code || '',
+  ).trim();
+  if (!deleted || !parentCode || parentCode.length >= ENTITY_ACCOUNT_CODE_LENGTH || !/^\d{8}$/.test(code) || !code.startsWith(parentCode)) {
+    return rest;
+  }
+  const deletedSeq = Number(code.slice(parentCode.length));
+  const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length;
+  return rest.map((account) => {
+    if (String(account.parent_id || '') !== String(parentId) || account.is_header) return account;
+    const current = String(account.code || '').trim();
+    if (!/^\d{8}$/.test(current) || !current.startsWith(parentCode)) return account;
+    const seq = Number(current.slice(parentCode.length));
+    if (!Number.isFinite(seq) || seq <= deletedSeq) return account;
+    return { ...account, code: `${parentCode}${String(seq - 1).padStart(suffixLen, '0')}` };
+  });
+}
+
+/**
  * Compute the next free 8-digit entity code under a parent (e.g. "311" -> "31100001").
  * Nested category leaves (32110001 under header 3211) are not counted when allocating
  * under 321.

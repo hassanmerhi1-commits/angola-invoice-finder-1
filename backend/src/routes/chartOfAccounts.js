@@ -7,13 +7,39 @@ const { attachUserBranchScope, resolveListBranchId } = require('../middleware/br
 const { auditErpSafe } = require('../lib/erpAudit');
 const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
 const { journalFilteredSumSql, journalThroughEndJoinSql } = require('../lib/journalPeriodSums');
-const { syncLinkedEntityNameFromCoa, deleteLinkedEntityFromCoa } = require('../lib/entityCoaAccounts');
+const { syncLinkedEntityNameFromCoa, deleteLinkedEntityFromCoa, closeDeletedLeafCodeGap } = require('../lib/entityCoaAccounts');
 const { isBranchCaixaLeafCode, upsertOperationalCaixaFromAccount } = require('../lib/branchCaixaAccounts');
 
 const COA_DISPLAY_TABS = new Set([
   'clientes', 'fornecedores', 'caixa', 'bancos',
   'ativos', 'recebimentos', 'custos', 'funcionarios', 'capital',
 ]);
+
+async function runInTransaction(work) {
+  if (db.pool) {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  await db.query('BEGIN');
+  try {
+    const result = await work(db);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    try { await db.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    throw error;
+  }
+}
 
 function normalizeDisplayTab(raw) {
   const value = String(raw || '').trim();
@@ -766,7 +792,7 @@ module.exports = function(broadcastTable) {
       const { id } = req.params;
 
       const existing = await db.query(
-        'SELECT id, code, name, description FROM chart_of_accounts WHERE id = $1',
+        'SELECT id, code, name, description, parent_id, is_header FROM chart_of_accounts WHERE id = $1',
         [id],
       );
       if (existing.rows.length === 0) {
@@ -803,7 +829,11 @@ module.exports = function(broadcastTable) {
         });
       }
 
-      await db.query('UPDATE chart_of_accounts SET is_active = false WHERE id = $1', [id]);
+      const renumbered = await runInTransaction(async (client) => {
+        const moved = await closeDeletedLeafCodeGap(client, account);
+        await client.query('UPDATE chart_of_accounts SET is_active = false WHERE id = $1', [id]);
+        return moved;
+      });
       try {
         const linked = await deleteLinkedEntityFromCoa(db, {
           code: account.code,
@@ -823,7 +853,7 @@ module.exports = function(broadcastTable) {
         action: 'delete',
         description: `Conta desactivada: ${account.code || id}`,
       });
-      res.json({ success: true });
+      res.json({ success: true, renumbered });
     } catch (error) {
       console.error('[CHART OF ACCOUNTS ERROR]', error);
       res.status(500).json({ error: 'Failed to delete account' });

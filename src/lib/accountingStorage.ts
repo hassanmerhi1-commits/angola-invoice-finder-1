@@ -967,9 +967,10 @@ export async function openCaixaSession(
   openedBy: string
 ): Promise<CaixaSession> {
   const today = localISODate();
+  const resolvedCaixaId = String(caixaId || '').trim() || newUuid();
   const session: CaixaSession = {
     id: newUuid(),
-    caixaId,
+    caixaId: resolvedCaixaId,
     branchId,
     date: today,
     openingBalance,
@@ -1040,14 +1041,21 @@ export async function openCaixaSession(
     }
   }
   
-  const caixa = await getCaixaById(caixaId);
+  const caixa = await getCaixaById(resolvedCaixaId);
   if (caixa) {
     caixa.status = 'open';
     caixa.openedAt = session.openedAt;
     caixa.openedBy = openedBy;
-    await saveCaixa(caixa);
+    try {
+      await saveCaixa(caixa);
+    } catch (err) {
+      // PUT /registers/:id is a settings write (caixa_open). Cashiers only have
+      // pos_access. A 403 here must not abort the shift — POST /sessions/open
+      // is the write that actually opens the drawer, including a zero float.
+      console.warn('[accountingStorage] caixa mirror on open failed:', err);
+    }
   }
-  
+
   return session;
 }
 

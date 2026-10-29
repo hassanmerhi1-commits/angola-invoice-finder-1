@@ -10,6 +10,12 @@ const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPo
 const { auditErpSafe } = require('../lib/erpAudit');
 const { syncOpenSessionExpensesFromLedger } = require('../lib/caixaCashRefund');
 const { sqlDateOnly } = require('../lib/sqlDateOnly');
+const {
+  SESSION_OPEN_PERMISSIONS,
+  REGISTER_ENSURE_PERMISSIONS,
+  REGISTER_SETTINGS_PERMISSIONS,
+  openingBalanceOrZero,
+} = require('../lib/caixaOpenAccess');
 
 async function caixaTablesExist() {
   // Only cache positive results — a sticky false before migrations made
@@ -360,7 +366,7 @@ function caixaRouter(broadcastTable) {
   });
 
   /** Create a default caixa for a branch when none exists (expenses form). */
-  router.post('/registers/ensure', requirePermission('caixa_open', 'admin_settings'), async (req, res) => {
+  router.post('/registers/ensure', requirePermission(...REGISTER_ENSURE_PERMISSIONS), async (req, res) => {
     try {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });
@@ -431,7 +437,7 @@ function caixaRouter(broadcastTable) {
   });
 
   /** Create a named cash register for a branch (Gestão de Caixa). */
-  router.post('/registers', requirePermission('caixa_open', 'admin_settings'), async (req, res) => {
+  router.post('/registers', requirePermission(...REGISTER_SETTINGS_PERMISSIONS), async (req, res) => {
     try {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });
@@ -521,7 +527,7 @@ function caixaRouter(broadcastTable) {
   });
 
   /** Update caixa settings (name, limits) — not for posting balances. */
-  router.put('/registers/:id', requirePermission('caixa_open', 'admin_settings'), async (req, res) => {
+  router.put('/registers/:id', requirePermission(...REGISTER_SETTINGS_PERMISSIONS), async (req, res) => {
     try {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });
@@ -660,7 +666,7 @@ function caixaRouter(broadcastTable) {
     }
   });
 
-  router.post('/sessions/open', requirePermission('caixa_open', 'pos_access'), async (req, res) => {
+  router.post('/sessions/open', requirePermission(...SESSION_OPEN_PERMISSIONS), async (req, res) => {
     try {
       if (!(await caixaTablesExist())) {
         return res.status(503).json({ error: 'Caixa tables not available on server' });
@@ -743,7 +749,7 @@ function caixaRouter(broadcastTable) {
       const sessionId = isUuid(id) ? String(id).trim() : crypto.randomUUID();
       const cxId = isUuid(caixaId) ? String(caixaId).trim() : crypto.randomUUID();
       const today = sqlDateOnly(date) || sqlDateOnly(new Date());
-      const openBal = Number(openingBalance) || 0;
+      const openBal = openingBalanceOrZero(openingBalance);
       const now = new Date().toISOString();
       const openedAt = req.body?.openedAt && String(req.body.openedAt).trim()
         ? String(req.body.openedAt).trim()

@@ -819,7 +819,14 @@ export default function POS() {
       });
     } catch (err) {
       console.error('[POS] Failed to open caixa:', err);
-      toast.error(isCityLedgerOfflineError(err) ? t.common.cityLedgerOffline : t.posUi.caixa.openError);
+      const detail = (err instanceof Error ? err.message : String(err || '')).trim();
+      if (isCityLedgerOfflineError(err)) {
+        toast.error(t.common.cityLedgerOffline);
+      } else if (detail && err instanceof Error && err.name === 'CaixaOpenRejected') {
+        toast.error(detail);
+      } else {
+        toast.error(t.posUi.caixa.openError, detail ? { description: detail } : undefined);
+      }
     } finally {
       setOpeningCaixa(false);
     }
