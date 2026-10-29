@@ -48,6 +48,7 @@ const testFiles = [
   'test/entityCoaMoveCategory.test.js',
   'test/entityCoaClaimCode.test.js',
   'test/closeAccountCodeGap.test.js',
+  'test/manualJournalEdit.test.js',
   'test/ensureAuthUsersReady.test.js',
   'test/passwordAuth.test.js',
   'test/restoreStockCost.test.js',

@@ -903,7 +903,8 @@ export default function Journals() {
       return;
     }
 
-    lastLineManualRef.current = true;
+    lastLineManualRef.current = false;
+    skipAccountMenuUntilRef.current = Date.now() + 1500;
     setEditingEntryId(target.id);
     setEditingEntryNumber(target.entryNumber || '');
     setNewEntryDate(entryDay || localISODate());

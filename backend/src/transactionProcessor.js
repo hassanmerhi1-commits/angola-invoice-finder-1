@@ -403,9 +403,10 @@ async function processTransactionBody(client, body) {
           referenceId: documentId,
           branchId,
           createdBy: userId,
+          entryDate: date,
           lines: journalLines.map(l => ({
             accountCode: l.accountCode,
-            description: l.note || description,
+            description: l.description || l.note || description,
             debit: l.debit || 0,
             credit: l.credit || 0,
           })),

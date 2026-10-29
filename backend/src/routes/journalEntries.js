@@ -53,7 +53,12 @@ async function loadJournalLines(entryId) {
       coa.code AS account_code,
       coa.name AS account_name
     FROM journal_entry_lines jel
-    LEFT JOIN chart_of_accounts coa ON jel.account_id = coa.id
+    LEFT JOIN chart_of_accounts coa
+      ON CAST(coa.id AS TEXT) = CAST(jel.account_id AS TEXT)
+      OR (
+        CAST(coa.code AS TEXT) = CAST(jel.account_id AS TEXT)
+        AND CAST(coa.id AS TEXT) <> CAST(jel.account_id AS TEXT)
+      )
     WHERE jel.journal_entry_id = $1
     ORDER BY jel.debit_amount DESC, jel.credit_amount ASC
   `, [entryId]);
