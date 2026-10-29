@@ -665,65 +665,99 @@ async function promoteToCategoryHeader(client, parentId) {
   ).catch(() => {});
 }
 
+let rewriteSavepointSeq = 0;
+
+/**
+ * One statement must not abort the whole renumber. On PostgreSQL,
+ * journal_entry_lines.account_id is a UUID, so writing a chart code into it
+ * fails even when no row matches. A caught error still kills the transaction,
+ * which is why 31100005 and 31100014 stayed put. A savepoint keeps the
+ * chart update alive. Lines stored by UUID stay on the same account.
+ */
+async function runRewrite(client, sql, params) {
+  const name = `coa_rw_${++rewriteSavepointSeq}`;
+  await client.query(`SAVEPOINT ${name}`);
+  try {
+    await client.query(sql, params);
+    await client.query(`RELEASE SAVEPOINT ${name}`);
+  } catch (_) {
+    try { await client.query(`ROLLBACK TO SAVEPOINT ${name}`); } catch (_) { /* already cleared */ }
+    try { await client.query(`RELEASE SAVEPOINT ${name}`); } catch (_) { /* already cleared */ }
+  }
+}
+
 async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
   if (!oldCode || !newCode || oldCode === newCode) return;
-  await client.query(
+  await runRewrite(
+    client,
     `UPDATE journal_entry_lines
         SET account_id = $1
       WHERE CAST(account_id AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
-  ).catch(() => {});
-  await client.query(
+  );
+  await runRewrite(
+    client,
     `UPDATE purchase_invoices
         SET supplier_account_code = $1
       WHERE CAST(supplier_account_code AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
-  ).catch(() => {});
-  await client.query(
+  );
+  await runRewrite(
+    client,
     `UPDATE bank_accounts
         SET gl_account_code = $1
       WHERE CAST(gl_account_code AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
-  ).catch(() => {});
-  await client.query(
+  );
+  await runRewrite(
+    client,
     `UPDATE expenses
         SET gl_account_code = $1
       WHERE CAST(gl_account_code AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
-  ).catch(() => {});
+  );
 }
 
 function retiredLeafCode(id) {
   return `z${String(id || '').replace(/-/g, '').slice(0, 19)}`;
 }
 
+function longestHeaderPrefix(code, headerCodesLongestFirst) {
+  const value = String(code || '').trim();
+  for (const header of headerCodesLongestFirst) {
+    if (eightDigitLeafSuffix(header, value) != null) return header;
+  }
+  return '';
+}
+
 /**
- * Active 8-digit leaves under one parent become 00001, 00002, 00003…
- * in their current order. A hidden (inactive) leaf is parked off the
- * number line so it cannot leave a hole such as 31100005 then 31100014.
- * A leaf under another parent is not in this list.
+ * Active 8-digit leaves under one group become 00001, 00002, 00003…
+ * in their current order. The group is the longest shorter account number
+ * the leaf starts with (31100005 and 31100014 share 311), not only the
+ * stored parent link. A hidden leaf is parked off the number line so it
+ * cannot leave a hole. A leaf under a deeper group (31110001 under 3111)
+ * stays in that group.
  */
 function planLeafCodeCompaction(rows) {
   const list = Array.isArray(rows) ? rows : [];
-  const byParent = new Map();
+  const headerCodes = list
+    .map((row) => String(row?.code || '').trim())
+    .filter((code) => code && !code.startsWith('z') && /^\d+$/.test(code) && code.length < ENTITY_ACCOUNT_CODE_LENGTH)
+    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const byHeader = new Map();
   for (const row of list) {
-    const parentId = row?.parent_id || null;
-    if (!parentId) continue;
-    const key = String(parentId);
-    if (!byParent.has(key)) byParent.set(key, []);
-    byParent.get(key).push(row);
+    if (isTruthyFlag(row?.is_header)) continue;
+    const code = String(row?.code || '').trim();
+    if (!/^\d{8}$/.test(code)) continue;
+    const header = longestHeaderPrefix(code, headerCodes);
+    if (!header) continue;
+    if (!byHeader.has(header)) byHeader.set(header, []);
+    byHeader.get(header).push(row);
   }
-  const parentCodeById = new Map(
-    list.map((row) => [String(row?.id || ''), String(row?.code || '').trim()]),
-  );
   const moves = [];
-  for (const [parentId, children] of byParent) {
-    const parentCode = parentCodeById.get(parentId) || '';
-    if (!parentCode || parentCode.length >= ENTITY_ACCOUNT_CODE_LENGTH || parentCode.startsWith('z')) continue;
-
+  for (const [parentCode, children] of byHeader) {
     const active = [];
     for (const row of children) {
-      if (isTruthyFlag(row.is_header)) continue;
       const seq = eightDigitLeafSuffix(parentCode, row.code);
       if (seq == null) continue;
       if (isActiveFlag(row.is_active)) active.push({ ...row, seq });
@@ -792,8 +826,16 @@ async function compactLeafCodeGaps(client) {
   return applyLeafCodeMoves(client, moves);
 }
 
+async function widenChartCodeColumn(db) {
+  if (!db || db.sqlite || typeof db.query !== 'function') return;
+  try {
+    await db.query('ALTER TABLE chart_of_accounts ALTER COLUMN code TYPE VARCHAR(32)');
+  } catch (_) { /* already wide enough, or this engine has no ALTER TYPE */ }
+}
+
 async function ensureLeafCodeGapsClosed(db) {
   if (!db || typeof db.query !== 'function') return { moved: 0 };
+  await widenChartCodeColumn(db);
   let client = db;
   let release = null;
   try {

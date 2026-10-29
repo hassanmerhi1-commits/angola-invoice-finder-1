@@ -12,7 +12,13 @@
           document.documentElement.setAttribute('data-color-theme', theme);
           document.documentElement.style.colorScheme = 'light';
           var path = location.pathname || '';
-          if (/\/login\/?$/.test(path)) document.documentElement.classList.add('nexor-login-route');
+          var hashPath = (location.hash || '').replace(/^#/, '').split('?')[0];
+          if (/\/login\/?$/.test(path) || /\/login\/?$/.test(hashPath)) {
+            document.documentElement.classList.add('nexor-login-route');
+          }
+          if (/Electron/i.test(navigator.userAgent || '')) {
+            document.documentElement.classList.add('nexor-electron-win');
+          }
         } catch (e) {}
       })();
     </script>

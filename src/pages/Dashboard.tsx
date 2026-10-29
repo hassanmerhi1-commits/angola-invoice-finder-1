@@ -71,7 +71,7 @@ export default function Dashboard() {
   const documentFlow = useMemo(() => [
     { label: t.documents.proforma, icon: ClipboardList, path: '/proforma' },
     { label: d.documentFlow.salesInvoice, icon: FileText, path: '/invoices' },
-    { label: t.documents.receipt, icon: Receipt, path: '/payments', state: { openReceipt: true } },
+    { label: t.documents.receipt, icon: Receipt, path: '/payments' },
     { label: d.documentFlow.supplierPayments, icon: DollarSign, path: '/payments' },
     { label: d.documentFlow.statement, icon: FileCheck, path: '/extracto' },
   ], [t, d]);

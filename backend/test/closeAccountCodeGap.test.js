@@ -253,4 +253,43 @@ describe('close deleted leaf code gap', () => {
     assert.equal(String(low.rows[0].account_id), '91900001');
     assert.equal(String(high.rows[0].account_id), '91900002');
   });
+
+  it('still renumbers the chart when a journal line rejects a code written into a UUID column', async () => {
+    const parentId = randomUUID();
+    const leafId = randomUUID();
+    const codes = new Map([
+      [parentId, '311'],
+      [leafId, '31100005'],
+    ]);
+    const client = {
+      async query(sql, params = []) {
+        const text = String(sql);
+        if (/^SAVEPOINT/i.test(text) || /^RELEASE SAVEPOINT/i.test(text) || /^ROLLBACK TO SAVEPOINT/i.test(text)) {
+          return { rows: [] };
+        }
+        if (/SELECT id, code, parent_id/i.test(text)) {
+          return {
+            rows: [
+              { id: parentId, code: '311', parent_id: null, is_header: true, is_active: true },
+              { id: leafId, code: codes.get(leafId), parent_id: parentId, is_header: false, is_active: true },
+            ],
+          };
+        }
+        if (/UPDATE journal_entry_lines/i.test(text)) {
+          throw new Error('invalid input syntax for type uuid');
+        }
+        if (/UPDATE chart_of_accounts SET code/i.test(text)) {
+          codes.set(params[1], params[0]);
+          return { rows: [] };
+        }
+        if (/UPDATE (purchase_invoices|bank_accounts|expenses)/i.test(text)) {
+          return { rows: [] };
+        }
+        throw new Error(`unexpected sql: ${text}`);
+      },
+    };
+    const moved = await compactLeafCodeGaps(client);
+    assert.equal(codes.get(leafId), '31100001');
+    assert.ok(moved.some((row) => row.oldCode === '31100005' && row.newCode === '31100001'));
+  });
 });

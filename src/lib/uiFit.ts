@@ -17,10 +17,14 @@ function viewportSize(): { width: number; height: number } {
 
 export function applyUiFit(): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const root = document.documentElement;
+  if (root.classList.contains('nexor-login-route')) {
+    root.style.setProperty('--nexor-ui-fit', '1');
+    return;
+  }
   const { width, height } = viewportSize();
   const scale = Math.min(1, width / FIT_WIDTH, height / FIT_HEIGHT);
   const next = Math.max(MIN_SCALE, Math.round(scale * 1000) / 1000);
-  const root = document.documentElement;
   root.style.setProperty('--nexor-ui-fit', String(next));
   root.style.zoom = '';
   delete root.dataset.nexorElectron;

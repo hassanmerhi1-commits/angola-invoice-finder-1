@@ -211,7 +211,7 @@ export default function Login() {
   const labelClass = 'text-[11px] font-semibold uppercase text-muted-foreground';
 
   return (
-    <div className="min-h-screen bg-[#f3f6f9] text-[#1a2332]">
+    <div className="fixed inset-0 z-[80] overflow-auto bg-[#f3f6f9] text-[#1a2332]">
       <TillCityUiBanner />
       <div className="flex min-h-screen">
         <div className="hidden lg:flex w-[44%] flex-col items-center justify-center text-center px-10 border-r border-[#d5dde6] bg-white">
