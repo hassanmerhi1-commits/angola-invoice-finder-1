@@ -424,17 +424,20 @@
     padding-right: 160px;
   }
   /*
-   * Native min/restore/close sit on top of the webview. Fullscreen dialogs must
-   * stay inside the titlebar-area (left of those buttons, below the overlay).
+   * Windows paints min/restore/close over the page when the window uses a caption
+   * overlay. Full-screen editors must sit in the titlebar area, left of those
+   * buttons. env() is 0 / full width when the buttons are in the real title bar.
    */
-  html.nexor-has-caption-overlay .nexor-fs-dialog {
-    top: calc(env(titlebar-area-height, 32px) + 8px) !important;
-    left: calc(env(titlebar-area-x, 0px) + (env(titlebar-area-width, 100vw) / 2)) !important;
-    transform: translate(-50%, 0) !important;
-    width: min(98vw, calc(env(titlebar-area-width, 100vw) - 16px)) !important;
-    max-width: min(98vw, calc(env(titlebar-area-width, 100vw) - 16px)) !important;
-    height: calc(100dvh - env(titlebar-area-height, 32px) - 16px) !important;
-    max-height: calc(100dvh - env(titlebar-area-height, 32px) - 16px) !important;
+  html.nexor-electron-win .nexor-fs-dialog {
+    top: calc(env(titlebar-area-height, 0px) + 8px) !important;
+    left: calc(env(titlebar-area-x, 0px) + 8px) !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: none !important;
+    width: calc(env(titlebar-area-width, 100vw) - 16px) !important;
+    max-width: calc(env(titlebar-area-width, 100vw) - 16px) !important;
+    height: calc(100dvh - env(titlebar-area-height, 0px) - 16px) !important;
+    max-height: calc(100dvh - env(titlebar-area-height, 0px) - 16px) !important;
   }
   html.nexor-electron-win .nexor-title-drag-row button,
   html.nexor-electron-win .nexor-title-drag-row a,

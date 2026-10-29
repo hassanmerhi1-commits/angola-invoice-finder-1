@@ -29,7 +29,7 @@ import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api/client';
 
 const transferDialogFullscreen = cn(
-  'fixed inset-0 left-0 top-0 z-50 flex h-screen w-screen max-w-none translate-x-0 translate-y-0',
+  'nexor-fs-dialog fixed inset-0 left-0 top-0 z-50 flex h-screen w-screen max-w-none translate-x-0 translate-y-0',
   'flex-col gap-0 overflow-hidden rounded-none border-0 p-0',
   'data-[state=open]:slide-in-from-left-0 data-[state=open]:slide-in-from-top-0',
   'data-[state=closed]:slide-out-to-left-0 data-[state=closed]:slide-out-to-top-0',
