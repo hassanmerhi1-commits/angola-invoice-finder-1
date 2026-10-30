@@ -294,6 +294,7 @@ export function productToProFormaItem(product: Product, quantity: number = 1): P
     productId: product.id,
     productName: product.name,
     sku: product.sku,
+    unit: product.unit || 'UN',
     quantity,
     unitPrice: product.price,
     discount: 0,

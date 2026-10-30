@@ -1,447 +1,307 @@
 /**
- * A4 Pro Forma Printer for NEXOR ERP
- * Generates professional A4 pro forma documents
+ * A4 Pro Forma — same page for the on-screen view and the print.
+ * Layout follows the Distri-Good / SMART ERP proforma: company block,
+ * customer on the right, line table, tax summary and totals at the foot.
  */
 
-import { ProForma } from '@/types/proforma';
+import { ProForma, ProFormaItem } from '@/types/proforma';
 import { Branch } from '@/types/erp';
 import { getCompanySettings } from './companySettings';
-import { en } from '@/i18n/translations/en';
-import { pt } from '@/i18n/translations/pt';
+import { IVA_EXEMPTION_REASON } from './taxUtils';
 
 type PrintLanguage = 'en' | 'pt';
+
+type BankLine = {
+  bankName?: string;
+  bank_name?: string;
+  accountNumber?: string;
+  account_number?: string;
+  iban?: string;
+};
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function money(value: number): string {
+  return Number(value || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function isoDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function isoTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('pt-AO', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function lineNet(item: ProFormaItem): number {
+  const discountPct = Number(item.discount) || 0;
+  return item.quantity * item.unitPrice * (1 - discountPct / 100);
+}
+
+function lineTax(item: ProFormaItem): number {
+  return lineNet(item) * ((Number(item.taxRate) || 0) / 100);
+}
+
+function taxGroups(items: ProFormaItem[]) {
+  const groups = new Map<number, { rate: number; base: number; tax: number }>();
+  for (const item of items || []) {
+    const rate = Number(item.taxRate) || 0;
+    const base = lineNet(item);
+    const tax = lineTax(item);
+    const row = groups.get(rate) || { rate, base: 0, tax: 0 };
+    row.base += base;
+    row.tax += tax;
+    groups.set(rate, row);
+  }
+  return [...groups.values()].sort((a, b) => a.rate - b.rate);
+}
+
+async function loadBankLines(branchId?: string): Promise<BankLine[]> {
+  try {
+    const { api } = await import('./api/client');
+    const res = await api.bankAccounts.list(branchId);
+    return Array.isArray(res.data) ? res.data : [];
+  } catch {
+    return [];
+  }
+}
+
+function bankRows(banks: BankLine[], fallbackName?: string, fallbackIban?: string): string[] {
+  const lines = (banks || [])
+    .filter((bank) => bank && (bank.bankName || bank.bank_name || bank.accountNumber || bank.account_number || bank.iban))
+    .map((bank) => {
+      const name = bank.bankName || bank.bank_name || '';
+      const number = bank.accountNumber || bank.account_number || '';
+      const iban = bank.iban || '';
+      return `${name}  -  ${number}${iban ? ` - ${iban}` : ''}`;
+    });
+  if (lines.length > 0) return lines;
+  if (fallbackName || fallbackIban) {
+    return [`${fallbackName || ''}  -  ${fallbackIban || ''}`];
+  }
+  return [];
+}
 
 export async function generateProFormaA4HTML(
   proforma: ProForma,
   branch: Branch,
-  language: PrintLanguage = 'pt'
+  _language: PrintLanguage = 'pt',
+  banks?: BankLine[],
 ): Promise<string> {
   const company = getCompanySettings();
-  const L = language === 'en' ? en.proFormaUi : pt.proFormaUi;
-  const uiLocale = language === 'en' ? 'en-US' : 'pt-AO';
+  const companyName = (company.tradeName || company.name || branch?.name || '').toUpperCase();
+  const bankList = banks ?? await loadBankLines(branch?.id);
+  const groups = taxGroups(proforma.items || []);
+  const hasExempt = groups.some((group) => group.rate === 0);
+  const cert = company.agtCertificateNumber || '396/AGT/2023';
+  const operator = proforma.createdByName || proforma.createdBy || '';
+  const customerName = proforma.customerName || 'Consumidor Final';
+  const known = (value?: string) => (value && String(value).trim() ? String(value).trim() : 'Desconhecido');
 
-  const formatMoney = (value: number) => {
-    return value.toLocaleString(uiLocale, { minimumFractionDigits: 2 });
-  };
+  const itemRows = (proforma.items || []).map((item) => {
+    const net = lineNet(item);
+    const tax = lineTax(item);
+    const unit = (item.unit || 'UN').toUpperCase();
+    return `
+      <tr>
+        <td class="mono">${escapeHtml(item.sku || '')}</td>
+        <td>${escapeHtml(item.productName || '')}</td>
+        <td class="num">${money(item.quantity)}</td>
+        <td class="center">${escapeHtml(unit)}</td>
+        <td class="num">${money(item.unitPrice)}</td>
+        <td class="num">${money(item.discount || 0)}</td>
+        <td class="num">${money(item.taxRate || 0)}</td>
+        <td class="num">${money(net)}</td>
+        <td class="num">${money(tax)}</td>
+      </tr>`;
+  }).join('');
 
-  const formatDate = (date: string) => {
-    return new Date(date).toLocaleDateString(uiLocale, {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-  };
+  const taxRows = (groups.length ? groups : [{ rate: 0, base: 0, tax: 0 }]).map((group) => `
+    <tr>
+      <td>${group.rate === 0 ? 'ISENTO' : 'IVA'}</td>
+      <td class="center">${money(group.rate).replace('.00', '')}</td>
+      <td class="num">${money(group.base)}</td>
+      <td class="num">${money(group.tax)}</td>
+    </tr>`).join('');
 
-  const statusLabels: Record<string, string> = {
-    draft: L.statusDraft,
-    sent: L.statusSent,
-    accepted: L.statusAccepted,
-    rejected: L.statusRejected,
-    converted: L.statusConverted,
-    expired: L.statusExpired,
-  };
+  const banksHtml = bankRows(bankList, company.bankName, company.iban)
+    .map((line) => `<div>${escapeHtml(line)}</div>`)
+    .join('');
 
-  return `
-<!DOCTYPE html>
-<html lang="${language}">
+  const logo = company.logo
+    ? `<img src="${escapeHtml(company.logo)}" alt="${escapeHtml(companyName)}">`
+    : escapeHtml((companyName || 'NX').slice(0, 2));
+
+  return `<!DOCTYPE html>
+<html lang="pt">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${L.printDocumentTitle} - ${proforma.documentNumber}</title>
+  <title>Factura Proforma ${escapeHtml(proforma.documentNumber)}</title>
   <style>
-    @page {
-      size: A4;
-      margin: 15mm;
-    }
-    
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      font-size: 11px;
-      line-height: 1.4;
-      color: #1a1a1a;
-      background: white;
-    }
-    
-    .invoice {
-      width: 210mm;
-      min-height: 297mm;
-      padding: 15mm;
-      background: white;
-    }
-    
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 20px;
-      padding-bottom: 15px;
-      border-bottom: 3px solid ${company.primaryColor || '#f59e0b'};
-    }
-    
-    .company-info { flex: 1; }
-    
-    .company-logo {
-      max-width: ${company.logoWidth || 150}px;
-      max-height: 80px;
-      object-fit: contain;
-      margin-bottom: 10px;
-    }
-    
-    .company-name {
-      font-size: 18px;
-      font-weight: bold;
-      color: ${company.primaryColor || '#f59e0b'};
-      margin-bottom: 5px;
-    }
-    
-    .company-details {
-      font-size: 10px;
-      color: #666;
-      line-height: 1.5;
-    }
-    
-    .document-info { text-align: right; }
-    
-    .document-type {
-      font-size: 28px;
-      font-weight: bold;
-      color: ${company.primaryColor || '#f59e0b'};
-      margin-bottom: 5px;
-    }
-    
-    .document-subtitle {
-      font-size: 12px;
-      color: #666;
-      margin-bottom: 10px;
-    }
-    
-    .document-number {
-      font-size: 14px;
-      font-weight: bold;
-      margin-bottom: 5px;
-    }
-    
-    .document-date {
-      font-size: 11px;
-      color: #666;
-    }
-    
-    .validity-box {
-      background: #fef3c7;
-      border: 1px solid #f59e0b;
-      padding: 8px 12px;
-      border-radius: 5px;
-      margin-top: 10px;
-      font-size: 11px;
-    }
-    
-    .parties {
-      display: flex;
-      gap: 30px;
-      margin-bottom: 25px;
-    }
-    
-    .party-box {
-      flex: 1;
-      padding: 15px;
-      background: #f8f9fa;
-      border-radius: 5px;
-      border-left: 3px solid ${company.primaryColor || '#f59e0b'};
-    }
-    
-    .party-label {
-      font-size: 9px;
-      text-transform: uppercase;
-      color: #888;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
-    }
-    
-    .party-name {
-      font-size: 13px;
-      font-weight: bold;
-      margin-bottom: 5px;
-    }
-    
-    .party-details {
-      font-size: 10px;
-      color: #555;
-    }
-    
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 25px;
-    }
-    
-    .items-table th {
-      background: ${company.primaryColor || '#f59e0b'};
-      color: white;
-      padding: 10px 8px;
-      text-align: left;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .items-table th:nth-child(n+3) { text-align: right; }
-    
-    .items-table td {
-      padding: 10px 8px;
-      border-bottom: 1px solid #e0e0e0;
-      vertical-align: top;
-    }
-    
-    .items-table td:nth-child(n+3) { text-align: right; }
-    
-    .item-name { font-weight: 500; }
-    .item-sku { font-size: 9px; color: #888; }
-    
-    .totals-section {
-      display: flex;
-      justify-content: flex-end;
-      margin-bottom: 25px;
-    }
-    
-    .totals-box { width: 280px; }
-    
-    .total-row {
-      display: flex;
-      justify-content: space-between;
-      padding: 8px 0;
-      border-bottom: 1px solid #e0e0e0;
-    }
-    
-    .total-row:last-child { border-bottom: none; }
-    
-    .total-row.grand-total {
-      background: ${company.primaryColor || '#f59e0b'};
-      color: white;
-      padding: 12px 10px;
-      margin-top: 5px;
-      border-radius: 5px;
-      font-size: 16px;
-      font-weight: bold;
-    }
-    
-    .notes-section {
-      margin-top: 25px;
-      padding: 15px;
-      background: #f8f9fa;
-      border-radius: 5px;
-    }
-    
-    .section-label {
-      font-size: 10px;
-      text-transform: uppercase;
-      color: #888;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
-      font-weight: bold;
-    }
-    
-    .terms-section {
-      margin-top: 20px;
-      padding: 15px;
-      background: #fff7ed;
-      border: 1px solid #fed7aa;
-      border-radius: 5px;
-    }
-    
-    .footer {
-      margin-top: 40px;
-      display: flex;
-      justify-content: space-between;
-    }
-    
-    .signature-box {
-      width: 45%;
-      text-align: center;
-    }
-    
-    .signature-line {
-      border-top: 1px solid #333;
-      margin-top: 60px;
-      padding-top: 8px;
-      font-size: 10px;
-    }
-    
-    .document-footer {
-      margin-top: 30px;
-      padding-top: 15px;
-      border-top: 1px solid #e0e0e0;
-      text-align: center;
-      font-size: 9px;
-      color: #888;
-    }
-    
-    .watermark {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%) rotate(-45deg);
-      font-size: 80px;
-      color: rgba(0,0,0,0.05);
-      font-weight: bold;
-      pointer-events: none;
-      z-index: 0;
-    }
-    
-    @media print {
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .invoice { margin: 0; padding: 0; }
-    }
+    @page { size: A4; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; color: #111; margin: 0; background: #fff; }
+    .page { width: 190mm; min-height: 277mm; margin: 0 auto; padding: 4mm 2mm 8mm; display: flex; flex-direction: column; }
+    .header { display: grid; grid-template-columns: 32mm 1fr 62mm; gap: 6mm; align-items: start; }
+    .logo { width: 28mm; height: 22mm; display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 900; font-size: 18px; }
+    .logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .supplier h1 { font-size: 14px; margin: 0 0 2px; line-height: 1.1; text-transform: uppercase; }
+    .supplier div { line-height: 1.3; }
+    .meta { text-align: right; font-size: 11px; padding-top: 2mm; }
+    .meta .copy { font-weight: 700; margin-bottom: 6px; }
+    .meta .docno { font-weight: 700; }
+    .rule { border-top: 1px solid #333; margin: 4px 0; }
+    .mid { display: grid; grid-template-columns: 1fr 78mm; gap: 8mm; margin-top: 2mm; align-items: start; }
+    .small-label { font-size: 10px; font-weight: 700; }
+    .customer { line-height: 1.3; }
+    .customer .who { text-align: center; font-weight: 700; border-bottom: 1px solid #333; margin-bottom: 3px; padding-bottom: 2px; }
+    .date-grid { display: grid; grid-template-columns: 1fr 1.3fr 1.4fr; text-align: center; font-size: 10px; margin-top: 3mm; }
+    .date-grid strong { display: block; border-bottom: 1px solid #777; margin-bottom: 2px; font-size: 9px; }
+    table { width: 100%; border-collapse: collapse; }
+    .items { margin-top: 4mm; }
+    .items th { font-size: 9px; text-align: left; border-bottom: 1px solid #333; padding: 3px 3px; white-space: nowrap; }
+    .items td { font-size: 10px; padding: 3px 3px; vertical-align: top; }
+    .mono { font-family: "Courier New", monospace; }
+    .num { text-align: right; font-family: "Courier New", monospace; white-space: nowrap; }
+    .center { text-align: center; }
+    .spacer { flex: 1 1 auto; min-height: 12mm; }
+    .bottom { margin-top: auto; }
+    .soft { font-size: 8px; margin-bottom: 2mm; }
+    .tax-and-total { display: grid; grid-template-columns: 1fr 72mm; gap: 12mm; align-items: start; }
+    .tax-title { font-size: 9px; font-weight: 700; border-bottom: 1px solid #333; margin-bottom: 2px; }
+    .tax th, .tax td { border: 1px solid #333; padding: 3px 4px; font-size: 9px; }
+    .tax th { font-weight: 700; text-align: left; }
+    .totals td { border: 1px solid #333; padding: 4px 6px; font-size: 10px; }
+    .totals .label { font-weight: 700; }
+    .totals .value { text-align: right; font-family: "Courier New", monospace; font-weight: 700; }
+    .grand td { font-size: 13px; font-weight: 900; }
+    .note-line { margin-top: 8mm; border-bottom: 1px solid #333; width: 92mm; font-size: 9px; font-weight: 700; min-height: 14px; }
+    .note-reason { font-weight: 400; margin-left: 6px; }
+    .banks { margin-top: 6mm; font-weight: 700; line-height: 1.45; }
+    .operator { margin-top: 4mm; border: 1px solid #333; padding: 4px 6px; width: 64mm; margin-left: auto; font-size: 10px; }
+    .footer-msg { text-align: center; margin-top: 8mm; font-weight: 700; font-size: 11px; }
+    @media print { body { margin: 0; } .page { margin: 0; min-height: 277mm; } }
   </style>
 </head>
 <body>
-  <div class="invoice" style="position: relative;">
-    <div class="watermark">${L.printWatermark}</div>
-    
+  <div class="page">
     <div class="header">
-      <div class="company-info">
-        ${company.logo ? `<img src="${company.logo}" alt="Logo" class="company-logo">` : ''}
-        <div class="company-name">${company.name}</div>
-        <div class="company-details">
-          ${company.tradeName ? `<div>${company.tradeName}</div>` : ''}
-          <div>${company.address}</div>
-          <div>${company.city}${company.province ? `, ${company.province}` : ''} - ${company.country}</div>
-          <div>Tel: ${company.phone}${company.email ? ` | Email: ${company.email}` : ''}</div>
-          <div><strong>NIF: ${company.nif}</strong></div>
-        </div>
+      <div class="logo">${logo}</div>
+      <div class="supplier">
+        <h1>${escapeHtml(companyName)}</h1>
+        <div>Tel: ${escapeHtml(company.phone || '')}</div>
+        <div>Email: ${escapeHtml(company.email || '')}</div>
+        <div>Website: ${escapeHtml(company.website || '')}</div>
+        <div>NIF: ${escapeHtml(company.nif || '')}</div>
+        <div>${escapeHtml(company.city || company.address || '')}</div>
       </div>
-      <div class="document-info">
-        <div class="document-type">${L.printDocumentTitle}</div>
-        <div class="document-subtitle">${L.printDocSubtitle}</div>
-        <div class="document-number">${proforma.documentNumber}</div>
-        <div class="document-date">
-          ${L.printDateLabel} ${formatDate(proforma.createdAt)}
-        </div>
-        <div class="validity-box">
-          <strong>${L.printValidUntil}</strong> ${formatDate(proforma.validUntil)}<br>
-          <span style="font-size: 9px; color: #666;">${L.printStatus} ${statusLabels[proforma.status]}</span>
+      <div class="meta">
+        <div class="copy">Original</div>
+        <div class="docno">Factura Proforma No : ${escapeHtml(proforma.documentNumber || '')}</div>
+      </div>
+    </div>
+
+    <div class="rule"></div>
+
+    <div class="mid">
+      <div>
+        <div class="small-label">ARMAZEM: ${escapeHtml(branch?.name || proforma.branchName || '')}</div>
+        <div class="small-label" style="margin-top:4mm">CLIENTE V/REF</div>
+      </div>
+      <div class="customer">
+        <div class="who">Exmo(s) Senhor(es)</div>
+        <div>${escapeHtml(customerName)}</div>
+        <div>NIF: ${escapeHtml(known(proforma.customerNif))}</div>
+        <div>ENDERECO: ${escapeHtml(known(proforma.customerAddress))}</div>
+        <div>TELE: ${escapeHtml(proforma.customerPhone || '00')}</div>
+        <div>AO</div>
+        <div class="date-grid">
+          <div><strong>Hora</strong>${escapeHtml(isoTime(proforma.createdAt))}</div>
+          <div><strong>DATA EMISSAO</strong>${escapeHtml(isoDate(proforma.createdAt))}</div>
+          <div><strong>DATA VENCIMENTO</strong>${escapeHtml(isoDate(proforma.validUntil))}</div>
         </div>
       </div>
     </div>
 
-    <div class="parties">
-      <div class="party-box">
-        <div class="party-label">${L.printSeller}</div>
-        <div class="party-name">${branch.name}</div>
-        <div class="party-details">
-          ${branch.address}<br>
-          Tel: ${branch.phone}
-        </div>
-      </div>
-      <div class="party-box">
-        <div class="party-label">${L.printClient}</div>
-        <div class="party-name">${proforma.customerName}</div>
-        <div class="party-details">
-          ${proforma.customerNif ? `NIF: ${proforma.customerNif}<br>` : ''}
-          ${proforma.customerPhone ? `Tel: ${proforma.customerPhone}<br>` : ''}
-          ${proforma.customerEmail ? `Email: ${proforma.customerEmail}<br>` : ''}
-          ${proforma.customerAddress || ''}
-        </div>
-      </div>
-    </div>
-
-    <table class="items-table">
+    <table class="items">
       <thead>
         <tr>
-          <th style="width: 40%">${L.printColDescription}</th>
-          <th style="width: 10%">${L.colQty}</th>
-          <th style="width: 15%">${L.printColUnitPrice}</th>
-          <th style="width: 10%">${L.vat}</th>
-          <th style="width: 12%">${L.printColVatAmount}</th>
-          <th style="width: 13%">${L.printTotal}</th>
+          <th style="width:28mm">REFERENCIA</th>
+          <th>DESCRICAO</th>
+          <th class="num" style="width:16mm">QTD.</th>
+          <th class="center" style="width:12mm">UNI</th>
+          <th class="num" style="width:24mm">P.Unit(S/IMP.)</th>
+          <th class="num" style="width:16mm">DESC.%</th>
+          <th class="num" style="width:14mm">TAXA%</th>
+          <th class="num" style="width:24mm">TOTAL</th>
+          <th class="num" style="width:22mm">IVA VALOR</th>
         </tr>
       </thead>
-      <tbody>
-        ${proforma.items.map(item => `
-          <tr>
-            <td>
-              <div class="item-name">${item.productName}</div>
-              <div class="item-sku">${L.printRef} ${item.sku}</div>
-            </td>
-            <td>${item.quantity}</td>
-            <td>${formatMoney(item.unitPrice)} Kz</td>
-            <td>${item.taxRate}%</td>
-            <td>${formatMoney(item.taxAmount)} Kz</td>
-            <td><strong>${formatMoney(item.subtotal)} Kz</strong></td>
-          </tr>
-        `).join('')}
-      </tbody>
+      <tbody>${itemRows}</tbody>
     </table>
 
-    <div class="totals-section">
-      <div class="totals-box">
-        <div class="total-row">
-          <span>${L.printSubtotalExVat}</span>
-          <span>${formatMoney(proforma.subtotal)} Kz</span>
+    <div class="spacer"></div>
+    <div class="bottom">
+      <div class="soft">Processado por programa validado ${escapeHtml(cert)} - NEXOR ERP</div>
+      <div class="tax-and-total">
+        <div>
+          <div class="tax-title">RESUMO DE IMPOSTOS</div>
+          <table class="tax">
+            <thead>
+              <tr><th>DESIGNACAO</th><th>TAXA%</th><th>INCIDENCIA</th><th>IMPOSTO</th></tr>
+            </thead>
+            <tbody>${taxRows}</tbody>
+          </table>
+          <div class="note-line">Motivo de Isencao${hasExempt ? `<span class="note-reason">${escapeHtml(IVA_EXEMPTION_REASON)}</span>` : ''}</div>
+          <div class="banks">${banksHtml}</div>
         </div>
-        <div class="total-row">
-          <span>${L.printVat}</span>
-          <span>${formatMoney(proforma.taxAmount)} Kz</span>
-        </div>
-        ${proforma.discount > 0 ? `
-        <div class="total-row" style="color: #dc2626;">
-          <span>${L.printDiscount}</span>
-          <span>-${formatMoney(proforma.discount)} Kz</span>
-        </div>
-        ` : ''}
-        <div class="total-row grand-total">
-          <span>${L.printTotal}</span>
-          <span>${formatMoney(proforma.total)} Kz</span>
+        <div>
+          <table class="totals">
+            <tbody>
+              <tr><td class="label">VALOR</td><td class="value">${money(proforma.subtotal)}</td></tr>
+              <tr><td class="label">DESCONTO</td><td class="value">${money(proforma.discount || 0)}</td></tr>
+              <tr><td class="label">SUB TOTAL</td><td class="value">${money(proforma.subtotal)}</td></tr>
+              <tr><td class="label">IMPOSTO</td><td class="value">${money(proforma.taxAmount)}</td></tr>
+              <tr class="grand"><td class="label">TOTAL</td><td class="value">KZ ${money(proforma.total)}</td></tr>
+            </tbody>
+          </table>
+          <div class="operator">Operador: ${escapeHtml(operator)}</div>
         </div>
       </div>
-    </div>
-
-    ${proforma.notes ? `
-    <div class="notes-section">
-      <div class="section-label">${L.printNotes}</div>
-      <div>${proforma.notes}</div>
-    </div>
-    ` : ''}
-
-    <div class="terms-section">
-      <div class="section-label">${L.printTerms}</div>
-      <div style="font-size: 10px; color: #555;">
-        ${proforma.termsAndConditions || L.printDefaultTermsHtml}
-      </div>
-    </div>
-
-    <div class="footer">
-      <div class="signature-box">
-        <div class="signature-line">${L.printSellerSignature}</div>
-      </div>
-      <div class="signature-box">
-        <div class="signature-line">${L.printSignature}</div>
-      </div>
-    </div>
-
-    <div class="document-footer">
-      <p>${L.printFooterLine1}</p>
-      <p>${L.printFooterLine2}</p>
-      <p style="margin-top: 8px;">${L.printProcessedBy} ${company.name} - NIF: ${company.nif}</p>
+      <div class="footer-msg">Este documento nao serve Fatura</div>
     </div>
   </div>
 </body>
-</html>
-  `;
+</html>`;
 }
 
 export async function printProFormaA4(
   proforma: ProForma,
   branch: Branch,
-  language: PrintLanguage = 'pt'
+  language: PrintLanguage = 'pt',
 ): Promise<void> {
   const html = await generateProFormaA4HTML(proforma, branch, language);
-  
   const { printHtml } = await import('./printHtml');
   await printHtml(html);
 }

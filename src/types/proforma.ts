@@ -5,6 +5,7 @@ export interface ProFormaItem {
   productId: string;
   productName: string;
   sku: string;
+  unit?: string;
   description?: string;
   quantity: number;
   unitPrice: number;

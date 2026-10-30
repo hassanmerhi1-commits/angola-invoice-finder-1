@@ -5,7 +5,7 @@ import { useBranchScope } from '@/hooks/useBranchScope';
 import { useAuth } from '@/hooks/useERP';
 import { useProForma } from '@/hooks/useProForma';
 import { ProForma } from '@/types/proforma';
-import { printProFormaA4 } from '@/lib/proformaA4';
+import { generateProFormaA4HTML, printProFormaA4 } from '@/lib/proformaA4';
 import { recordProformaPrint } from '@/lib/recordPrintAudit';
 import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { ProFormaCreateDialog } from '@/components/proforma/ProFormaCreateDialog';
@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
@@ -63,11 +63,34 @@ export default function ProFormaPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [selectedProforma, setSelectedProforma] = useState<ProForma | null>(null);
+  const [previewHtml, setPreviewHtml] = useState('');
   const [stats, setStats] = useState({ total: 0, draft: 0, sent: 0, accepted: 0, converted: 0, expired: 0, totalValue: 0, pendingValue: 0 });
 
   useEffect(() => {
     getStats().then(setStats);
   }, [proformas, getStats]);
+
+  useEffect(() => {
+    if (!showViewDialog || !selectedProforma) {
+      setPreviewHtml('');
+      return;
+    }
+    let cancelled = false;
+    const branch = currentBranch || {
+      id: selectedProforma.branchId,
+      name: selectedProforma.branchName,
+      code: '',
+      address: '',
+      phone: '',
+      isMain: false,
+      priceLevel: 1,
+      createdAt: '',
+    };
+    void generateProFormaA4HTML(selectedProforma, branch, language).then((html) => {
+      if (!cancelled) setPreviewHtml(html);
+    });
+    return () => { cancelled = true; };
+  }, [showViewDialog, selectedProforma, currentBranch, language]);
 
   useEffect(() => {
     const onNew = () => setShowCreateDialog(true);
@@ -371,105 +394,46 @@ export default function ProFormaPage() {
         onCreated={() => { void refresh(); }}
       />
 
-      {/* View Dialog */}
       <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{p.viewTitle}</DialogTitle>
-          </DialogHeader>
-          
-          {selectedProforma && (
-            <div className="space-y-4">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-lg font-bold">{selectedProforma.documentNumber}</h3>
-                  <p className="text-muted-foreground">{formatDate(selectedProforma.createdAt)}</p>
-                </div>
-                {getStatusBadge(selectedProforma.status)}
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
-                <div>
-                  <h4 className="font-medium mb-1">{p.customerSection}</h4>
-                  <p>{selectedProforma.customerName}</p>
-                  {selectedProforma.customerNif && <p className="text-sm text-muted-foreground">NIF: {selectedProforma.customerNif}</p>}
-                </div>
-                <div>
-                  <h4 className="font-medium mb-1">{p.validitySection}</h4>
-                  <p>{formatDate(selectedProforma.validUntil)}</p>
-                </div>
-              </div>
-
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{p.colProduct}</TableHead>
-                    <TableHead className="text-right">{p.colQty}</TableHead>
-                    <TableHead className="text-right">{p.colPrice}</TableHead>
-                    <TableHead className="text-right">{t.common.total}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {selectedProforma.items.map((item, idx) => (
-                    <TableRow key={idx}>
-                      <TableCell>{item.productName}</TableCell>
-                      <TableCell className="text-right">{item.quantity}</TableCell>
-                      <TableCell className="text-right">{formatMoney(item.unitPrice)}</TableCell>
-                      <TableCell className="text-right">{formatMoney(item.subtotal)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-
-              <div className="flex justify-end">
-                <div className="w-64 space-y-2">
-                  <div className="flex justify-between">
-                    <span>{t.common.subtotal}:</span>
-                    <span>{formatMoney(selectedProforma.subtotal)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>{p.vat}:</span>
-                    <span>{formatMoney(selectedProforma.taxAmount)}</span>
-                  </div>
-                  <div className="flex justify-between text-lg font-bold pt-2 border-t">
-                    <span>Total:</span>
-                    <span>{formatMoney(selectedProforma.total)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {selectedProforma.convertedToInvoiceNumber && (
-                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <p className="text-green-700">
-                    ✓ {p.convertedToInvoice.replace('{number}', selectedProforma.convertedToInvoiceNumber)}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowViewDialog(false)}>
-              {t.common.close}
-            </Button>
-            {selectedProforma && (
-              <>
-                <Button variant="outline" onClick={() => handlePrint(selectedProforma)}>
+        <DialogContent className="flex max-h-[94vh] w-[96vw] max-w-[940px] flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="flex flex-row items-center justify-between gap-3 border-b px-4 py-3">
+            <DialogTitle className="text-base">{p.viewTitle}</DialogTitle>
+            <div className="flex items-center gap-2 pr-6">
+              {selectedProforma && getStatusBadge(selectedProforma.status)}
+              {selectedProforma && (
+                <Button variant="outline" size="sm" onClick={() => handlePrint(selectedProforma)}>
                   <Printer className="h-4 w-4 mr-2" />
                   {p.print}
                 </Button>
-                {['draft', 'sent', 'accepted'].includes(selectedProforma.status) && (
-                  <Button onClick={() => {
-                    setShowViewDialog(false);
-                    openSalesInvoiceFromProforma(selectedProforma);
-                  }}>
-                    <ArrowRight className="h-4 w-4 mr-2" />
-                    {p.convertToInvoice}
-                  </Button>
-                )}
-              </>
+              )}
+              {selectedProforma && ['draft', 'sent', 'accepted'].includes(selectedProforma.status) && (
+                <Button size="sm" onClick={() => {
+                  setShowViewDialog(false);
+                  openSalesInvoiceFromProforma(selectedProforma);
+                }}>
+                  <ArrowRight className="h-4 w-4 mr-2" />
+                  {p.convertToInvoice}
+                </Button>
+              )}
+            </div>
+          </DialogHeader>
+          {selectedProforma?.convertedToInvoiceNumber && (
+            <div className="border-b bg-green-50 px-4 py-2 text-sm text-green-800">
+              {p.convertedToInvoice.replace('{number}', selectedProforma.convertedToInvoiceNumber)}
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-auto bg-neutral-200 p-4">
+            {previewHtml ? (
+              <iframe
+                title={selectedProforma?.documentNumber || p.viewTitle}
+                srcDoc={previewHtml}
+                className="mx-auto block border-0 bg-white shadow"
+                style={{ width: '210mm', height: '297mm' }}
+              />
+            ) : (
+              <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">{t.common.loading}</div>
             )}
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
