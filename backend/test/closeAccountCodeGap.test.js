@@ -295,4 +295,43 @@ describe('close deleted leaf code gap', () => {
     assert.equal(codes.get(leafId), '31100001');
     assert.ok(moved.some((row) => row.oldCode === '31100005' && row.newCode === '31100001'));
   });
+
+  it('packs one chart tab even when another tab holds the numbers in between', async () => {
+    const parentId = randomUUID();
+    const firstId = randomUUID();
+    const otherTabId = randomUUID();
+    const jumpedId = randomUUID();
+
+    await harness.withClient(async (client) => {
+      await client.query(
+        `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '917', 'Customers', 'asset', 'debit', NULL, 2, 1, 1)`,
+        [parentId],
+      );
+      const leaves = [
+        [firstId, '91700005', 'clientes'],
+        [otherTabId, '91700006', 'bancos'],
+        [jumpedId, '91700014', 'clientes'],
+      ];
+      for (const [id, code, tab] of leaves) {
+        await client.query(
+          `INSERT INTO chart_of_accounts
+             (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active, display_tab)
+           VALUES ($1, $2, $3, 'asset', 'debit', $4, 3, 0, 1, $5)`,
+          [id, code, code, parentId, tab],
+        );
+      }
+      await compactLeafCodeGaps(client);
+    });
+
+    const rows = await harness.db.query(
+      `SELECT id, code FROM chart_of_accounts WHERE id IN ($1, $2, $3)`,
+      [firstId, otherTabId, jumpedId],
+    );
+    const byId = new Map(rows.rows.map((row) => [row.id, row.code]));
+    assert.equal(byId.get(firstId), '91700001');
+    assert.equal(byId.get(jumpedId), '91700002');
+    assert.equal(byId.get(otherTabId), '91700003');
+  });
 });

@@ -7,7 +7,7 @@ const { attachUserBranchScope, resolveListBranchId } = require('../middleware/br
 const { auditErpSafe } = require('../lib/erpAudit');
 const { fetchAccountLedger } = require('../lib/coaLedgerQuery');
 const { journalFilteredSumSql, journalThroughEndJoinSql } = require('../lib/journalPeriodSums');
-const { syncLinkedEntityNameFromCoa, deleteLinkedEntityFromCoa, closeDeletedLeafCodeGap } = require('../lib/entityCoaAccounts');
+const { syncLinkedEntityNameFromCoa, deleteLinkedEntityFromCoa, closeDeletedLeafCodeGap, ensureLeafCodeGapsClosed } = require('../lib/entityCoaAccounts');
 const { isBranchCaixaLeafCode, upsertOperationalCaixaFromAccount } = require('../lib/branchCaixaAccounts');
 
 const COA_DISPLAY_TABS = new Set([
@@ -159,6 +159,7 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     const wantLive = /^(1|true|yes)$/i.test(String(req.query.liveBalances || ''));
     try {
+      await ensureLeafCodeGapsClosed(db);
       const balanceExpr = wantLive
         ? `COALESCE(coa.opening_balance, 0) + COALESCE(j.net, 0)`
         : `COALESCE(coa.current_balance, coa.opening_balance, 0)`;

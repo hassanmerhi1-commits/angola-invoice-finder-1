@@ -753,16 +753,54 @@ function longestHeaderPrefix(code, headerCodesLongestFirst) {
   return '';
 }
 
+const CODE_TAB_PREFIXES = [
+  ['31', 'clientes'],
+  ['32', 'fornecedores'],
+  ['45', 'caixa'],
+  ['42', 'bancos'],
+  ['43', 'bancos'],
+  ['44', 'bancos'],
+  ['36', 'funcionarios'],
+  ['72', 'funcionarios'],
+];
+
+function inferLeafTab(row) {
+  const code = String(row?.code || '');
+  for (const [prefix, tab] of CODE_TAB_PREFIXES) {
+    if (code.startsWith(prefix)) return tab;
+  }
+  const type = String(row?.account_type || '');
+  if (type === 'revenue') return 'recebimentos';
+  if (type === 'expense' || code.startsWith('2')) return 'custos';
+  if (type === 'equity') return 'capital';
+  return 'ativos';
+}
+
+/** Same rule as the chart tabs: an explicit tab wins, then the parent tab, then the code. */
+function resolveLeafTab(row, byId) {
+  let current = row;
+  const seen = new Set();
+  while (current && current.id != null && !seen.has(String(current.id))) {
+    seen.add(String(current.id));
+    const explicit = String(current.display_tab || '').trim();
+    if (explicit) return explicit;
+    const parentId = current.parent_id ? String(current.parent_id) : '';
+    current = parentId && byId ? byId.get(parentId) : null;
+  }
+  return inferLeafTab(row);
+}
+
 /**
  * Active 8-digit leaves under one group become 00001, 00002, 00003…
- * in their current order. The group is the longest shorter account number
- * the leaf starts with (31100005 and 31100014 share 311), not only the
- * stored parent link. A hidden leaf is parked off the number line so it
- * cannot leave a hole. A leaf under a deeper group (31110001 under 3111)
- * stays in that group.
+ * The group is the longest shorter account number the leaf starts with
+ * (31100005 and 31100014 share 311). Accounts on the same chart tab are
+ * packed together, so a customer list cannot skip from 31100005 to 31100014
+ * while other tabs hold the numbers in between. A hidden leaf is parked off
+ * the number line. A leaf under a deeper group (31110001 under 3111) stays.
  */
 function planLeafCodeCompaction(rows) {
   const list = Array.isArray(rows) ? rows : [];
+  const byId = new Map(list.filter((row) => row?.id != null).map((row) => [String(row.id), row]));
   const headerCodes = list
     .map((row) => String(row?.code || '').trim())
     .filter((code) => code && !code.startsWith('z') && /^\d+$/.test(code) && code.length < ENTITY_ACCOUNT_CODE_LENGTH)
@@ -779,11 +817,18 @@ function planLeafCodeCompaction(rows) {
   }
   const moves = [];
   for (const [parentCode, children] of byHeader) {
+    const leafIds = new Set(children.map((row) => String(row.id)));
+    const occupied = new Set(
+      list
+        .filter((row) => !leafIds.has(String(row.id)))
+        .map((row) => String(row.code || '').trim())
+        .filter(Boolean),
+    );
     const active = [];
     for (const row of children) {
       const seq = eightDigitLeafSuffix(parentCode, row.code);
       if (seq == null) continue;
-      if (isActiveFlag(row.is_active)) active.push({ ...row, seq });
+      if (isActiveFlag(row.is_active)) active.push({ ...row, seq, tab: resolveLeafTab(row, byId) });
       else if (!String(row.code || '').startsWith('z')) {
         moves.push({
           id: row.id,
@@ -792,61 +837,126 @@ function planLeafCodeCompaction(rows) {
         });
       }
     }
-    active.sort((a, b) => a.seq - b.seq || String(a.id).localeCompare(String(b.id)));
-    active.forEach((row, index) => {
-      const newCode = eightDigitCodeForSuffix(parentCode, index + 1);
-      if (String(row.code) !== newCode) {
-        moves.push({ id: row.id, oldCode: String(row.code), newCode });
+    const blocks = new Map();
+    for (const row of active) {
+      if (!blocks.has(row.tab)) blocks.set(row.tab, []);
+      blocks.get(row.tab).push(row);
+    }
+    const ordered = [...blocks.values()]
+      .map((block) => block.sort((a, b) => a.seq - b.seq || String(a.id).localeCompare(String(b.id))))
+      .sort((a, b) => a[0].seq - b[0].seq || String(a[0].tab).localeCompare(String(b[0].tab)));
+    const used = new Set(occupied);
+    let seq = 1;
+    for (const block of ordered) {
+      for (const row of block) {
+        let newCode = eightDigitCodeForSuffix(parentCode, seq);
+        while (used.has(newCode)) {
+          seq += 1;
+          newCode = eightDigitCodeForSuffix(parentCode, seq);
+        }
+        used.add(newCode);
+        seq += 1;
+        if (String(row.code) !== newCode) {
+          moves.push({ id: row.id, oldCode: String(row.code), newCode });
+        }
       }
-    });
+    }
   }
   return moves;
 }
 
-async function applyLeafCodeMoves(client, moves) {
+let chartMoveSeq = 0;
+
+/** One chart write must not throw away the rest of the renumber. */
+async function runChartUpdate(client, sql, params) {
+  const name = `coa_mv_${++chartMoveSeq}`;
+  let savepoint = false;
+  try {
+    await client.query(`SAVEPOINT ${name}`);
+    savepoint = true;
+  } catch (_) {
+    savepoint = false;
+  }
+  try {
+    await client.query(sql, params);
+    if (savepoint) await client.query(`RELEASE SAVEPOINT ${name}`);
+    return true;
+  } catch (err) {
+    if (!savepoint) throw err;
+    try { await client.query(`ROLLBACK TO SAVEPOINT ${name}`); } catch (_) { /* already cleared */ }
+    try { await client.query(`RELEASE SAVEPOINT ${name}`); } catch (_) { /* already cleared */ }
+    console.warn('[SCHEMA] chart code update skipped:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Park every moving account, then write the packed numbers.
+ * Does not touch journal lines. Those stay on the account id.
+ */
+async function applyChartCodeMoves(client, moves) {
   if (!moves.length) return [];
   const parked = moves.filter((move) => String(move.newCode).startsWith('z'));
   const packed = moves
     .filter((move) => !String(move.newCode).startsWith('z'))
-    .sort((a, b) => String(a.oldCode).localeCompare(String(b.oldCode), undefined, { numeric: true }));
-
-  for (const move of parked) {
-    await rewriteStoredSupplierAccountCode(client, move.oldCode, move.newCode);
-  }
-  for (const move of packed) {
-    await rewriteStoredSupplierAccountCode(client, move.oldCode, move.newCode);
-  }
+    .sort((a, b) => String(a.newCode).localeCompare(String(b.newCode), undefined, { numeric: true }));
+  const parkedIds = new Set();
   for (const move of moves) {
-    await client.query(
+    const ok = await runChartUpdate(
+      client,
       'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [retiredLeafCode(move.id), move.id],
     );
+    if (ok) parkedIds.add(String(move.id));
   }
-  const finals = packed
-    .slice()
-    .sort((a, b) => String(a.newCode).localeCompare(String(b.newCode), undefined, { numeric: true }));
-  for (const move of finals) {
-    await client.query(
-      'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [move.newCode, move.id],
-    );
-  }
+  const applied = [];
   for (const move of parked) {
-    await client.query(
+    if (!parkedIds.has(String(move.id))) continue;
+    const ok = await runChartUpdate(
+      client,
       'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [move.newCode, move.id],
     );
+    if (ok) applied.push(move);
   }
-  return moves;
+  for (const move of packed) {
+    if (!parkedIds.has(String(move.id))) continue;
+    const ok = await runChartUpdate(
+      client,
+      'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [move.newCode, move.id],
+    );
+    if (ok) applied.push(move);
+    else {
+      await runChartUpdate(
+        client,
+        'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        [move.oldCode, move.id],
+      );
+    }
+  }
+  return applied;
 }
+
+async function rewriteMovedCodes(client, moves) {
+  for (const move of moves) {
+    try {
+      await rewriteStoredSupplierAccountCode(client, move.oldCode, move.newCode);
+    } catch (err) {
+      console.warn('[SCHEMA] chart code rewrite skipped:', err.message);
+    }
+  }
+}
+
+const CHART_ROWS_SQL = 'SELECT id, code, parent_id, is_header, is_active, display_tab, account_type FROM chart_of_accounts';
 
 /** Close existing 8-digit holes on every parent. Safe to run on each server start. */
 async function compactLeafCodeGaps(client) {
-  const all = await client.query(
-    'SELECT id, code, parent_id, is_header, is_active FROM chart_of_accounts',
-  );
+  const all = await client.query(CHART_ROWS_SQL);
   const moves = planLeafCodeCompaction(all.rows || []);
-  return applyLeafCodeMoves(client, moves);
+  const applied = await applyChartCodeMoves(client, moves);
+  await rewriteMovedCodes(client, applied);
+  return applied;
 }
 
 async function widenChartCodeColumn(db) {
@@ -856,23 +966,29 @@ async function widenChartCodeColumn(db) {
   } catch (_) { /* already wide enough, or this engine has no ALTER TYPE */ }
 }
 
+let gapCloseDone = false;
+
 async function ensureLeafCodeGapsClosed(db) {
+  if (gapCloseDone) return { moved: 0, already: true };
   if (!db || typeof db.query !== 'function') return { moved: 0 };
   await widenChartCodeColumn(db);
+  // Learn the journal column type before BEGIN. A failed probe must not cancel the renumber.
+  await journalAccountIdKindOf(db);
   let client = db;
   let release = null;
+  let applied = [];
+  let planned = 0;
   try {
     if (db.pool && typeof db.pool.connect === 'function') {
       client = await db.pool.connect();
       release = () => client.release();
       await client.query('BEGIN');
     }
-    const moved = await compactLeafCodeGaps(client);
+    const all = await client.query(CHART_ROWS_SQL);
+    const moves = planLeafCodeCompaction(all.rows || []);
+    planned = moves.length;
+    applied = await applyChartCodeMoves(client, moves);
     if (release) await client.query('COMMIT');
-    if (moved.length) {
-      console.log(`[SCHEMA] Closed ${moved.length} chart account number gap(s)`);
-    }
-    return { moved: moved.length };
   } catch (err) {
     if (release) {
       try { await client.query('ROLLBACK'); } catch (_) { /* already closed */ }
@@ -882,6 +998,14 @@ async function ensureLeafCodeGapsClosed(db) {
   } finally {
     if (release) release();
   }
+  // Stored codes on invoices are updated after the chart numbers are saved.
+  if (applied.length) {
+    await rewriteMovedCodes(db, applied);
+    console.log(`[SCHEMA] Closed ${applied.length} chart account number gap(s)`);
+  }
+  if (applied.length || planned === 0) gapCloseDone = true;
+  else console.warn('[SCHEMA] chart number gaps were not saved');
+  return { moved: applied.length };
 }
 
 function eightDigitLeafSuffix(parentCode, code) {

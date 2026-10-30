@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -30,6 +30,39 @@ import { toast } from 'sonner';
 type ServerUpdateStatus = Awaited<ReturnType<typeof api.deployment.updateStatus>>['data'];
 
 const BUSY_PHASES = new Set(['checking', 'downloading', 'verifying', 'applying', 'restarting']);
+const SUCCESS_SEEN_KEY = 'nexor:server-update-success-seen';
+const LIVE_JOB_MS = 20_000;
+
+function jobStamp(job?: { finishedAt?: string | null; updatedAt?: string | null; buildId?: string | null } | null) {
+  return String(job?.finishedAt || job?.updatedAt || job?.buildId || '');
+}
+
+function successAlreadySeen(job?: { finishedAt?: string | null; updatedAt?: string | null; buildId?: string | null } | null) {
+  const stamp = jobStamp(job);
+  if (!stamp) return true;
+  try {
+    return sessionStorage.getItem(SUCCESS_SEEN_KEY) === stamp;
+  } catch {
+    return false;
+  }
+}
+
+function markSuccessSeen(job?: { finishedAt?: string | null; updatedAt?: string | null; buildId?: string | null } | null) {
+  const stamp = jobStamp(job);
+  if (!stamp) return;
+  try {
+    sessionStorage.setItem(SUCCESS_SEEN_KEY, stamp);
+  } catch {
+    /* ignore */
+  }
+}
+
+function jobUpdatedRecently(job?: { updatedAt?: string | null; startedAt?: string | null } | null) {
+  const raw = job?.updatedAt || job?.startedAt;
+  if (!raw) return false;
+  const age = Date.now() - new Date(raw).getTime();
+  return Number.isFinite(age) && age >= 0 && age < LIVE_JOB_MS;
+}
 
 function fallbackPercent(phase?: string | null) {
   switch (phase) {
@@ -77,6 +110,7 @@ export function ServerUpdateCard() {
   const [restarting, setRestarting] = useState(false);
   const [offlineDuringApply, setOfflineDuringApply] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const applyWatch = useRef(false);
 
   const load = useCallback(async (refreshLatest = true) => {
     if (isDemoMode()) {
@@ -105,14 +139,17 @@ export function ServerUpdateCard() {
     setStatus(res.data ?? null);
     setLoading(false);
     const phase = res.data?.job?.phase;
+    const job = res.data?.job;
     if (phase === 'success' || phase === 'failed' || phase === 'upToDate') {
+      const reloadOnce = phase === 'success' && applyWatch.current && !successAlreadySeen(job);
       setApplying(false);
       setRestarting(false);
       setOfflineDuringApply(false);
-      if (phase === 'success') {
-        window.setTimeout(() => window.location.reload(), 1500);
-      }
-    } else if (phase && BUSY_PHASES.has(phase)) {
+      applyWatch.current = false;
+      if (phase === 'success') markSuccessSeen(job);
+      if (reloadOnce) window.setTimeout(() => window.location.reload(), 1500);
+    } else if (phase && BUSY_PHASES.has(phase) && (applyWatch.current || jobUpdatedRecently(job))) {
+      applyWatch.current = true;
       setApplying(true);
       setRestarting(phase === 'restarting');
     }
@@ -139,12 +176,14 @@ export function ServerUpdateCard() {
 
   const onApply = async () => {
     setConfirmOpen(false);
+    applyWatch.current = true;
     setApplying(true);
     setRestarting(false);
     setOfflineDuringApply(false);
     setError(null);
     const res = await api.deployment.applyUpdate();
     if (res.error) {
+      applyWatch.current = false;
       setApplying(false);
       setRestarting(false);
       setError(res.error);
@@ -170,6 +209,7 @@ export function ServerUpdateCard() {
 
   useEffect(() => {
     if (jobLooksStuck && (applying || restarting)) {
+      applyWatch.current = false;
       setApplying(false);
       setRestarting(false);
       setOfflineDuringApply(false);
@@ -191,7 +231,7 @@ export function ServerUpdateCard() {
   }
 
   const job = status?.job;
-  const phaseBusy = !!(job?.phase && BUSY_PHASES.has(job.phase));
+  const phaseBusy = !!(job?.phase && BUSY_PHASES.has(job.phase) && (applying || restarting || jobUpdatedRecently(job)));
   const busy = !jobLooksStuck && (applying || restarting || phaseBusy) && job?.phase !== 'failed' && job?.phase !== 'success';
   const rawPercent = Number(job?.percent);
   const displayPercent = Number.isFinite(rawPercent) && rawPercent > 0
