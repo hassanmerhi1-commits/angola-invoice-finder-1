@@ -248,14 +248,31 @@ function isLoopbackApiBase(url: string | null | undefined): boolean {
   return /127\.0\.0\.1|localhost|\[::1\]/i.test(String(url || ''));
 }
 
-/** When Electron loads `${city}/app`, the API is that origin — not a local backend port. */
+function isLiveAppPath(pathname: string): boolean {
+  return pathname === '/app' || pathname.startsWith('/app/');
+}
+
+/**
+ * When Electron loads `${city}/app` or `http://127.0.0.1:3000/app`, the API is
+ * that origin. A second window must not follow an injected local SQLite port.
+ */
 export function apiBaseFromWindowOrigin(): string | null {
   if (typeof window === 'undefined') return null;
   try {
     const proto = window.location.protocol;
     if (proto !== 'http:' && proto !== 'https:') return null;
     const host = window.location.hostname.toLowerCase();
-    if (!host || host === 'localhost' || host === '127.0.0.1' || host === '::1') return null;
+    if (!host) return null;
+    const onApp = isLiveAppPath(window.location.pathname || '');
+    const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    if (loopback) {
+      // The city service serves /app on 3000. The static UI cache also uses
+      // /app, but on another port, and that port has no database.
+      if (onApp && window.location.port === '3000') {
+        return window.location.origin.replace(/\/$/, '');
+      }
+      return null;
+    }
     if (window.location.port === '18080' || window.location.port === '5173') return null;
     return window.location.origin.replace(/\/$/, '');
   } catch {

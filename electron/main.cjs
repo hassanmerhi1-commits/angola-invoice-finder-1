@@ -281,6 +281,34 @@ ipcMain.on('backend:getHttpOriginSync', (event) => {
   event.returnValue = p ? `http://127.0.0.1:${p}` : '';
 });
 
+/** Connection settings copied into an extra login window. Never includes the auth token. */
+let connectionSeedJson = '{}';
+const CONNECTION_SEED_KEYS = [
+  'kwanza_api_url',
+  'kwanza_client_config',
+  'kwanza_is_server',
+  'kwanza_server_config',
+  'kwanza_setup_complete',
+  'nexor_installation_role',
+  'nexor_offline_first',
+];
+
+ipcMain.on('nexor:connectionSeed', (event) => {
+  event.returnValue = connectionSeedJson || '{}';
+});
+
+function liveAppEntryUrl(win) {
+  if (!win || win.isDestroyed()) return '';
+  let raw = '';
+  try { raw = win.webContents.getURL() || ''; } catch (_) { return ''; }
+  let parsed;
+  try { parsed = new URL(raw); } catch (_) { return ''; }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+  const pathname = parsed.pathname || '';
+  if (pathname !== '/app' && !pathname.startsWith('/app/')) return '';
+  return `${parsed.origin}/app/#/`;
+}
+
 // ============= SINGLE-INSTANCE LOCK (Phase 2) =============
 // Prevent a second .exe launch from spawning a duplicate Express backend or
 // stealing the same port. Second launch focuses the existing window instead.
@@ -1445,7 +1473,7 @@ function injectBackendPortToAllWindows() {
     if (!win || win.isDestroyed() || win === splashWindow) continue;
     try {
       const loaded = win.webContents.getURL() || '';
-      if (/^https?:\/\/127\.0\.0\.1:3000\/app/i.test(loaded)) continue;
+      if (/\/app(\/|\?|#|$)/i.test(loaded)) continue;
     } catch (_) { /* ignore */ }
     win.webContents
       .executeJavaScript(
@@ -3895,7 +3923,7 @@ function createWindow() {
     if (getRendererSource().type === 'server') return;
     try {
       const loaded = mainWindow?.webContents.getURL() || '';
-      if (/^https?:\/\/127\.0\.0\.1:3000\/app/i.test(loaded)) return;
+      if (/\/app(\/|\?|#|$)/i.test(loaded)) return;
     } catch (_) { /* ignore */ }
     const port = backendManager.getPort();
     if (port == null) return;
@@ -3938,7 +3966,34 @@ function createWindow() {
  * its own isolated session, so a different user/branch can be logged in at the same time.
  * Closing this window only closes the window (it does not quit the app).
  */
+async function rememberConnectionSeed() {
+  const source = (mainWindow && !mainWindow.isDestroyed())
+    ? mainWindow
+    : BrowserWindow.getAllWindows().find((w) => w && !w.isDestroyed() && w !== splashWindow);
+  if (!source) return;
+  try {
+    const keys = JSON.stringify(CONNECTION_SEED_KEYS);
+    const json = await source.webContents.executeJavaScript(
+      `(() => { const keys = ${keys}; const out = {}; for (const k of keys) { const v = localStorage.getItem(k); if (v) out[k] = v; } return JSON.stringify(out); })()`,
+      true,
+    );
+    if (typeof json === 'string' && json !== '{}') connectionSeedJson = json;
+  } catch (e) {
+    console.warn('[second-instance] could not copy server settings:', e?.message || e);
+  }
+}
+
 function createSecondaryWindow() {
+  void openSecondaryWindow().catch((e) => {
+    console.error('[second-instance] failed to open new window:', e?.message || e);
+  });
+}
+
+async function openSecondaryWindow() {
+  await rememberConnectionSeed();
+  const entry = liveAppEntryUrl(mainWindow)
+    || BrowserWindow.getAllWindows().map(liveAppEntryUrl).find(Boolean)
+    || '';
   // Ephemeral, unique session partition → independent login/storage per window.
   const partition = `nexor-login-${++secondaryWindowSeq}-${Date.now()}`;
   const chrome = chromeForTheme(readStoredColorTheme());
@@ -3959,14 +4014,22 @@ function createSecondaryWindow() {
   applyNativeWindowTheme(readStoredColorTheme());
 
   const isDev = process.env.NODE_ENV === 'development' || process.env.ELECTRON_DEV === 'true';
-  loadRendererRoute(win, '/');
+  if (entry) {
+    console.warn(`[second-instance] opening the same server ${entry}`);
+    win.loadURL(entry).catch((error) => {
+      console.warn('[second-instance] live app failed, using the normal startup screen:', error?.message || error);
+      loadRendererRoute(win, '/');
+    });
+  } else {
+    loadRendererRoute(win, '/');
+  }
   if (isDev) win.webContents.openDevTools();
 
   const inject = () => {
     if (getRendererSource().type === 'server') return;
     try {
       const loaded = win.webContents.getURL() || '';
-      if (/^https?:\/\/127\.0\.0\.1:3000\/app/i.test(loaded)) return;
+      if (/\/app(\/|\?|#|$)/i.test(loaded)) return;
     } catch (_) { /* ignore */ }
     const port = backendManager.getPort();
     if (port == null || win.isDestroyed()) return;

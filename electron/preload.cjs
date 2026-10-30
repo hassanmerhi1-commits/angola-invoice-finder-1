@@ -23,12 +23,47 @@ try {
   /* ipc not ready */
 }
 
-if (backendPortSync > 0) {
+function pageIsLiveApp() {
+  try {
+    const path = window.location.pathname || '';
+    return path === '/app' || path.startsWith('/app/');
+  } catch (_) {
+    return false;
+  }
+}
+
+// A window opened on /app already knows its server. Injecting the embedded
+// port here sent a second login at a local SQLite file.
+if (backendPortSync > 0 && !pageIsLiveApp()) {
   try {
     contextBridge.exposeInMainWorld('__KWANZA_BACKEND_PORT__', backendPortSync);
   } catch (_) {
     /* hot-reload / second preload */
   }
+}
+
+const CONNECTION_SEED_KEYS = [
+  'kwanza_api_url',
+  'kwanza_client_config',
+  'kwanza_is_server',
+  'kwanza_server_config',
+  'kwanza_setup_complete',
+  'nexor_installation_role',
+  'nexor_offline_first',
+];
+try {
+  const raw = ipcRenderer.sendSync('nexor:connectionSeed');
+  const seed = typeof raw === 'string' && raw ? JSON.parse(raw) : null;
+  if (seed && typeof seed === 'object') {
+    for (const key of CONNECTION_SEED_KEYS) {
+      const value = seed[key];
+      if (typeof value === 'string' && value && !localStorage.getItem(key)) {
+        localStorage.setItem(key, value);
+      }
+    }
+  }
+} catch (_) {
+  /* first window, or storage not ready */
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
