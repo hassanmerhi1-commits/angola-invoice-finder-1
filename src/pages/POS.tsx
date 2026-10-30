@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect, useDeferredValue } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useCart, useSales, useAuth, useClients } from '@/hooks/useERP';
 import { useCreditNotes } from '@/hooks/useFiscalDocuments';
@@ -349,20 +349,22 @@ export default function POS() {
     };
   }, [currentBranch?.id, refreshCreditNotes, refreshCaixa, recordCashRefund, recordCashExpense]);
 
+  // Catalog scan stays off the keystroke. Typing updates the box immediately.
+  const deferredSearchTerm = useDeferredValue(searchTerm);
   const navigableSearchResults = useMemo(
-    () => filterPosProductsBySearch(products, searchTerm),
-    [products, searchTerm],
+    () => filterPosProductsBySearch(products, deferredSearchTerm),
+    [products, deferredSearchTerm],
   );
 
   const highlightedProductId = navigableSearchResults[searchHighlightIndex]?.id ?? null;
 
   useEffect(() => {
-    if (!searchTerm.trim() || navigableSearchResults.length === 0) {
+    if (!deferredSearchTerm.trim() || navigableSearchResults.length === 0) {
       setSearchHighlightIndex(-1);
       return;
     }
     setSearchHighlightIndex(0);
-  }, [searchTerm, navigableSearchResults.length]);
+  }, [deferredSearchTerm, navigableSearchResults.length]);
 
   const clearSearch = useCallback(() => {
     setSearchTerm('');
@@ -904,7 +906,7 @@ export default function POS() {
       {branchId && (
         <PosProductSearchList
           products={products}
-          searchTerm={searchTerm}
+          searchTerm={deferredSearchTerm}
           highlightedProductId={highlightedProductId}
           onProductSelect={(product) => {
             addProductToCart(product);

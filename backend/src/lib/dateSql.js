@@ -29,8 +29,9 @@ function formatYmd(year, monthIndex, day) {
 
 function fromDateObject(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
-  // Use UTC components — node-pg DATE values arrive as UTC midnight.
-  return formatYmd(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  // node-pg parses a DATE as local midnight. UTC fields turn Angola's
+  // today into yesterday (30 Oct 00:00 local is 29 Oct 23:00 UTC).
+  return formatYmd(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
 function normalizeSqlDate(value, { allowNull = true } = {}) {

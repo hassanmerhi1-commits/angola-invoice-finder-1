@@ -1418,6 +1418,15 @@ async function ensurePhaseSchema(db) {
       console.warn('[SCHEMA] caixa COA sync:', e.message);
     }
     await repairCreditNoteCaixaGlAccounts(db);
+    try {
+      const { repairShiftedPurchaseJournalDates } = require('./purchaseInvoicePosting');
+      const shifted = await repairShiftedPurchaseJournalDates(db);
+      if (shifted.updated > 0) {
+        console.log(`[SCHEMA] Moved ${shifted.updated} purchase journal(s) onto the invoice day`);
+      }
+    } catch (e) {
+      console.warn('[SCHEMA] purchase journal date repair:', e.message);
+    }
     console.log('[SCHEMA] PostgreSQL phase migrations applied');
     return;
   }

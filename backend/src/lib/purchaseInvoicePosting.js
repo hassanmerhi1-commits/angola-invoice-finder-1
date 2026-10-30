@@ -884,6 +884,44 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
   return result;
 }
 
+/**
+ * Purchases dated today were journaled as yesterday: the DATE came back as
+ * local midnight and was saved with UTC fields. Move those journals onto the
+ * invoice day. A real backdate (journal day equals the invoice day) is left.
+ */
+async function repairShiftedPurchaseJournalDates(db) {
+  if (!db || db.engine !== 'postgres') return { updated: 0 };
+  const headers = await db.query(`
+    UPDATE journal_entries je
+    SET entry_date = pi.date::date
+    FROM purchase_invoices pi
+    WHERE je.reference_type = 'purchase_invoice'
+      AND CAST(je.reference_id AS TEXT) = CAST(pi.id AS TEXT)
+      AND pi.date IS NOT NULL
+      AND je.entry_date IS NOT NULL
+      AND je.entry_date::date = (pi.date::date - 1)
+    RETURNING je.id
+  `);
+  const updated = headers.rows?.length || 0;
+  if (updated > 0) {
+    try {
+      await db.query(`
+        UPDATE journal_entry_lines jel
+        SET entry_date = je.entry_date
+        FROM journal_entries je
+        WHERE jel.journal_entry_id = je.id
+          AND je.reference_type = 'purchase_invoice'
+          AND jel.entry_date IS NOT NULL
+          AND je.entry_date IS NOT NULL
+          AND jel.entry_date::date = (je.entry_date::date - 1)
+      `);
+    } catch (lineErr) {
+      if (!/entry_date|42703/i.test(String(lineErr.message || lineErr))) throw lineErr;
+    }
+  }
+  return { updated };
+}
+
 module.exports = {
   normalizePurchaseLines,
   purchaseInvoiceHasStockLines,
@@ -891,6 +929,7 @@ module.exports = {
   queryPostingStatus,
   reverseJournalEntry,
   postPurchaseInvoiceAccountingPhased,
+  repairShiftedPurchaseJournalDates,
   resolveLinkedPurchaseOrderStock,
   requestedExplicitNewReceipt,
   canHonorExplicitNewReceipt,

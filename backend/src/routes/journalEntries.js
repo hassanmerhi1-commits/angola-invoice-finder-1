@@ -9,6 +9,7 @@ const { attachUserBranchScope, resolveListBranchId, isForeignBranch } = require(
 const { reverseJournalEntry } = require('../lib/purchaseInvoicePosting');
 const { updateJournalEntry } = require('../accounting');
 const { auditErpSafe } = require('../lib/erpAudit');
+const { sqlDateOnly } = require('../lib/sqlDateOnly');
 const {
   assertCanUsePostingDate,
   assertCanEditHistorical,
@@ -33,6 +34,18 @@ const JOURNAL_TYPE_GROUPS = {
   transfer: ['transfer'],
   expense: ['expense', 'despesa'],
 };
+
+function presentJournalDate(row) {
+  if (!row || typeof row !== 'object') return row;
+  if (row.entry_date != null && row.entry_date !== '') {
+    const day = sqlDateOnly(row.entry_date);
+    if (day) row.entry_date = day;
+  }
+  if (Array.isArray(row.lines)) {
+    for (const line of row.lines) presentJournalDate(line);
+  }
+  return row;
+}
 
 const ENTRY_FROM = `
   FROM journal_entries je
@@ -170,6 +183,7 @@ module.exports = function(broadcastTable) {
       if (includeContext) {
         await enrichJournalEntriesLight(db, result.rows);
       }
+      for (const entry of result.rows) presentJournalDate(entry);
 
       res.json({
         items: result.rows,
@@ -201,6 +215,7 @@ module.exports = function(broadcastTable) {
       }
       entry.lines = await loadJournalLines(id);
       entry.context = await enrichJournalEntryContext(db, entry);
+      presentJournalDate(entry);
 
       res.json(entry);
     } catch (error) {
@@ -225,6 +240,7 @@ module.exports = function(broadcastTable) {
         entry.lines = await loadJournalLines(entry.id);
       }
       await enrichJournalEntries(db, rows);
+      for (const entry of rows) presentJournalDate(entry);
 
       res.json(rows);
     } catch (error) {
@@ -294,6 +310,7 @@ module.exports = function(broadcastTable) {
       if (entry) {
         entry.lines = await loadJournalLines(req.params.id);
         entry.context = await enrichJournalEntryContext(db, entry);
+        presentJournalDate(entry);
       }
       res.json(entry || result);
     } catch (error) {

@@ -9,6 +9,12 @@ interface UseBarcodeScannerOptions {
 }
 
 const BARCODE_CHAR = /^[a-zA-Z0-9\-_.\/]$/;
+/**
+ * A wedge gun types the next character in a few tens of milliseconds.
+ * A cashier typing a quantity or a code is slower than this. Swallowing
+ * those keys left only the first digit until they paused.
+ */
+const SCANNER_SWALLOW_GAP_MS = 45;
 
 export function looksLikeScannedCode(value: string, minLength = 4): boolean {
   const code = String(value || '').trim();
@@ -121,7 +127,8 @@ export function useBarcodeScanner({
       }
       lastKeyTimeRef.current = now;
 
-      if (burstCountRef.current >= 2 && gap <= maxDelay) {
+      // Only a gun is this fast. Human keystrokes must reach the qty and search boxes.
+      if (burstCountRef.current >= 6 && gap <= SCANNER_SWALLOW_GAP_MS) {
         event.preventDefault();
         event.stopPropagation();
       }
