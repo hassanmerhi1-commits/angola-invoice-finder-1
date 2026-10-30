@@ -10,6 +10,7 @@ const {
   hasCityUiCache,
   snapshotCityWebapp,
   startCityUiCacheServer,
+  startPackagedUiServer,
 } = require('../../electron/cityUiCache.cjs');
 const { listWebappFiles, buildWebappManifest } = require('../src/lib/webappManifest');
 
@@ -82,6 +83,45 @@ test('cache server only answers /app from the snapshot', async () => {
     assert.match(html, /index-aa\.js/);
   } finally {
     server.close();
+  }
+});
+
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    http.get(url, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    }).on('error', reject);
+  });
+}
+
+test('packaged UI server serves the installer page and its module script', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexor-packaged-ui-'));
+  fs.mkdirSync(path.join(root, 'assets'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'index.html'),
+    '<script type="module" crossorigin src="./assets/index-aa.js"></script>',
+  );
+  fs.writeFileSync(path.join(root, 'assets', 'index-aa.js'), 'window.__NEXOR_PACKED = 1;\n');
+  const { server, port } = await startPackagedUiServer(root);
+  try {
+    const page = await httpGet(`http://127.0.0.1:${port}/index.html`);
+    assert.equal(page.status, 200);
+    assert.match(String(page.headers['content-type']), /html/);
+    assert.match(page.body, /crossorigin/);
+    const script = await httpGet(`http://127.0.0.1:${port}/assets/index-aa.js`);
+    assert.equal(script.status, 200);
+    assert.match(String(script.headers['content-type']), /javascript/);
+    assert.match(script.body, /__NEXOR_PACKED/);
+    const missing = await httpGet(`http://127.0.0.1:${port}/assets/missing.js`);
+    assert.equal(missing.status, 404);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

@@ -3171,6 +3171,35 @@ function getLocalRendererSource() {
   return { type: 'local', path: possiblePaths[0] };
 }
 
+let packagedUiServerPromise = null;
+
+function ensurePackagedUiServer() {
+  if (!packagedUiServerPromise) {
+    const indexPath = getLocalRendererSource().path;
+    packagedUiServerPromise = cityUiCache.startPackagedUiServer(path.dirname(indexPath)).catch((error) => {
+      packagedUiServerPromise = null;
+      throw error;
+    });
+  }
+  return packagedUiServerPromise;
+}
+
+/** Packed Vite UI must not open via file:// — those module scripts are blocked and the window stays blank. */
+async function loadPackagedRenderer(targetWindow, normalizedRoute) {
+  const indexPath = getLocalRendererSource().path;
+  if (!fs.existsSync(indexPath)) {
+    throw new Error(`Packaged screen missing (${indexPath})`);
+  }
+  const { port } = await ensurePackagedUiServer();
+  if (!port) throw new Error('Packaged screen server did not start');
+  lastRendererKind = 'local';
+  const route = String(normalizedRoute || '/');
+  const hash = route.startsWith('/') ? route : `/${route}`;
+  const url = `http://127.0.0.1:${port}/index.html#${hash}`;
+  console.warn(`[Renderer] Packaged screen ${url.split('#')[0]}`);
+  await targetWindow.loadURL(url);
+}
+
 function isLoopbackHttpUrl(url) {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -3402,7 +3431,6 @@ async function waitForLoopbackWebapp(timeoutMs = 25000) {
 }
 
 function loadServerRenderer(targetWindow, source, normalizedRoute) {
-  const fallbackSource = getLocalRendererSource();
   let recovered = false;
   const baseUrl = String(source.url || '').replace(/\/$/, '');
   const cityBase = String(source.baseUrl || baseUrl.replace(/\/app$/i, '')).replace(/\/$/, '');
@@ -3425,24 +3453,18 @@ function loadServerRenderer(targetWindow, source, normalizedRoute) {
         else keepTryingCityWebapp(targetWindow, cityBase, normalizedRoute);
       }).catch((error) => {
         console.error('[HotUpdate] City UI cache failed:', error);
-        try {
-          lastRendererKind = 'local';
-          targetWindow.loadFile(fallbackSource.path, { hash: normalizedRoute });
-        } catch (fileError) {
+        loadPackagedRenderer(targetWindow, normalizedRoute).catch((fileError) => {
           showRendererRecoveryScreen(targetWindow, fileError?.message || error?.message || reason);
-        }
+        });
       });
       return;
     }
-    try {
-      lastRendererKind = 'local';
-      targetWindow.loadFile(fallbackSource.path, { hash: normalizedRoute });
-      if (isServerMode) keepTryingLiveWebapp(targetWindow, normalizedRoute);
-      else keepTryingCityWebapp(targetWindow, cityBase, normalizedRoute);
-    } catch (error) {
+    if (isServerMode) keepTryingLiveWebapp(targetWindow, normalizedRoute);
+    else keepTryingCityWebapp(targetWindow, cityBase, normalizedRoute);
+    loadPackagedRenderer(targetWindow, normalizedRoute).catch((error) => {
       console.error('[HotUpdate] Local fallback failed:', error);
       showRendererRecoveryScreen(targetWindow, error?.message || reason);
-    }
+    });
   };
 
   const handleFail = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -3515,16 +3537,12 @@ function loadRendererRoute(targetWindow, route = '/') {
       if (cityUiCache.hasCityUiCache(cityUiCacheRoot())) {
         loadCachedCityRenderer(targetWindow, normalizedRoute).catch((error) => {
           console.error('[Renderer] Failed to load cached city UI:', error);
-          const local = getLocalRendererSource();
-          lastRendererKind = 'local';
-          targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((fileError) => {
+          loadPackagedRenderer(targetWindow, normalizedRoute).catch((fileError) => {
             showRendererRecoveryScreen(targetWindow, fileError?.message || error?.message || 'Local renderer load failed');
           });
         });
       } else {
-        const local = getLocalRendererSource();
-        lastRendererKind = 'local';
-        targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((error) => {
+        loadPackagedRenderer(targetWindow, normalizedRoute).catch((error) => {
           console.error('[Renderer] Failed to load local renderer:', error);
           showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
         });
@@ -3565,17 +3583,14 @@ function loadRendererRoute(targetWindow, route = '/') {
       keepTryingCityWebapp(targetWindow, resolveCityServerUrl(), normalizedRoute);
     }).catch((error) => {
       console.error('[Renderer] Failed to load cached city UI:', error);
-      lastRendererKind = 'local';
-      const local = getLocalRendererSource();
-      targetWindow.loadFile(local.path, { hash: normalizedRoute }).catch((fileError) => {
+      loadPackagedRenderer(targetWindow, normalizedRoute).catch((fileError) => {
         showRendererRecoveryScreen(targetWindow, fileError?.message || error?.message || 'Cached UI load failed');
       });
     });
     return;
   }
 
-  lastRendererKind = 'local';
-  targetWindow.loadFile(source.path, { hash: normalizedRoute }).catch((error) => {
+  loadPackagedRenderer(targetWindow, normalizedRoute).catch((error) => {
     console.error('[Renderer] Failed to load local renderer:', error);
     showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
   });

@@ -235,6 +235,64 @@ function startCityUiCacheServer(cacheRoot, listen) {
   });
 }
 
+/**
+ * Installer UI (Vite base "./"). file:// blocks those module scripts
+ * (crossorigin + origin null), which leaves a blank window. Serve the
+ * dist folder on loopback so the same HTML can start.
+ */
+function startPackagedUiServer(distDir, listen) {
+  const bind = listen || ((server, cb) => server.listen(0, '127.0.0.1', cb));
+  const root = path.resolve(distDir);
+  const server = http.createServer((req, res) => {
+    const host = String(req.socket?.remoteAddress || '');
+    if (host !== '127.0.0.1' && host !== '::1' && host !== '::ffff:127.0.0.1') {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    let pathname = '/';
+    try {
+      pathname = decodeURIComponent(new URL(req.url || '/', 'http://127.0.0.1').pathname);
+    } catch {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+    let filePath;
+    try {
+      filePath = resolveUnder(root, rel);
+    } catch {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Not found');
+      return;
+    }
+    try {
+      const body = fs.readFileSync(filePath);
+      res.writeHead(200, {
+        'Content-Type': mimeFor(filePath),
+        'Cache-Control': 'no-store',
+      });
+      res.end(body);
+    } catch {
+      res.writeHead(500);
+      res.end();
+    }
+  });
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    bind(server, () => {
+      const addr = server.address();
+      resolve({ server, port: addr && addr.port });
+    });
+  });
+}
+
 module.exports = {
   assertSafeRel,
   parseWebappAssetRels,
@@ -243,5 +301,6 @@ module.exports = {
   readStamp,
   snapshotCityWebapp,
   startCityUiCacheServer,
+  startPackagedUiServer,
   currentDir,
 };
