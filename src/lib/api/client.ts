@@ -1609,8 +1609,10 @@ export const api = {
       }
       return apiFetch<any>(`/caixa/reconciliation?${sp}`, {}, fetchOpts);
     },
-    getOpenSession: (branchId: string, opts?: { syncExpenses?: boolean }) => {
+    getOpenSession: (branchId: string, opts?: { syncExpenses?: boolean; openedBy?: string; userId?: string }) => {
       const sp = new URLSearchParams({ branchId });
+      if (opts?.openedBy) sp.set('openedBy', opts.openedBy);
+      if (opts?.userId) sp.set('userId', opts.userId);
       if (opts?.syncExpenses) sp.set('syncExpenses', '1');
       return apiFetch<any | null>(
         `/caixa/sessions/open?${sp}`,

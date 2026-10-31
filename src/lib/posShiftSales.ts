@@ -311,16 +311,15 @@ export function filterShiftSalesForCashier(
   day = todayLocalDate(),
 ): Sale[] {
   if (!cashier || !session) return [];
-  const extra = session.openedBy ? [session.openedBy] : [];
   return filterShiftSalesInWindow(sales, session, day, cashier).filter((sale) =>
-    isSameShiftCashier(sale, cashier, extra),
+    isSameShiftCashier(sale, cashier),
   );
 }
 
 /**
- * Caixa close report: prefer this cashier's sales, but if none match (offline
- * ids, missing cashier_name, or the closer is not the seller) fall back to
- * every sale on the open register for that business day.
+ * End-of-day sales for the person who is logged in.
+ * Other cashiers on the same branch drawer stay off this report.
+ * With no logged-in user, the rows are the open register for that day.
  */
 export function selectEndOfDaySales(
   sales: Sale[],
@@ -330,39 +329,20 @@ export function selectEndOfDaySales(
 ): { rows: Sale[]; scopedToCashier: boolean } {
   const windowRows = filterShiftSalesInWindow(sales, session, day, null);
   if (!cashier) return { rows: windowRows, scopedToCashier: false };
-  const mine = filterShiftSalesForCashier(sales, cashier, session, day);
-  if (mine.length > 0) return { rows: mine, scopedToCashier: true };
-  return { rows: windowRows, scopedToCashier: false };
+  return {
+    rows: filterShiftSalesForCashier(sales, cashier, session, day),
+    scopedToCashier: true,
+  };
 }
 
-/**
- * POS Shift invoices tab: prefer this cashier's shift, then the register window,
- * then every same-day sale already loaded for this till (API is branch-scoped).
- * Late caixa open, leftover last-closed stamps, or cashier-id mismatch must not
- * blank the list while Invoices/dashboard still shows the day's tickets.
- */
+/** POS Shift invoices tab: this logged-in user's sales on the open register. */
 export function selectPosShiftInvoices(
   sales: Sale[],
   cashier: User | null | undefined,
   session: CaixaSession | null | undefined,
   day = todayLocalDate(),
 ): { rows: Sale[]; scopedToCashier: boolean } {
-  const selected = selectEndOfDaySales(sales, cashier, session, day);
-  const today = todayLocalDate();
-  const extra = sales.filter((sale) => {
-    if (String(sale.status || '').toLowerCase() === 'voided') return false;
-    if (selected.rows.some((row) => row.id === sale.id)) return false;
-    const saleDay = saleLocalDate(sale.createdAt);
-    if (saleDay && saleDay !== day && saleDay !== today) return false;
-    return true;
-  });
-  if (extra.length === 0) return selected;
-  return {
-    rows: dedupeShiftSales([...extra, ...selected.rows]).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    ),
-    scopedToCashier: selected.scopedToCashier,
-  };
+  return selectEndOfDaySales(sales, cashier, session, day);
 }
 
 function eventInShift(isoTimestamp: string | undefined, session: CaixaSession | null | undefined): boolean {

@@ -43,6 +43,24 @@ function isUuid(value) {
   );
 }
 
+function personKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Who is asking. A shift belongs to this person, not to everyone on the branch. */
+function actorKeys(req, ...explicit) {
+  const keys = [req.user?.id, req.user?.name, ...explicit]
+    .map(personKey)
+    .filter(Boolean);
+  return [...new Set(keys)];
+}
+
+function openedByMatches(openedBy, keys) {
+  const key = personKey(openedBy);
+  if (!key || !keys.length) return false;
+  return keys.includes(key);
+}
+
 function mapSessionRow(row) {
   if (!row) return null;
   return {
@@ -65,6 +83,25 @@ function mapSessionRow(row) {
     notes: row.notes,
     createdAt: row.created_at,
   };
+}
+
+async function listOpenSessionsForBranch(dbConn, resolvedBranchId, branchId) {
+  const orderBy = dbConn.engine === 'postgres' ? 'opened_at DESC NULLS LAST' : 'opened_at DESC';
+  const branchCol = dbConn.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
+  const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
+  const result = await dbConn.query(
+    `SELECT * FROM caixa_sessions
+     WHERE status = 'open'
+       AND (
+         ${branchCol} = $1
+         OR ${branchCol} = $2
+         OR ${norm(branchCol)} = ${norm('$1')}
+         OR ${norm(branchCol)} = ${norm('$2')}
+       )
+     ORDER BY ${orderBy}`,
+    [resolvedBranchId, branchId],
+  );
+  return result.rows || [];
 }
 
 function mapCaixaRow(row) {
@@ -625,24 +662,10 @@ function caixaRouter(broadcastTable) {
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
       const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
-      const orderBy = db.engine === 'postgres' ? 'opened_at DESC NULLS LAST' : 'opened_at DESC';
-      // Match UUID / hyphen variants — shops often send a remapped branch id after update.
-      const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
-      const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
-      const result = await db.query(
-        `SELECT * FROM caixa_sessions
-         WHERE status = 'open'
-           AND (
-             ${branchCol} = $1
-             OR ${branchCol} = $2
-             OR ${norm(branchCol)} = ${norm('$1')}
-             OR ${norm(branchCol)} = ${norm('$2')}
-           )
-         ORDER BY ${orderBy}
-         LIMIT 1`,
-        [resolvedBranchId, branchId],
-      );
-      let sessionRow = result.rows[0] || null;
+      const keys = actorKeys(req, req.query.openedBy, req.query.userId);
+      const openRows = await listOpenSessionsForBranch(db, resolvedBranchId, branchId);
+      // This till's shift only. Another cashier's open drawer stays theirs.
+      let sessionRow = openRows.find((row) => openedByMatches(row.opened_by, keys)) || null;
       // Expense ledger sync is useful for end-of-day, but it slows every POS open /
       // session probe over Tailscale. Opt in with ?syncExpenses=1.
       const syncExpenses = String(req.query.syncExpenses || '').trim() === '1'
@@ -686,30 +709,15 @@ function caixaRouter(broadcastTable) {
       if (!branchId) return res.status(400).json({ error: 'branchId required' });
 
       const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
-      const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
-      const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
-      const openSessionWhere = `
-         status = 'open'
-           AND (
-             ${branchCol} = $1
-             OR ${branchCol} = $2
-             OR ${norm(branchCol)} = ${norm('$1')}
-             OR ${norm(branchCol)} = ${norm('$2')}
-           )`;
+      const keys = actorKeys(req, openedBy);
+      const openRows = await listOpenSessionsForBranch(db, resolvedBranchId, branchId);
+      const mine = openRows.filter((row) => openedByMatches(row.opened_by, keys));
 
-      // Intentional new shift (after EOD): close any leftover open session first.
-      // Without this, a racey reopen reused yesterday's session with all cash still in it.
+      // A new shift closes only this cashier's leftover. Other drawers stay open.
       const wantForceNew = forceNew === true || forceNew === 1 || forceNew === '1' || forceNew === 'true';
       if (wantForceNew) {
-        const leftovers = await db.query(
-          `SELECT id, caixa_id, opening_balance, total_in, total_out, sales_total, expenses_total,
-                  adjustments, opened_by, opened_at, date
-           FROM caixa_sessions
-           WHERE ${openSessionWhere}`,
-          [resolvedBranchId, branchId],
-        );
         const nowIso = new Date().toISOString();
-        for (const row of leftovers.rows || []) {
+        for (const row of mine) {
           await applyCaixaClose({
             session: {
               id: row.id,
@@ -726,7 +734,7 @@ function caixaRouter(broadcastTable) {
               expensesTotal: row.expenses_total,
               adjustments: row.adjustments,
               openedBy: row.opened_by,
-              closedBy: openedBy || 'system',
+              closedBy: openedBy || req.user?.name || 'system',
               openedAt: row.opened_at,
               closedAt: nowIso,
               notes: 'Auto-closed before opening a new shift',
@@ -735,15 +743,8 @@ function caixaRouter(broadcastTable) {
         }
       }
 
-      const existing = await db.query(
-        `SELECT id FROM caixa_sessions
-         WHERE ${openSessionWhere}
-         LIMIT 1`,
-        [resolvedBranchId, branchId],
-      );
-      if (existing.rows.length > 0 && !wantForceNew) {
-        const row = await db.query(`SELECT * FROM caixa_sessions WHERE id = $1`, [existing.rows[0].id]);
-        return res.json(mapSessionRow(row.rows[0]));
+      if (mine.length > 0 && !wantForceNew) {
+        return res.json(mapSessionRow(mine[0]));
       }
 
       const sessionId = isUuid(id) ? String(id).trim() : crypto.randomUUID();
@@ -754,26 +755,38 @@ function caixaRouter(broadcastTable) {
       const openedAt = req.body?.openedAt && String(req.body.openedAt).trim()
         ? String(req.body.openedAt).trim()
         : now;
-
-      await db.query(
-        `INSERT INTO caixas (id, branch_id, branch_name, name, opening_balance, current_balance, status, opened_by, opened_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $5, 'open', $6, $7, $8)
-         ON CONFLICT (id) DO UPDATE SET
-           status = 'open',
-           opening_balance = excluded.opening_balance,
-           current_balance = excluded.current_balance,
-           opened_by = excluded.opened_by,
-           opened_at = excluded.opened_at,
-           updated_at = excluded.updated_at`,
-        [cxId, resolvedBranchId, branchName || '', `Caixa Principal - ${branchName || branchId}`, openBal, openedBy || '', openedAt, now],
-      );
+      const owner = openedBy || req.user?.name || req.user?.id || '';
+      const othersStillOpen = openRows.some((row) => !openedByMatches(row.opened_by, keys));
+      if (othersStillOpen) {
+        await db.query(
+          `INSERT INTO caixas (id, branch_id, branch_name, name, opening_balance, current_balance, status, opened_by, opened_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $5, 'open', $6, $7, $8)
+           ON CONFLICT (id) DO UPDATE SET
+             status = 'open',
+             updated_at = excluded.updated_at`,
+          [cxId, resolvedBranchId, branchName || '', `Caixa Principal - ${branchName || branchId}`, openBal, owner, openedAt, now],
+        );
+      } else {
+        await db.query(
+          `INSERT INTO caixas (id, branch_id, branch_name, name, opening_balance, current_balance, status, opened_by, opened_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $5, 'open', $6, $7, $8)
+           ON CONFLICT (id) DO UPDATE SET
+             status = 'open',
+             opening_balance = excluded.opening_balance,
+             current_balance = excluded.current_balance,
+             opened_by = excluded.opened_by,
+             opened_at = excluded.opened_at,
+             updated_at = excluded.updated_at`,
+          [cxId, resolvedBranchId, branchName || '', `Caixa Principal - ${branchName || branchId}`, openBal, owner, openedAt, now],
+        );
+      }
 
       await db.query(
         `INSERT INTO caixa_sessions (
           id, caixa_id, branch_id, date, opening_balance, total_in, total_out,
           sales_total, expenses_total, adjustments, status, opened_by, opened_at
         ) VALUES ($1,$2,$3,$4,$5,0,0,0,0,0,'open',$6,$7)`,
-        [sessionId, cxId, resolvedBranchId, today, openBal, openedBy || '', openedAt],
+        [sessionId, cxId, resolvedBranchId, today, openBal, owner, openedAt],
       );
 
       if (broadcastTable) await broadcastTable('caixa_sessions');
@@ -853,10 +866,18 @@ function caixaRouter(broadcastTable) {
       const { id } = req.params;
       const body = req.body || {};
       applyWriteBranchOverride(req, body, ['branchId'], 'CAIXA CLOSE');
-      const existingSession = await db.query('SELECT branch_id FROM caixa_sessions WHERE id = $1', [id]);
+      const existingSession = await db.query(
+        'SELECT branch_id, opened_by, caixa_id FROM caixa_sessions WHERE id = $1',
+        [id],
+      );
       const forced = req.branchScope?.forceBranchId;
       if (forced && existingSession.rows[0] && String(existingSession.rows[0].branch_id) !== String(forced)) {
         return res.status(404).json({ error: 'Session not found' });
+      }
+      const keys = actorKeys(req, body.closedBy || body.openedBy);
+      const ownerKey = existingSession.rows[0]?.opened_by;
+      if (ownerKey && !openedByMatches(ownerKey, keys)) {
+        return res.status(403).json({ error: 'You can only close your own shift' });
       }
       const closingBalance = body.closingBalance ?? body.countedCash;
       const closedAt = body.closedAt || new Date().toISOString();
@@ -882,32 +903,17 @@ function caixaRouter(broadcastTable) {
         caixa: body.caixa,
       });
 
-      // Client session id often diverges from the city open row (local UUID never
-      // synced / old session_* ids). Seal EVERY leftover open shift for this branch
-      // so EOD cannot leave yesterday's cash sitting in an "open" city session.
+      // A duplicate row for this same cashier can be sealed. Another cashier's
+      // open shift on this branch must stay open.
       const branchId = body.branchId;
       let sealedExtra = 0;
+      const ownerKeys = actorKeys(req, ownerKey || body.openedBy || body.closedBy);
       if (branchId) {
         const resolvedBranchId = (await resolveBranchFilterId(db, branchId)) || branchId;
-        const branchCol = db.engine === 'postgres' ? 'branch_id::text' : 'CAST(branch_id AS TEXT)';
-        const norm = (expr) => `REPLACE(LOWER(TRIM(COALESCE(${expr}, ''))), '-', '')`;
-        const openSessionWhere = `
-           status = 'open'
-             AND (
-               ${branchCol} = $1
-               OR ${branchCol} = $2
-               OR ${norm(branchCol)} = ${norm('$1')}
-               OR ${norm(branchCol)} = ${norm('$2')}
-             )`;
-        const leftovers = await db.query(
-          `SELECT id, caixa_id, opening_balance, total_in, total_out, sales_total, expenses_total,
-                  adjustments, opened_by, opened_at, date
-           FROM caixa_sessions
-           WHERE ${openSessionWhere}`,
-          [resolvedBranchId, branchId],
-        );
-        for (const row of leftovers.rows || []) {
+        const leftovers = await listOpenSessionsForBranch(db, resolvedBranchId, branchId);
+        for (const row of leftovers) {
           if (String(row.id) === String(id)) continue;
+          if (!openedByMatches(row.opened_by, ownerKeys)) continue;
           await applyCaixaClose({
             session: {
               id: row.id,
@@ -915,22 +921,30 @@ function caixaRouter(broadcastTable) {
               branchId: resolvedBranchId,
               date: row.date,
               openingBalance: row.opening_balance,
-              closingBalance: closingBalance != null
-                ? Number(closingBalance)
-                : (Number(row.opening_balance || 0) + Number(row.total_in || 0) - Number(row.total_out || 0)),
+              closingBalance: Number(row.opening_balance || 0)
+                + Number(row.total_in || 0)
+                - Number(row.total_out || 0),
               totalIn: row.total_in,
               totalOut: row.total_out,
               salesTotal: row.sales_total,
               expensesTotal: row.expenses_total,
               adjustments: row.adjustments,
               openedBy: row.opened_by,
-              closedBy: body.closedBy || 'system',
+              closedBy: body.closedBy || req.user?.name || 'system',
               openedAt: row.opened_at,
               closedAt,
-              notes: body.notes || 'Closed with branch end-of-day (id mismatch seal)',
+              notes: body.notes || 'Closed duplicate shift for this cashier',
             },
           });
           sealedExtra += 1;
+        }
+        const stillOpen = await listOpenSessionsForBranch(db, resolvedBranchId, branchId);
+        const caixaId = existingSession.rows[0]?.caixa_id || body.caixaId;
+        if (stillOpen.length > 0 && caixaId) {
+          await db.query(
+            `UPDATE caixas SET status = 'open', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+            [caixaId],
+          );
         }
       }
 

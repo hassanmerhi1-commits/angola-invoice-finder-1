@@ -240,18 +240,6 @@ export function PosEndOfDayReportDialog({
       byPayment[key] = (byPayment[key] || 0) + sale.total;
     }
     const cashRefundsTotal = shiftCashRefunds.reduce((sum, note) => sum + note.total, 0);
-    // If invoices did not load, still show cash the register already booked.
-    if (cashierSales.length === 0) {
-      const sessionCash = Math.max(
-        Number(session?.salesTotal || 0),
-        Number(glRecon?.erpCashSalesTotal || 0),
-        Number(glRecon?.erpNetCashTotal || 0),
-      );
-      if (sessionCash > 0) {
-        byPayment.cash = sessionCash;
-        total = sessionCash;
-      }
-    }
     const netCash = (byPayment.cash || 0) - cashRefundsTotal;
     return {
       byPayment,
@@ -263,7 +251,7 @@ export function PosEndOfDayReportDialog({
       netCash,
       refundCount: shiftCashRefunds.length,
     };
-  }, [cashierSales, shiftCashRefunds, session, glRecon]);
+  }, [cashierSales, shiftCashRefunds]);
 
   const buildPrintHtml = () => {
     const money = (value: number) => `${value.toLocaleString(locale)} Kz`;
@@ -309,9 +297,7 @@ export function PosEndOfDayReportDialog({
     await printHtml(buildPrintHtml());
   };
 
-  // Drawer math is per cashier (this cashier's sales/refunds).
-  // Expenses stay caixa-shared and are listed separately — not deducted here —
-  // otherwise every cashier on the same cash box loses the same expense twice.
+  // This cashier's drawer: their opening float, their cash sales, their refunds.
   const drawer = useMemo(() => {
     const opening = session?.openingBalance || 0;
     const cashSales = totals.byPayment.cash || 0;
