@@ -184,12 +184,8 @@ async function snapshotCityWebapp(cityBase, opts) {
 function startCityUiCacheServer(cacheRoot, listen) {
   const bind = listen || ((server, cb) => server.listen(0, '127.0.0.1', cb));
   const server = http.createServer((req, res) => {
-    const host = String(req.socket?.remoteAddress || '');
-    if (host !== '127.0.0.1' && host !== '::1' && host !== '::ffff:127.0.0.1') {
-      res.writeHead(403);
-      res.end();
-      return;
-    }
+    // Bound to 127.0.0.1 already. Filtering remoteAddress blanks the window
+    // on PCs where Chromium reports an empty or mapped loopback address.
     let pathname = '/';
     try {
       pathname = decodeURIComponent(new URL(req.url || '/', 'http://127.0.0.1').pathname);
@@ -244,12 +240,8 @@ function startPackagedUiServer(distDir, listen) {
   const bind = listen || ((server, cb) => server.listen(0, '127.0.0.1', cb));
   const root = path.resolve(distDir);
   const server = http.createServer((req, res) => {
-    const host = String(req.socket?.remoteAddress || '');
-    if (host !== '127.0.0.1' && host !== '::1' && host !== '::ffff:127.0.0.1') {
-      res.writeHead(403);
-      res.end();
-      return;
-    }
+    // Bound to 127.0.0.1 already. A remoteAddress allow-list returned 403 on
+    // new PCs, the HTML never ran, and the window stayed the blank background.
     let pathname = '/';
     try {
       pathname = decodeURIComponent(new URL(req.url || '/', 'http://127.0.0.1').pathname);

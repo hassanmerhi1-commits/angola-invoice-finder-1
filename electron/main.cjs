@@ -3183,10 +3183,13 @@ function cityUiCacheRoot() {
 
 function getLocalRendererSource() {
   const possiblePaths = [
+    process.resourcesPath
+      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'index.html')
+      : '',
     path.join(__dirname, '../dist/index.html'),
-    path.join(process.resourcesPath, 'app/dist/index.html'),
+    path.join(process.resourcesPath || '', 'app/dist/index.html'),
     path.join(app.getAppPath(), 'dist/index.html'),
-  ];
+  ].filter(Boolean);
 
   for (const possiblePath of possiblePaths) {
     try {
@@ -3201,10 +3204,41 @@ function getLocalRendererSource() {
 
 let packagedUiServerPromise = null;
 
+function copyPackagedTree(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of fs.readdirSync(src)) {
+    const from = path.join(src, name);
+    const to = path.join(dest, name);
+    let isDir = false;
+    try { isDir = fs.statSync(from).isDirectory(); } catch (_) { isDir = false; }
+    if (isDir) copyPackagedTree(from, to);
+    else fs.writeFileSync(to, fs.readFileSync(from));
+  }
+}
+
+/** Files inside app.asar often fail to be served. Copy them to a real folder once. */
+function packagedDistDir(indexPath) {
+  const srcDir = path.dirname(indexPath);
+  const insideAsar = srcDir.includes(`${path.sep}app.asar${path.sep}`) || srcDir.endsWith(`${path.sep}app.asar`);
+  if (!insideAsar) return srcDir;
+  const dest = path.join(app.getPath('userData'), 'packaged-ui');
+  const marker = path.join(dest, '.source');
+  try {
+    if (fs.existsSync(path.join(dest, 'index.html')) && fs.readFileSync(marker, 'utf8') === srcDir) {
+      return dest;
+    }
+  } catch (_) { /* recopy */ }
+  fs.rmSync(dest, { recursive: true, force: true });
+  copyPackagedTree(srcDir, dest);
+  fs.writeFileSync(marker, srcDir);
+  return dest;
+}
+
 function ensurePackagedUiServer() {
   if (!packagedUiServerPromise) {
     const indexPath = getLocalRendererSource().path;
-    packagedUiServerPromise = cityUiCache.startPackagedUiServer(path.dirname(indexPath)).catch((error) => {
+    const distDir = packagedDistDir(indexPath);
+    packagedUiServerPromise = cityUiCache.startPackagedUiServer(distDir).catch((error) => {
       packagedUiServerPromise = null;
       throw error;
     });
@@ -3225,7 +3259,20 @@ async function loadPackagedRenderer(targetWindow, normalizedRoute) {
   const hash = route.startsWith('/') ? route : `/${route}`;
   const url = `http://127.0.0.1:${port}/index.html#${hash}`;
   console.warn(`[Renderer] Packaged screen ${url.split('#')[0]}`);
-  await targetWindow.loadURL(url);
+  await new Promise((resolve, reject) => {
+    const fail = (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      reject(new Error(errorDescription || `Packaged screen failed to load (${errorCode})`));
+    };
+    targetWindow.webContents.once('did-fail-load', fail);
+    targetWindow.loadURL(url).then(() => {
+      targetWindow.webContents.removeListener('did-fail-load', fail);
+      resolve();
+    }).catch((error) => {
+      targetWindow.webContents.removeListener('did-fail-load', fail);
+      reject(error);
+    });
+  });
 }
 
 function isLoopbackHttpUrl(url) {
@@ -3550,7 +3597,10 @@ function loadRendererRoute(targetWindow, route = '/') {
   const source = getRendererSource();
 
   if (isServerMode && source.type !== 'dev') {
-    void waitForLoopbackWebapp(25000).then((port) => {
+    // A new PC has no service on port 3000. Waiting half a minute left a blank
+    // window. Probe once, otherwise open the installed screen now.
+    void (async () => {
+      const port = await probeLoopbackWebappReady(readServerListenPort());
       if (!targetWindow || targetWindow.isDestroyed()) return;
       if (port) {
         const baseUrl = `http://127.0.0.1:${port}`;
@@ -3562,21 +3612,18 @@ function loadRendererRoute(targetWindow, route = '/') {
         }, normalizedRoute);
         return;
       }
-      if (cityUiCache.hasCityUiCache(cityUiCacheRoot())) {
-        loadCachedCityRenderer(targetWindow, normalizedRoute).catch((error) => {
-          console.error('[Renderer] Failed to load cached city UI:', error);
-          loadPackagedRenderer(targetWindow, normalizedRoute).catch((fileError) => {
-            showRendererRecoveryScreen(targetWindow, fileError?.message || error?.message || 'Local renderer load failed');
-          });
-        });
-      } else {
-        loadPackagedRenderer(targetWindow, normalizedRoute).catch((error) => {
-          console.error('[Renderer] Failed to load local renderer:', error);
-          showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
-        });
+      try {
+        if (cityUiCache.hasCityUiCache(cityUiCacheRoot())) {
+          await loadCachedCityRenderer(targetWindow, normalizedRoute);
+        } else {
+          await loadPackagedRenderer(targetWindow, normalizedRoute);
+        }
+      } catch (error) {
+        console.error('[Renderer] Failed to load local renderer:', error);
+        showRendererRecoveryScreen(targetWindow, error?.message || 'Local renderer load failed');
       }
       keepTryingLiveWebapp(targetWindow, normalizedRoute);
-    });
+    })();
     return;
   }
 
