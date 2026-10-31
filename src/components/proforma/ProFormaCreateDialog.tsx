@@ -347,7 +347,7 @@ export function ProFormaCreateDialog({ open, onOpenChange, onCreated }: ProForma
                     <CardTitle className="text-sm">{p.selectedItems.replace('{count}', String(selectedItems.length))}</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ScrollArea className="h-[250px]">
+                    <div className="h-[250px] overflow-y-auto">
                       {selectedItems.length === 0 ? (
                         <div className="text-center py-8 text-muted-foreground">
                           <Package className="h-8 w-8 mx-auto mb-2 opacity-20" />
@@ -382,7 +382,7 @@ export function ProFormaCreateDialog({ open, onOpenChange, onCreated }: ProForma
                           ))}
                         </div>
                       )}
-                    </ScrollArea>
+                    </div>
                     <div className="mt-4 pt-4 border-t flex justify-between">
                       <span className="font-medium">{t.common.total}:</span>
                       <span className="text-xl font-bold">{formatMoney(itemsTotal)}</span>
