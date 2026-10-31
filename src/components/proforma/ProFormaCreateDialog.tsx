@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import { useBranchScope } from '@/hooks/useBranchScope';
-import { useProducts, useClients, useAuth } from '@/hooks/useERP';
+import { ALL_BRANCHES_SCOPE_ID } from '@/lib/branchAccess';
+import { useClients, useAuth } from '@/hooks/useERP';
+import { useInventoryGrid } from '@/hooks/useInventoryGrid';
 import { useProForma, productToProFormaItem } from '@/hooks/useProForma';
 import { ProFormaItem } from '@/types/proforma';
 import { Product, Client } from '@/types/erp';
@@ -12,7 +14,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { Plus, Trash2, Search, Package } from 'lucide-react';
@@ -27,10 +28,24 @@ export function ProFormaCreateDialog({ open, onOpenChange, onCreated }: ProForma
   const { t, language } = useTranslation();
   const p = t.proFormaUi;
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
-  const { currentBranch, apiBranchId } = useBranchScope();
+  const { currentBranch, apiBranchId, userBranch, allBranches } = useBranchScope();
   const { user } = useAuth();
-  const branchId = apiBranchId || currentBranch?.id;
-  const { products } = useProducts(branchId, { light: true, enabled: open });
+  // Same branch the till uses. "All branches" is not a shop, so it has no product list.
+  const operatingBranchId =
+    currentBranch?.id && currentBranch.id !== ALL_BRANCHES_SCOPE_ID
+      ? currentBranch.id
+      : '';
+  const branchId =
+    operatingBranchId
+    || apiBranchId
+    || userBranch?.id
+    || allBranches.find((b) => b.isMain)?.id
+    || allBranches[0]?.id;
+  const { rows: products, loading: productsLoading } = useInventoryGrid({
+    branchId,
+    consolidated: false,
+    enabled: open && !!branchId,
+  });
   const { clients } = useClients(!open);
   const { createProForma } = useProForma(branchId);
 
@@ -66,9 +81,10 @@ export function ProFormaCreateDialog({ open, onOpenChange, onCreated }: ProForma
 
   const filteredProducts = useMemo(() => {
     if (!productSearch) return products.slice(0, 20);
+    const q = productSearch.toLowerCase();
     return products.filter((product) =>
-      product.name.toLowerCase().includes(productSearch.toLowerCase())
-      || product.sku.toLowerCase().includes(productSearch.toLowerCase()),
+      String(product.name || '').toLowerCase().includes(q)
+      || String(product.sku || '').toLowerCase().includes(q),
     ).slice(0, 20);
   }, [products, productSearch]);
 
@@ -293,8 +309,16 @@ export function ProFormaCreateDialog({ open, onOpenChange, onCreated }: ProForma
                     <CardTitle className="text-sm">{p.availableProducts}</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ScrollArea className="h-[250px]">
+                    <div className="h-[250px] overflow-y-auto">
                       <div className="space-y-2">
+                        {productsLoading && filteredProducts.length === 0 ? (
+                          <p className="text-sm text-muted-foreground px-1 py-2">{t.common.loading}</p>
+                        ) : null}
+                        {!productsLoading && filteredProducts.length === 0 ? (
+                          <p className="text-sm text-muted-foreground px-1 py-2">
+                            {branchId ? t.posUi.noProductsForBranch : t.posUi.selectBranchFirst}
+                          </p>
+                        ) : null}
                         {filteredProducts.map((product) => (
                           <div
                             key={product.id}
@@ -314,7 +338,7 @@ export function ProFormaCreateDialog({ open, onOpenChange, onCreated }: ProForma
                           </div>
                         ))}
                       </div>
-                    </ScrollArea>
+                    </div>
                   </CardContent>
                 </Card>
 

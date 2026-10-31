@@ -6,11 +6,18 @@
  * Allows: localhost, 127.0.0.1, 192.168.x.x, 10.x.x.x, 172.16-31.x.x,
  * Tailscale 100.64-127.x.x (CGNAT), Electron file://
  */
+function isScreenFile(req) {
+  const path = String(req.path || '');
+  return path === '/app' || path.startsWith('/app/') || path === '/favicon.png' || path === '/favicon.ico';
+}
+
 function lanCors(req, res, next) {
   const origin = req.headers.origin || '';
   const allowed = isAllowedOrigin(origin) || origin === 'null';
+  // The login page must always load. A refused stylesheet or script is a blank window.
+  const screen = isScreenFile(req);
 
-  if (allowed || !origin) {
+  if (allowed || !origin || screen) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Filename, X-Request-Id');
