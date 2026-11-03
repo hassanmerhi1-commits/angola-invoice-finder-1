@@ -2174,9 +2174,15 @@ function mapPurchaseOrder(order: any): PurchaseOrder {
   };
 }
 
-export function usePurchaseOrders(branchId?: string) {
+export function usePurchaseOrders(
+  branchId?: string,
+  opts?: { enabled?: boolean; dateFrom?: string; dateTo?: string },
+) {
   const { t } = useTranslation();
-  const cacheKey = `purchaseOrders:${branchId ?? 'all'}`;
+  const enabled = opts?.enabled !== false;
+  const dateFrom = opts?.dateFrom || '';
+  const dateTo = opts?.dateTo || '';
+  const cacheKey = `purchaseOrders:${branchId ?? 'all'}${dateFrom || dateTo ? `:${dateFrom}:${dateTo}` : ''}`;
   const [orders, setOrders] = useState<PurchaseOrder[]>(
     () => getCachedList<PurchaseOrder[]>(cacheKey) ?? [],
   );
@@ -2187,7 +2193,10 @@ export function usePurchaseOrders(branchId?: string) {
     setIsLoading(true);
     try {
       const data = await apiFallback<any[]>(
-        () => api.purchaseOrders.list(branchId),
+        () => api.purchaseOrders.list(branchId, undefined, {
+          dateFrom: dateFrom || undefined,
+          dateTo: dateTo || undefined,
+        }),
         () => storage.getPurchaseOrders(branchId)
       );
       const mapped = Array.isArray(data) ? data.map(mapPurchaseOrder) : [];
@@ -2199,18 +2208,18 @@ export function usePurchaseOrders(branchId?: string) {
     } finally {
       setIsLoading(false);
     }
-  }, [branchId, cacheKey]);
+  }, [branchId, cacheKey, dateFrom, dateTo]);
 
-  useEffect(() => { refreshOrders(); }, [refreshOrders]);
+  useEffect(() => { if (enabled) void refreshOrders(); }, [refreshOrders, enabled]);
 
   useEffect(() => {
     const onRefresh = (event: Event) => {
       const table = (event as CustomEvent<{ table?: string }>).detail?.table;
-      if (table === 'purchase_orders') void refreshOrders();
+      if (table === 'purchase_orders' && enabled) void refreshOrders();
     };
     window.addEventListener(TABLE_REFRESH_EVENT, onRefresh);
     return () => window.removeEventListener(TABLE_REFRESH_EVENT, onRefresh);
-  }, [refreshOrders]);
+  }, [refreshOrders, enabled]);
 
   const createOrder = useCallback(async (
     supplierId: string, branchId: string, items: PurchaseOrderItem[],

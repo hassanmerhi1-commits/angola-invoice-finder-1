@@ -35,6 +35,22 @@ module.exports = function(broadcastTable) {
         query += ' WHERE branch_id = $1';
         params.push(branchId);
       }
+      const dateFrom = String(req.query.dateFrom || '').slice(0, 10);
+      const dateTo = String(req.query.dateTo || '').slice(0, 10);
+      const dayExpr = db.engine === 'postgres'
+        ? `(created_at AT TIME ZONE 'Africa/Luanda')::date`
+        : `date(created_at)`;
+      const addBound = (sqlOp, value) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+        const n = params.length + 1;
+        const predicate = db.engine === 'postgres'
+          ? `${dayExpr} ${sqlOp} $${n}::date`
+          : `${dayExpr} ${sqlOp} $${n}`;
+        query += query.includes(' WHERE ') ? ` AND ${predicate}` : ` WHERE ${predicate}`;
+        params.push(value);
+      };
+      addBound('>=', dateFrom);
+      addBound('<=', dateTo);
       query += skuKey ? ' ORDER BY created_at DESC LIMIT 80' : ' ORDER BY created_at DESC';
       const result = await db.query(query, params);
       const orders = result.rows || [];

@@ -6279,6 +6279,15 @@ export const pt: TranslationKeys = {
     resetPgcConfirm: "Isto substitui todo o plano de contas pelo PGC de Angola (novo com IVA). As contas que não constam do PGC são removidas (as que não têm lançamentos são eliminadas; as restantes são desativadas). Continuar?",
     resetPgcSuccess: "Plano de contas reposto para o PGC de Angola.",
     resetPgcError: "Falha ao repor o plano de contas.",
+    templateExport: "Guardar modelo",
+    templateExportTooltip: "Descarregar este plano: só as contas, sem saldos e sem lançamentos",
+    templateExported: "Modelo do plano guardado. O ficheiro não leva saldos nem lançamentos.",
+    templateImport: "Carregar modelo",
+    templateImportTooltip: "Inserir estas contas neste servidor. Saldos e lançamentos ficam como estão.",
+    templateImportConfirm: "Carregar este plano neste servidor? Contas novas entram com saldo zero. Contas que já existem mantêm saldos e lançamentos; o nome e o lugar na árvore passam a ser os do ficheiro. Clientes, facturas e lançamentos não são copiados.",
+    templateImported: "{inserted} contas adicionadas, {updated} actualizadas.",
+    templateImportError: "Não foi possível carregar o modelo do plano.",
+    templateBadFile: "Este ficheiro não é um modelo de plano NEXOR.",
 
     searchPlaceholder: "Pesquisar conta...",
 

@@ -6277,6 +6277,15 @@ export const en = {
     resetPgcConfirm: "This replaces the entire chart of accounts with the Angola PGC (novo com IVA). Accounts not in the PGC are removed (those without postings are deleted; the rest are deactivated). Continue?",
     resetPgcSuccess: "Chart of accounts reset to the Angola PGC.",
     resetPgcError: "Failed to reset the chart of accounts.",
+    templateExport: "Save template",
+    templateExportTooltip: "Download this chart: accounts only, no balances and no journals",
+    templateExported: "Chart template saved. The file has no balances and no journals.",
+    templateImport: "Load template",
+    templateImportTooltip: "Insert these accounts on this server. Balances and journals stay as they are.",
+    templateImportConfirm: "Load this chart onto this server? New accounts are added with a zero balance. Accounts that already exist keep their balances and journals; the name and place in the tree come from the file. Clients, invoices, and journals are not copied.",
+    templateImported: "{inserted} accounts added, {updated} updated.",
+    templateImportError: "Could not load the chart template.",
+    templateBadFile: "That file is not a NEXOR chart template.",
 
     searchPlaceholder: "Search account...",
 

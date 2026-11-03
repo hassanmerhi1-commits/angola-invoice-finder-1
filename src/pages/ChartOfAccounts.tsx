@@ -30,7 +30,7 @@ import { CLIENTS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import {
   Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
-  ChevronRight, ChevronDown, Printer, Download, Eye, RotateCcw, Plus, X, FolderPlus
+  ChevronRight, ChevronDown, Printer, Download, Upload, Eye, RotateCcw, Plus, X, FolderPlus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { readFocusId, readNexorSearchFocus, readAppSearchParams, scrollToNexorRow } from '@/lib/searchFocus';
@@ -920,6 +920,8 @@ export default function ChartOfAccounts() {
   };
 
   const [isReseeding, setIsReseeding] = useState(false);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const templateInputRef = useRef<HTMLInputElement>(null);
   const handleResetToPgc = async () => {
     if (!window.confirm(t.chartOfAccountsUi.resetPgcConfirm)) return;
     setIsReseeding(true);
@@ -932,6 +934,59 @@ export default function ChartOfAccounts() {
       toast.error(error instanceof Error ? error.message : t.chartOfAccountsUi.resetPgcError);
     } finally {
       setIsReseeding(false);
+    }
+  };
+
+  const handleExportTemplate = async () => {
+    setTemplateBusy(true);
+    try {
+      const response = await api.chartOfAccounts.exportTemplate();
+      if (response.error || !response.data) throw new Error(response.error || t.chartOfAccountsUi.templateImportError);
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'nexor-plano-de-contas.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success(t.chartOfAccountsUi.templateExported);
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : '';
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.templateImportError));
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
+
+  const handleImportTemplateFile = async (file: File) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      toast.error(t.chartOfAccountsUi.templateBadFile);
+      return;
+    }
+    const fileKind = parsed && typeof parsed === 'object' ? (parsed as { kind?: string }).kind : '';
+    if (fileKind !== 'nexor-coa-template') {
+      toast.error(t.chartOfAccountsUi.templateBadFile);
+      return;
+    }
+    if (!window.confirm(t.chartOfAccountsUi.templateImportConfirm)) return;
+    setTemplateBusy(true);
+    try {
+      const response = await api.chartOfAccounts.importTemplate(parsed);
+      if (response.error || !response.data) throw new Error(response.error || t.chartOfAccountsUi.templateImportError);
+      await refetch({ force: true, liveBalances: true });
+      toast.success(
+        t.chartOfAccountsUi.templateImported
+          .replace('{inserted}', String(response.data.inserted || 0))
+          .replace('{updated}', String(response.data.updated || 0)),
+      );
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : '';
+      toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.chartOfAccountsUi.templateImportError));
+    } finally {
+      setTemplateBusy(false);
     }
   };
 
@@ -1067,6 +1122,23 @@ export default function ChartOfAccounts() {
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={handleResetToPgc} disabled={isReseeding} title={t.chartOfAccountsUi.resetPgcTooltip}>
           <RotateCcw className={cn('w-3 h-3', isReseeding && 'animate-spin')} /> {t.chartOfAccountsUi.resetPgc}
         </Button>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => void handleExportTemplate()} disabled={templateBusy} title={t.chartOfAccountsUi.templateExportTooltip}>
+          <Download className="w-3 h-3" /> {t.chartOfAccountsUi.templateExport}
+        </Button>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => templateInputRef.current?.click()} disabled={templateBusy} title={t.chartOfAccountsUi.templateImportTooltip}>
+          <Upload className="w-3 h-3" /> {t.chartOfAccountsUi.templateImport}
+        </Button>
+        <input
+          ref={templateInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) void handleImportTemplateFile(file);
+          }}
+        />
         <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => void refetch({ force: true, liveBalances: true })}><RefreshCw className="w-3 h-3" /></Button>
         <div className="flex-1" />
         <div className="relative">

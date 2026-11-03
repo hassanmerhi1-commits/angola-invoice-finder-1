@@ -1,6 +1,8 @@
 // Chart of Accounts API routes
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../db');
+const { buildCoaTemplate, parseCoaTemplate } = require('../lib/coaTemplate');
 const { requirePermission } = require('../middleware/requirePermission');
 const { buildJournalBranchFilter } = require('../lib/branchIdMatch');
 const { attachUserBranchScope, resolveListBranchId } = require('../middleware/branchScope');
@@ -500,6 +502,103 @@ module.exports = function(broadcastTable) {
       if (client) {
         try { client.release(); } catch (_) { /* ignore */ }
       }
+    }
+  });
+
+  // Accounts only: codes, names, parents. No balances and no journals.
+  router.get('/template', requirePermission('accounting_view', 'admin_settings'), async (req, res) => {
+    try {
+      const result = await db.query(`
+        SELECT coa.code, coa.name, coa.description, coa.account_type, coa.account_nature,
+               coa.level, coa.is_header, coa.display_tab, parent.code AS parent_code
+        FROM chart_of_accounts coa
+        LEFT JOIN chart_of_accounts parent ON parent.id = coa.parent_id
+        WHERE coa.is_active = true
+        ORDER BY coa.level, coa.code
+      `);
+      res.json(buildCoaTemplate(result.rows || []));
+    } catch (error) {
+      console.error('[CHART OF ACCOUNTS template export]', error);
+      res.status(500).json({ error: 'Failed to export chart template' });
+    }
+  });
+
+  router.post('/template', requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const accounts = parseCoaTemplate(req.body);
+      const result = await runInTransaction(async (q) => {
+        let inserted = 0;
+        let updated = 0;
+        for (const account of accounts) {
+          const changed = await q.query(
+            `UPDATE chart_of_accounts
+               SET name = $1, description = $2, account_type = $3, account_nature = $4,
+                   level = $5, is_header = $6, display_tab = $7, is_active = true,
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE code = $8`,
+            [
+              account.name,
+              account.description,
+              account.account_type,
+              account.account_nature,
+              account.level,
+              account.is_header,
+              account.display_tab,
+              account.code,
+            ],
+          );
+          if (changed.rowCount) {
+            updated += 1;
+            continue;
+          }
+          await q.query(
+            `INSERT INTO chart_of_accounts
+               (id, code, name, description, account_type, account_nature, level, is_header,
+                is_active, opening_balance, current_balance, display_tab)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, 0, 0, $9)`,
+            [
+              crypto.randomUUID(),
+              account.code,
+              account.name,
+              account.description,
+              account.account_type,
+              account.account_nature,
+              account.level,
+              account.is_header,
+              account.display_tab,
+            ],
+          );
+          inserted += 1;
+        }
+
+        const idRows = await q.query('SELECT id, code FROM chart_of_accounts');
+        const idByCode = new Map((idRows.rows || []).map((row) => [String(row.code), row.id]));
+        const missingParents = [];
+        for (const account of accounts) {
+          const parentId = account.parent_code ? (idByCode.get(account.parent_code) || null) : null;
+          if (account.parent_code && !parentId) missingParents.push(account.code);
+          await q.query(
+            'UPDATE chart_of_accounts SET parent_id = $1 WHERE code = $2',
+            [parentId, account.code],
+          );
+        }
+        await q.query(`
+          UPDATE chart_of_accounts
+          SET children_count = (
+            SELECT COUNT(*) FROM chart_of_accounts child
+            WHERE child.parent_id = chart_of_accounts.id AND child.is_active = true
+          )
+        `);
+        return { inserted, updated, missingParents };
+      });
+      if (broadcastTable) {
+        try { await broadcastTable('chart_of_accounts'); } catch (_) { /* non-fatal */ }
+      }
+      res.json({ success: true, ...result });
+    } catch (error) {
+      const status = error.status || 500;
+      if (status >= 500) console.error('[CHART OF ACCOUNTS template import]', error);
+      res.status(status).json({ error: error.message || 'Failed to import chart template' });
     }
   });
 

@@ -1775,10 +1775,12 @@ export const api = {
 
   // Purchase Orders
   purchaseOrders: {
-    list: async (branchId?: string, sku?: string) => {
+    list: async (branchId?: string, sku?: string, range?: { dateFrom?: string; dateTo?: string }) => {
       const sp = new URLSearchParams();
       if (branchId) sp.set('branchId', branchId);
       if (sku) sp.set('sku', sku);
+      if (range?.dateFrom) sp.set('dateFrom', range.dateFrom);
+      if (range?.dateTo) sp.set('dateTo', range.dateTo);
       const qs = sp.toString();
       const apiResult = await apiFetch<any[]>(`/purchase-orders${qs ? `?${qs}` : ''}`);
       if (apiResult.data !== undefined || !isElectronMode()) return apiResult;
@@ -2128,6 +2130,18 @@ export const api = {
       '/chart-of-accounts/reseed',
       { method: 'POST' },
     ),
+    exportTemplate: () => apiFetch<{
+      schema: number;
+      kind: string;
+      exportedAt: string;
+      accounts: Array<Record<string, unknown>>;
+    }>('/chart-of-accounts/template'),
+    importTemplate: (file: unknown) => apiFetch<{
+      success: boolean;
+      inserted: number;
+      updated: number;
+      missingParents: string[];
+    }>('/chart-of-accounts/template', { method: 'POST', body: JSON.stringify(file) }),
     getLedger: async (
       id: string,
       startDate?: string,

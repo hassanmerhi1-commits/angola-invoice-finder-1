@@ -1303,6 +1303,25 @@ function readNexorPiNewFromHash(): string | null {
   }
 }
 
+function purchaseListYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Last calendar month through today. Older purchases load when From is moved back. */
+function purchaseListDefaultRange(now = new Date()): { from: string; to: string } {
+  return {
+    from: purchaseListYmd(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+    to: purchaseListYmd(now),
+  };
+}
+
+function purchaseListCacheKey(branchId: string | undefined, from: string, to: string): string {
+  return `purchaseInvoices:${branchId ?? 'all'}:${from}:${to}`;
+}
+
 // ═══════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════
@@ -1354,8 +1373,12 @@ export default function PurchaseInvoices() {
   const editingInvoiceRef = useRef<PurchaseInvoice | null>(null);
 
    // State
+  const purchaseRangeDefault = useMemo(() => purchaseListDefaultRange(), []);
+  const [filterDateFrom, setFilterDateFrom] = useState(purchaseRangeDefault.from);
+  const [filterDateTo, setFilterDateTo] = useState(purchaseRangeDefault.to);
+  const invoiceCacheKey = purchaseListCacheKey(listBranchId, filterDateFrom, filterDateTo);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>(
-    () => getCachedList<PurchaseInvoice[]>(`purchaseInvoices:${listBranchId ?? 'all'}`) ?? [],
+    () => getCachedList<PurchaseInvoice[]>(invoiceCacheKey) ?? [],
   );
   const [mode, setMode] = useState<'list' | 'create' | 'view'>('list');
   const [searchTerm, setSearchTerm] = useState('');
@@ -1385,8 +1408,6 @@ export default function PurchaseInvoices() {
   const [listTab, setListTab] = useState<'faturas' | 'encomendas' | 'devolucoes'>('faturas');
   const [returnCount, setReturnCount] = useState(0);
   const [filterSupplier, setFilterSupplier] = useState('');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'draft' | 'confirmed' | 'cancelled'>('all');
   const [selectedListInvoiceId, setSelectedListInvoiceId] = useState<string | null>(null);
   const [gridFocusCell, setGridFocusCell] = useState<{ row: number; field: 'quantity' } | null>(null);
@@ -1527,8 +1548,13 @@ export default function PurchaseInvoices() {
     }
   }, [mode, poCreateOpen, supplierPickerOpen, showCreateSupplier, refreshSuppliers]);
 
-  // Purchase orders
-  const { orders, createOrder, approveOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(listBranchId);
+  // Orders carry every line. Load them for the Orders tab and the create form, on the same dates as the invoice list.
+  const ordersNeeded = listTab === 'encomendas' || mode === 'create' || poCreateOpen;
+  const { orders, createOrder, approveOrder, receiveOrder, cancelOrder, refreshOrders } = usePurchaseOrders(listBranchId, {
+    enabled: ordersNeeded,
+    dateFrom: filterDateFrom,
+    dateTo: filterDateTo,
+  });
 
   useEffect(() => {
     if (!poCreateOpen) {
@@ -1682,8 +1708,10 @@ export default function PurchaseInvoices() {
         setListLoadError(null);
         const includeId = String(opts?.includeInvoiceId || '').trim();
         let piInvoices = await getPurchaseInvoices(listBranchId, branches, {
-          // SEDE all-branch list: keep payload small — list omits lines_json already.
-          limit: listBranchId ? 100 : 80,
+          // A date window replaces the old "newest 100 of all time" download.
+          limit: 500,
+          dateFrom: filterDateFrom || undefined,
+          dateTo: filterDateTo || undefined,
         });
         if (includeId && !piInvoices.some((i) => i.id === includeId)) {
           const extra = await fetchPurchaseInvoiceFromServer(includeId);
@@ -1704,7 +1732,7 @@ export default function PurchaseInvoices() {
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
           );
         });
-        setCachedList(`purchaseInvoices:${listBranchId ?? 'all'}`, piInvoices);
+        setCachedList(invoiceCacheKey, piInvoices);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setListLoadError(msg);
@@ -1726,7 +1754,7 @@ export default function PurchaseInvoices() {
         loadInvoiceInFlightRef.current = null;
       }
     }
-  }, [listBranchId, branches, toast, t]);
+  }, [listBranchId, branches, toast, t, filterDateFrom, filterDateTo, invoiceCacheKey]);
 
   const scheduleLoadInvoiceList = useCallback((opts?: { includeInvoiceId?: string; delayMs?: number }) => {
     if (loadInvoiceListRef.current) clearTimeout(loadInvoiceListRef.current);
@@ -1742,10 +1770,10 @@ export default function PurchaseInvoices() {
     setInvoices((prev) => {
       const merged = [invoice, ...prev.filter((i) => i.id !== invoice.id)];
       merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setCachedList(`purchaseInvoices:${listBranchId ?? 'all'}`, merged);
+      setCachedList(invoiceCacheKey, merged);
       return merged;
     });
-  }, [listBranchId]);
+  }, [listBranchId, invoiceCacheKey]);
 
   const refreshReturnMetrics = useCallback(async () => {
     try {
@@ -1779,15 +1807,7 @@ export default function PurchaseInvoices() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const returns = await getSupplierReturns(listBranchId);
-        setReturnCount(returns.length);
-      } catch {
-        setReturnCount(0);
-      }
-    })();
-    const cacheKey = `purchaseInvoices:${listBranchId ?? 'all'}`;
+    const cacheKey = invoiceCacheKey;
     // Invoices-style SWR: paint this scope's cache immediately, then revalidate.
     const cached = getCachedList<PurchaseInvoice[]>(cacheKey) ?? [];
     setInvoices(cached);
@@ -1797,13 +1817,20 @@ export default function PurchaseInvoices() {
       return;
     }
     scheduleLoadInvoiceList({ delayMs: cached.length > 0 ? 100 : 0 });
-  }, [listBranchId, scheduleLoadInvoiceList]);
+  }, [listBranchId, invoiceCacheKey, scheduleLoadInvoiceList]);
 
   useEffect(() => {
     if (listTab !== 'devolucoes') return;
-    void syncAllPurchaseInvoiceReturnStatuses(listBranchId).then(() => {
+    void (async () => {
+      try {
+        await syncAllPurchaseInvoiceReturnStatuses(listBranchId);
+        const returns = await getSupplierReturns(listBranchId);
+        setReturnCount(returns.length);
+      } catch {
+        setReturnCount(0);
+      }
       scheduleLoadInvoiceList();
-    });
+    })();
   }, [listTab, listBranchId, scheduleLoadInvoiceList]);
 
   useTableRefreshListener('purchase_invoices', () => {
@@ -3544,8 +3571,8 @@ export default function PurchaseInvoices() {
                   </SelectContent>
                 </Select>
               </div>
-              {(filterSupplier && filterSupplier !== '__all__' || filterDateFrom || filterDateTo || filterStatus !== 'all') && (
-                <Button variant="ghost" size="sm" onClick={() => { setFilterSupplier('__all__'); setFilterDateFrom(''); setFilterDateTo(''); setFilterStatus('all'); }}>
+              {(filterSupplier && filterSupplier !== '__all__' || filterDateFrom !== purchaseRangeDefault.from || filterDateTo !== purchaseRangeDefault.to || filterStatus !== 'all') && (
+                <Button variant="ghost" size="sm" onClick={() => { setFilterSupplier('__all__'); setFilterDateFrom(purchaseRangeDefault.from); setFilterDateTo(purchaseRangeDefault.to); setFilterStatus('all'); }}>
                   <X className="h-4 w-4 mr-1" /> {t.purchaseInvoicesUi.clearFilters}
                 </Button>
               )}
