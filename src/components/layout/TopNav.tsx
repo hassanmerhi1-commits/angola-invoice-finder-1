@@ -240,6 +240,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
         { label: 'separator' },
         { label: t.topNav.accounting.receivables, icon: ArrowDownCircle, path: '/receivables' },
         { label: t.topNav.accounting.payables, icon: ArrowUpCircle, path: '/payables' },
+        { label: t.nav.caixa, icon: Wallet, path: '/caixa' },
         { label: 'separator' },
         { label: t.topNav.accounting.payment, icon: DollarSign, path: '/expenses' },
         { label: t.topNav.accounting.chequePayment, icon: FileText, path: '/payments', state: { openPayment: true, paymentMethod: 'cheque' } },
