@@ -530,12 +530,9 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const assertWalkInIdentity = (): boolean => {
     if (!isSalesInvoice || entityId) return true;
-    if (!entityName.trim()) {
-      toast.error(t.documentFormUi.walkInNameRequired);
-      walkInNameRef.current?.focus();
-      return false;
-    }
-    if (!validateNIF(entityNif)) {
+    // Empty NIF is a final consumer (same as the till). A partial NIF is not.
+    const nif = entityNif.trim();
+    if (nif && !validateNIF(nif)) {
       toast.error(t.documentFormUi.walkInNifRequired);
       return false;
     }
@@ -1488,7 +1485,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                           >
                             <span className="truncate font-medium">{t.documentFormUi.quickSale}</span>
                             <span className="shrink-0 text-xs text-muted-foreground">
-                              {t.common.name} + {t.documentFormUi.nif}
+                              {t.documentFormUi.quickSaleOptional}
                             </span>
                           </button>
                         )}
@@ -1593,7 +1590,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                 ) : (
                   <div className="mt-1 grid grid-cols-2 gap-1.5">
                     <div className="space-y-0.5">
-                      <Label className="text-xs">{t.common.name} *</Label>
+                      <Label className="text-xs">{t.common.name}</Label>
                       <Input
                         ref={walkInNameRef}
                         value={entityName}
@@ -1607,7 +1604,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                       />
                     </div>
                     <div className="space-y-0.5">
-                      <Label className="text-xs">{t.documentFormUi.nif} *</Label>
+                      <Label className="text-xs">{t.documentFormUi.nif}</Label>
                       <Input
                         value={entityNif}
                         onChange={(e) => setEntityNif(e.target.value.replace(/\D/g, '').slice(0, 10))}
