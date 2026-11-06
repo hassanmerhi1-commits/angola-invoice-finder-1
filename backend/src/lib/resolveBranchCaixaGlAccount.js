@@ -218,7 +218,37 @@ async function resolveByBranchName(client, branchName, branchCode) {
  * @param {{ branchId?: string, branchName?: string, branchCode?: string, saleId?: string }} scope
  * @returns {Promise<string|null>} Branch 45x code, or null when none exists
  */
+async function resolveCaixaRegisterGl(client, caixaId) {
+  const id = String(caixaId || '').trim();
+  if (!id) return null;
+  try {
+    const result = await queryClient(
+      client,
+      'SELECT gl_account_code FROM caixas WHERE id = $1 LIMIT 1',
+      [id],
+    );
+    const code = String(result.rows[0]?.gl_account_code || '').trim();
+    if (!code) return null;
+    const account = await queryClient(
+      client,
+      `SELECT code FROM chart_of_accounts
+       WHERE code = $1
+         AND (is_active = true OR is_active = 1)
+         AND (is_header = false OR is_header = 0 OR is_header IS NULL)
+       LIMIT 1`,
+      [code],
+    );
+    return account.rows[0]?.code || null;
+  } catch (err) {
+    console.warn('[branchCaixa] caixa gl:', err.message);
+    return null;
+  }
+}
+
 async function resolveBranchCaixaGlAccountCode(client, scope = {}) {
+  const fromRegister = await resolveCaixaRegisterGl(client, scope.caixaId);
+  if (fromRegister) return fromRegister;
+
   const branchId = scope.branchId != null ? String(scope.branchId).trim() : '';
   let branchName = scope.branchName != null ? String(scope.branchName).trim() : '';
   let branchCode = scope.branchCode != null ? String(scope.branchCode).trim() : '';

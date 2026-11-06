@@ -36,6 +36,10 @@ const {
 const { randomUUID } = require('crypto');
 const { normalizeSqlDate } = require('./lib/dateSql');
 const { requireBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
+const {
+  resolveBranchSalesAccountCode,
+  resolveBranchPurchaseAccountCode,
+} = require('./lib/branchPostingAccounts');
 const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
 const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
 const { runInSavepoint, runOptionalInSavepoint } = require('./lib/pgSavepoint');
@@ -171,13 +175,14 @@ function buildPurchaseReceiveGlLines({
   supplierAccountCode,
   orderNumber,
   supplierName,
+  goodsAccountCode,
 }) {
   const goods = roundMoney((Number(subtotal) || 0) + (Number(totalLandingCosts) || 0));
   const tax = roundMoney(Number(taxAmount) || 0);
   const lines = [];
   if (goods > 0) {
     lines.push({
-      accountCode: ACC.PURCHASES_MERCHANDISE,
+      accountCode: goodsAccountCode || ACC.PURCHASES_MERCHANDISE,
       description: `Mercadoria ${orderNumber}`,
       debit: goods,
       credit: 0,
@@ -2674,6 +2679,7 @@ async function processSale(client, saleData) {
       branchId,
       branchName: branchNameForGl,
       saleId,
+      caixaId,
     });
   } else {
     // Card / transfer / multibanco — per-bank leaf when known, else branch primary bank, else 431.
@@ -2684,9 +2690,10 @@ async function processSale(client, saleData) {
     });
   }
 
+  const salesAccountCode = await resolveBranchSalesAccountCode(client, branchId);
   const revenueLines = [
     { accountCode: debitAccountCode, description: `Venda ${invoiceNumber}`, debit: saleAmounts.total, credit: 0 },
-    { accountCode: ACC.SALES, description: `Receita ${invoiceNumber}`, debit: 0, credit: saleAmounts.netSales },
+    { accountCode: salesAccountCode, description: `Receita ${invoiceNumber}`, debit: 0, credit: saleAmounts.netSales },
   ];
   if (saleAmounts.tax > 0) {
     revenueLines.push({ accountCode: ACC.IVA_LIQUIDATED, description: `IVA ${invoiceNumber}`, debit: 0, credit: saleAmounts.tax });
@@ -3023,6 +3030,7 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
   const subtotal = parseFloat(order.subtotal || 0);
   const taxAmount = parseFloat(order.tax_amount || 0);
   const supplierAccountCode = await getEntityAccountCode(client, 'supplier', order.supplier_id, order.supplier_name);
+  const purchaseAccountCode = await resolveBranchPurchaseAccountCode(client, order.branch_id);
   const journalLines = buildPurchaseReceiveGlLines({
     subtotal,
     taxAmount,
@@ -3030,6 +3038,7 @@ async function processPurchaseReceive(client, orderId, receivedQuantities, recei
     supplierAccountCode,
     orderNumber: order.order_number,
     supplierName: order.supplier_name,
+    goodsAccountCode: purchaseAccountCode,
   });
 
   console.log(`[TX ENGINE] Journal: subtotal=${subtotal}, landedCosts=${totalLandingCosts}, tax=${taxAmount}, total=${subtotal + totalLandingCosts + taxAmount}`);
@@ -3492,7 +3501,10 @@ async function processPayment(client, paymentData) {
 
   let cashAccountCode;
   if (wantsCaixa) {
-    cashAccountCode = await requireBranchCaixaGlAccountCode(client, { branchId: treasuryBranchId });
+    cashAccountCode = await requireBranchCaixaGlAccountCode(client, {
+      branchId: treasuryBranchId,
+      caixaId: resolvedCaixaId,
+    });
   } else {
     cashAccountCode = await resolveBankGlForTreasury(client, {
       bankAccountId: bankAccountId || bankAccount,

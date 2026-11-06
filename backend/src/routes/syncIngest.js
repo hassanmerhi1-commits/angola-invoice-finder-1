@@ -16,6 +16,7 @@ const { fetchMasterDataForBranch } = require('../sync/masterData');
 const { buildDownPackage, verifyUpPackage } = require('../sync/usbPackage');
 const { logSyncAudit, fetchRecentAudit } = require('../sync/auditLog');
 const { applyHqIngestEvent, findHqIngestReceipt } = require('../sync/hqIngestMirror');
+const { mirrorCreditNoteEvent, mirrorDebitNoteEvent } = require('../sync/fiscalNoteMirror');
 const { buildConsolidationReport } = require('../sync/consolidation');
 const {
   fetchDeadLetterEvents,
@@ -106,6 +107,10 @@ async function applyEvent(event) {
   switch (event.event_type) {
     case 'sale.created':
       return mirrorSaleEvent(payload);
+    case 'credit_note.created':
+      return mirrorCreditNoteEvent(db.query.bind(db), payload);
+    case 'debit_note.created':
+      return mirrorDebitNoteEvent(db.query.bind(db), payload);
     case 'payment.created':
       return mirrorPaymentEvent(payload);
     case 'purchase_invoice.created':
@@ -235,6 +240,8 @@ module.exports = function syncIngestRouter(broadcastTable) {
       }
       if (broadcastTable) {
         await broadcastTable('sales');
+        await broadcastTable('credit_notes');
+        await broadcastTable('debit_notes');
         await broadcastTable('payments');
         await broadcastTable('purchase_invoices');
         await broadcastTable('products');

@@ -1,6 +1,7 @@
-// AUTO-GENERATED from "PGC (novo com IVA).xlsx" — do not edit by hand.
-// Angola Plano Geral de Contabilidade (Decreto n.º 82/2001). Codes use no-dot numbering
-// (main = 11, first sub = 111). 329 accounts.
+// Company chart of accounts. Built from the Angola PGC (novo com IVA)
+// plus the NEXOR chart exported on 2026-11-06.
+// The test account 37461001 is omitted. 21220001 is the Soyo purchases leaf.
+// 452 accounts.
 
 export type PgcSeedAccount = {
   code: string;
@@ -23,12 +24,570 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": null
   },
   {
+    "code": "12",
+    "name": "IMOBILIZAÇÕES INCORPÓREAS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "13",
+    "name": "INVESTIMENTOS FINANCEIROS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "14",
+    "name": "IMOBILIZAÇÕES EM CURSO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "18",
+    "name": "AMORTIZAÇÕES ACUMULADAS",
+    "account_type": "asset",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "19",
+    "name": "PROVISÕES PARA INVESTIMENTOS FINANCEIROS",
+    "account_type": "asset",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "21",
+    "name": "COMPRAS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "22",
+    "name": "MATÉRIAS-PRIMAS, SUBSIDIÁRIAS E DE CONSUMO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "23",
+    "name": "PRODUTOS E TRABALHOS EM CURSO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "24",
+    "name": "PRODUTOS ACABADOS E INTERMÉDIOS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "25",
+    "name": "SUBPRODUTOS, DESPERDÍCIOS, RESÍDUOS E REFUGOS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "26",
+    "name": "MERCADORIAS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "27",
+    "name": "MATÉRIAS, MERCADORIAS E OUTROS MATERIAIS EM TRÂNSITO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "28",
+    "name": "ADIANTAMENTOS POR CONTA DE COMPRAS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "29",
+    "name": "PROVISÃO PARA DEPRECIAÇÃO DE EXISTÊNCIAS",
+    "account_type": "asset",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "31",
+    "name": "CLIENTES",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "32",
+    "name": "FORNECEDORES",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "33",
+    "name": "EMPRÉSTIMOS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "34",
+    "name": "ESTADO",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "35",
+    "name": "ENTIDADES PARTICIPANTES E PARTICIPADAS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "36",
+    "name": "PESSOAL",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "37",
+    "name": "OUTROS VALORES A RECEBER E A PAGAR",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "38",
+    "name": "PROVISÕES PARA COBRANÇAS DUVIDOSAS",
+    "account_type": "asset",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "39",
+    "name": "PROVISÕES PARA OUTROS RISCOS E ENCARGOS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "41",
+    "name": "TÍTULOS NEGOCIÁVEIS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "42",
+    "name": "DEPÓSITOS A PRAZO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "43",
+    "name": "DEPÓSITOS À ORDEM",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "44",
+    "name": "OUTROS DEPÓSITOS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "45",
+    "name": "CAIXA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "51",
+    "name": "CAPITAL",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "52",
+    "name": "ACÇÕES/QUOTAS PRÓPRIAS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "53",
+    "name": "PRÉMIOS DE EMISSÃO",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "54",
+    "name": "PRESTAÇÕES SUPLEMENTARES",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "55",
+    "name": "RESERVAS LEGAIS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "56",
+    "name": "RESERVAS DE REAVALIAÇÃO",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "57",
+    "name": "RESERVAS COM FINS ESPECIAIS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "58",
+    "name": "RESERVAS LIVRES",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "61",
+    "name": "VENDAS",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "62",
+    "name": "PRESTAÇÕES DE SERVIÇOS",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "63",
+    "name": "OUTROS PROVEITOS OPERACIONAIS",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "64",
+    "name": "VARIAÇÃO NOS INVENTÁRIOS DE PRODUTOS ACABADOS E DE PRODUÇÃO EM CURSO",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "65",
+    "name": "TRABALHOS PARA A PRÓPRIA EMPRESA",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "66",
+    "name": "PROVEITOS E GANHOS FINANCEIROS GERAIS",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "67",
+    "name": "PROVEITOS E GANHOS FINANCEIROS EM SUBSIDIÁRIAS E ASSOCIADAS",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "68",
+    "name": "OUTROS PROVEITOS E GANHOS NÃO OPERACIONAIS",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "69",
+    "name": "PROVEITOS E GANHOS EXTRAORDINÁRIOS",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "71",
+    "name": "CUSTO DAS EXISTÊNCIAS VENDIDAS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "72",
+    "name": "CUSTOS COM O PESSOAL",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "73",
+    "name": "AMORTIZAÇÕES DO EXERCÍCIO",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "75",
+    "name": "OUTROS CUSTOS E PERDAS OPERACIONAIS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "76",
+    "name": "CUSTOS E PERDAS FINANCEIROS GERAIS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "77",
+    "name": "CUSTOS E PERDAS FINANCEIROS EM FILIAIS E ASSOCIADAS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "78",
+    "name": "OUTROS CUSTOS E PERDAS NÃO OPERACIONAIS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "79",
+    "name": "CUSTOS E PERDAS EXTRAORDINÁRIOS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "81",
+    "name": "RESULTADOS TRANSITADOS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "82",
+    "name": "RESULTADOS OPERACIONAIS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "83",
+    "name": "RESULTADOS FINANCEIROS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "84",
+    "name": "RESULTADOS FINANCEIROS EM FILIAIS E ASSOCIADAS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "85",
+    "name": "RESULTADOS NÃO OPERACIONAIS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "86",
+    "name": "RESULTADOS EXTRAORDINÁRIOS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "87",
+    "name": "IMPOSTOS SOBRE OS LUCROS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "88",
+    "name": "RESULTADO LÍQUIDO DO EXERCÍCIO",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
+    "code": "89",
+    "name": "DIVIDENDOS ANTECIPADOS",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 1,
+    "is_header": true,
+    "parent_code": null
+  },
+  {
     "code": "111",
     "name": "Terreno e recursos naturais",
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "11"
   },
   {
@@ -37,7 +596,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "11"
   },
   {
@@ -46,7 +605,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "11"
   },
   {
@@ -55,7 +614,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "11"
   },
   {
@@ -64,7 +623,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "11"
   },
   {
@@ -84,15 +643,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "11"
-  },
-  {
-    "code": "12",
-    "name": "IMOBILIZAÇÕES INCORPÓREAS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "121",
@@ -138,15 +688,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "12"
-  },
-  {
-    "code": "13",
-    "name": "INVESTIMENTOS FINANCEIROS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "131",
@@ -203,15 +744,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "13"
   },
   {
-    "code": "14",
-    "name": "IMOBILIZAÇÕES EM CURSO",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "141",
     "name": "Obra em curso",
     "account_type": "asset",
@@ -257,15 +789,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "14"
   },
   {
-    "code": "18",
-    "name": "AMORTIZAÇÕES ACUMULADAS",
-    "account_type": "asset",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "181",
     "name": "Imobilizações corpóreas",
     "account_type": "asset",
@@ -293,15 +816,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "18"
   },
   {
-    "code": "19",
-    "name": "PROVISÕES PARA INVESTIMENTOS FINANCEIROS",
-    "account_type": "asset",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "191",
     "name": "Empresas subsidiárias",
     "account_type": "asset",
@@ -320,15 +834,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "19"
   },
   {
-    "code": "21",
-    "name": "COMPRAS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "211",
     "name": "Matérias-primas, subsidiárias e de consumo",
     "account_type": "asset",
@@ -343,7 +848,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "21"
   },
   {
@@ -352,7 +857,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "21"
   },
   {
@@ -361,44 +866,8 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "21"
-  },
-  {
-    "code": "22",
-    "name": "MATÉRIAS-PRIMAS, SUBSIDIÁRIAS E DE CONSUMO",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "23",
-    "name": "PRODUTOS E TRABALHOS EM CURSO",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "24",
-    "name": "PRODUTOS ACABADOS E INTERMÉDIOS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "25",
-    "name": "SUBPRODUTOS, DESPERDÍCIOS, RESÍDUOS E REFUGOS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "251",
@@ -419,15 +888,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "25"
   },
   {
-    "code": "26",
-    "name": "MERCADORIAS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "261",
     "name": "Mercadorias em armazém",
     "account_type": "asset",
@@ -435,24 +895,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "26"
-  },
-  {
-    "code": "27",
-    "name": "MATÉRIAS, MERCADORIAS E OUTROS MATERIAIS EM TRÂNSITO",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "28",
-    "name": "ADIANTAMENTOS POR CONTA DE COMPRAS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "281",
@@ -471,15 +913,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "28"
-  },
-  {
-    "code": "29",
-    "name": "PROVISÃO PARA DEPRECIAÇÃO DE EXISTÊNCIAS",
-    "account_type": "asset",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "292",
@@ -527,21 +960,12 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "29"
   },
   {
-    "code": "31",
-    "name": "CLIENTES",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "311",
     "name": "Clientes - correntes",
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "31"
   },
   {
@@ -581,21 +1005,12 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "31"
   },
   {
-    "code": "32",
-    "name": "FORNECEDORES",
-    "account_type": "liability",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "321",
     "name": "Fornecedores - correntes",
     "account_type": "liability",
     "account_nature": "credit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "32"
   },
   {
@@ -624,15 +1039,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "32"
-  },
-  {
-    "code": "33",
-    "name": "EMPRÉSTIMOS",
-    "account_type": "liability",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "331",
@@ -669,15 +1075,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "33"
-  },
-  {
-    "code": "34",
-    "name": "ESTADO",
-    "account_type": "liability",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "341",
@@ -725,24 +1122,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "34"
   },
   {
-    "code": "3451",
-    "name": "IVA dedutível",
-    "account_type": "liability",
-    "account_nature": "debit",
-    "level": 3,
-    "is_header": false,
-    "parent_code": "345"
-  },
-  {
-    "code": "3452",
-    "name": "IVA liquidado",
-    "account_type": "liability",
-    "account_nature": "credit",
-    "level": 3,
-    "is_header": false,
-    "parent_code": "345"
-  },
-  {
     "code": "346",
     "name": "Certificado de crédito fiscal a compensar",
     "account_type": "liability",
@@ -770,31 +1149,13 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "34"
   },
   {
-    "code": "35",
-    "name": "ENTIDADES PARTICIPANTES E PARTICIPADAS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "351",
     "name": "Entidades participantes",
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
-    "parent_code": "35"
-  },
-  {
-    "code": "36",
-    "name": "PESSOAL",
-    "account_type": "liability",
-    "account_nature": "credit",
-    "level": 1,
     "is_header": true,
-    "parent_code": null
+    "parent_code": "35"
   },
   {
     "code": "361",
@@ -802,7 +1163,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "liability",
     "account_nature": "credit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "36"
   },
   {
@@ -811,7 +1172,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "liability",
     "account_nature": "credit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "36"
   },
   {
@@ -831,15 +1192,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "36"
-  },
-  {
-    "code": "37",
-    "name": "OUTROS VALORES A RECEBER E A PAGAR",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "371",
@@ -874,7 +1226,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "37"
   },
   {
@@ -901,7 +1253,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "37"
   },
   {
@@ -912,15 +1264,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "37"
-  },
-  {
-    "code": "38",
-    "name": "PROVISÕES PARA COBRANÇAS DUVIDOSAS",
-    "account_type": "asset",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "381",
@@ -968,15 +1311,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "38"
   },
   {
-    "code": "39",
-    "name": "PROVISÕES PARA OUTROS RISCOS E ENCARGOS",
-    "account_type": "liability",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "391",
     "name": "Provisões para pensões",
     "account_type": "liability",
@@ -1022,15 +1356,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "39"
   },
   {
-    "code": "41",
-    "name": "TÍTULOS NEGOCIÁVEIS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "411",
     "name": "Acções",
     "account_type": "asset",
@@ -1058,15 +1383,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "41"
   },
   {
-    "code": "42",
-    "name": "DEPÓSITOS A PRAZO",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "421",
     "name": "Moeda nacional",
     "account_type": "asset",
@@ -1085,21 +1401,12 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "42"
   },
   {
-    "code": "43",
-    "name": "DEPÓSITOS À ORDEM",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "431",
     "name": "Moeda nacional",
     "account_type": "asset",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "43"
   },
   {
@@ -1110,15 +1417,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "43"
-  },
-  {
-    "code": "44",
-    "name": "OUTROS DEPÓSITOS",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "441",
@@ -1137,15 +1435,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "44"
-  },
-  {
-    "code": "45",
-    "name": "CAIXA",
-    "account_type": "asset",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "451",
@@ -1175,24 +1464,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "45"
   },
   {
-    "code": "51",
-    "name": "CAPITAL",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "52",
-    "name": "ACÇÕES/QUOTAS PRÓPRIAS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "521",
     "name": "Valor nominal",
     "account_type": "equity",
@@ -1220,42 +1491,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "52"
   },
   {
-    "code": "53",
-    "name": "PRÉMIOS DE EMISSÃO",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "54",
-    "name": "PRESTAÇÕES SUPLEMENTARES",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "55",
-    "name": "RESERVAS LEGAIS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "56",
-    "name": "RESERVAS DE REAVALIAÇÃO",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "561",
     "name": "Legais",
     "account_type": "equity",
@@ -1272,33 +1507,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "56"
-  },
-  {
-    "code": "57",
-    "name": "RESERVAS COM FINS ESPECIAIS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "58",
-    "name": "RESERVAS LIVRES",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "61",
-    "name": "VENDAS",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "611",
@@ -1324,7 +1532,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "revenue",
     "account_nature": "credit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "61"
   },
   {
@@ -1351,7 +1559,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "revenue",
     "account_nature": "credit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "61"
   },
   {
@@ -1371,15 +1579,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "61"
-  },
-  {
-    "code": "62",
-    "name": "PRESTAÇÕES DE SERVIÇOS",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "621",
@@ -1416,15 +1615,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "62"
-  },
-  {
-    "code": "63",
-    "name": "OUTROS PROVEITOS OPERACIONAIS",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "631",
@@ -1490,15 +1680,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "63"
   },
   {
-    "code": "64",
-    "name": "VARIAÇÃO NOS INVENTÁRIOS DE PRODUTOS ACABADOS E DE PRODUÇÃO EM CURSO",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "641",
     "name": "Produtos e trabalhos em curso",
     "account_type": "revenue",
@@ -1535,15 +1716,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "64"
   },
   {
-    "code": "65",
-    "name": "TRABALHOS PARA A PRÓPRIA EMPRESA",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "651",
     "name": "Para imobilizado",
     "account_type": "revenue",
@@ -1569,15 +1741,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "65"
-  },
-  {
-    "code": "66",
-    "name": "PROVEITOS E GANHOS FINANCEIROS GERAIS",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "661",
@@ -1643,15 +1806,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "66"
   },
   {
-    "code": "67",
-    "name": "PROVEITOS E GANHOS FINANCEIROS EM SUBSIDIÁRIAS E ASSOCIADAS",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "671",
     "name": "Rendimento de participações de capital",
     "account_type": "revenue",
@@ -1670,35 +1824,8 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "67"
   },
   {
-    "code": "68",
-    "name": "OUTROS PROVEITOS E GANHOS NÃO OPERACIONAIS",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "681",
     "name": "Redução de provisões",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "68"
-  },
-  {
-    "code": "6810",
-    "name": "Correcções relativas a exercícios anteriores",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "68"
-  },
-  {
-    "code": "6811",
-    "name": "Outros ganhos e perdas não operacionais",
     "account_type": "revenue",
     "account_nature": "credit",
     "level": 2,
@@ -1758,15 +1885,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "68"
-  },
-  {
-    "code": "69",
-    "name": "PROVEITOS E GANHOS EXTRAORDINÁRIOS",
-    "account_type": "revenue",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "691",
@@ -1832,15 +1950,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "69"
   },
   {
-    "code": "71",
-    "name": "CUSTO DAS EXISTÊNCIAS VENDIDAS",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "711",
     "name": "Custo das mercadorias vendidas",
     "account_type": "expense",
@@ -1848,15 +1957,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "71"
-  },
-  {
-    "code": "72",
-    "name": "CUSTOS COM O PESSOAL",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "721",
@@ -1873,7 +1973,7 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "account_type": "expense",
     "account_nature": "debit",
     "level": 2,
-    "is_header": false,
+    "is_header": true,
     "parent_code": "72"
   },
   {
@@ -1893,15 +1993,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": false,
     "parent_code": "72"
-  },
-  {
-    "code": "73",
-    "name": "AMORTIZAÇÕES DO EXERCÍCIO",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
   },
   {
     "code": "731",
@@ -1931,15 +2022,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "73"
   },
   {
-    "code": "75",
-    "name": "OUTROS CUSTOS E PERDAS OPERACIONAIS",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
     "code": "751",
     "name": "Subcontratos",
     "account_type": "expense",
@@ -1956,6 +2038,996 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "level": 2,
     "is_header": true,
     "parent_code": "75"
+  },
+  {
+    "code": "753",
+    "name": "Impostos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": true,
+    "parent_code": "75"
+  },
+  {
+    "code": "754",
+    "name": "Despesas confidenciais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "75"
+  },
+  {
+    "code": "755",
+    "name": "Quotizações",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "75"
+  },
+  {
+    "code": "756",
+    "name": "Ofertas e amostras de existências",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "75"
+  },
+  {
+    "code": "758",
+    "name": "Outros custos e perdas operacionais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "75"
+  },
+  {
+    "code": "759",
+    "name": "Transferência para resultados operacionais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "75"
+  },
+  {
+    "code": "761",
+    "name": "Juros",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "76"
+  },
+  {
+    "code": "762",
+    "name": "Diferenças de câmbio desfavoráveis",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "76"
+  },
+  {
+    "code": "766",
+    "name": "Perdas na alienação de aplicações financeiras",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "76"
+  },
+  {
+    "code": "767",
+    "name": "Serviços bancários",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "76"
+  },
+  {
+    "code": "769",
+    "name": "Transferência para resultados financeiros",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "76"
+  },
+  {
+    "code": "779",
+    "name": "Transferência para resultados financeiros",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "77"
+  },
+  {
+    "code": "781",
+    "name": "Provisões do exercício",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "782",
+    "name": "Amortizações extraordinárias",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "783",
+    "name": "Perdas em imobilizações",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "784",
+    "name": "Perdas em existências",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "785",
+    "name": "Dívidas incobráveis",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "786",
+    "name": "Multas e penalidades contratuais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "787",
+    "name": "Custo de reestruturação",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "788",
+    "name": "Descontinuidade de operações",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "789",
+    "name": "Alterações de políticas contabilísticas",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "791",
+    "name": "Perdas resultantes de catástrofes naturais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "79"
+  },
+  {
+    "code": "792",
+    "name": "Perdas resultantes de convulsões políticas",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "79"
+  },
+  {
+    "code": "793",
+    "name": "Perdas resultantes de expropriações",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "79"
+  },
+  {
+    "code": "794",
+    "name": "Perdas resultantes de sinistros",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "79"
+  },
+  {
+    "code": "799",
+    "name": "Transferência para resultados extraordinários",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "79"
+  },
+  {
+    "code": "811",
+    "name": "Ano",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "81"
+  },
+  {
+    "code": "812",
+    "name": "Ano",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "81"
+  },
+  {
+    "code": "821",
+    "name": "Vendas",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "822",
+    "name": "Prestações de serviços",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "823",
+    "name": "Outros proveitos operacionais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "824",
+    "name": "Variação nos inventários de produtos acabados e produtos em vias de fabrico",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "825",
+    "name": "Trabalhos para a própria empresa",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "826",
+    "name": "Custo das mercadorias vendidas e das matérias consumidas",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "827",
+    "name": "Custos com o pessoal",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "828",
+    "name": "Amortizações do exercício",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "829",
+    "name": "Outros custos operacionais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "831",
+    "name": "Proveitos e ganhos financeiros gerais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "83"
+  },
+  {
+    "code": "832",
+    "name": "Custos e perdas financeiros gerais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "83"
+  },
+  {
+    "code": "839",
+    "name": "Transferência para resultados líquidos",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "83"
+  },
+  {
+    "code": "841",
+    "name": "Proveitos e ganhos em filiais e associadas",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "84"
+  },
+  {
+    "code": "842",
+    "name": "Custos e perdas em filiais e associadas",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "84"
+  },
+  {
+    "code": "849",
+    "name": "Transferência para resultados líquidos",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "84"
+  },
+  {
+    "code": "851",
+    "name": "Proveitos e ganhos não operacionais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "85"
+  },
+  {
+    "code": "852",
+    "name": "Custos e perdas não operacionais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "85"
+  },
+  {
+    "code": "859",
+    "name": "Transferência para resultados líquidos",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "85"
+  },
+  {
+    "code": "861",
+    "name": "Proveitos e ganhos extraordinários",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "86"
+  },
+  {
+    "code": "862",
+    "name": "Custos e perdas extraordinários",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "86"
+  },
+  {
+    "code": "869",
+    "name": "Transferência para resultados líquidos",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "86"
+  },
+  {
+    "code": "871",
+    "name": "Imposto sobre os resultados correntes",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "87"
+  },
+  {
+    "code": "872",
+    "name": "Imposto sobre os resultados extraordinários",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "87"
+  },
+  {
+    "code": "879",
+    "name": "Transferência para resultados líquidos",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "87"
+  },
+  {
+    "code": "881",
+    "name": "Resultados operacionais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "882",
+    "name": "Resultados financeiros gerais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "883",
+    "name": "Resultados em filiais e associadas",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "884",
+    "name": "Resultados não operacionais",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "885",
+    "name": "Imposto sobre os resultados correntes",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "886",
+    "name": "Resultados extraordinários",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "887",
+    "name": "Imposto sobre os resultados extraordinários",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "889",
+    "name": "Transferência para resultados transitados",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "88"
+  },
+  {
+    "code": "899",
+    "name": "Transferência para resultados transitados",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "89"
+  },
+  {
+    "code": "6810",
+    "name": "Correcções relativas a exercícios anteriores",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "68"
+  },
+  {
+    "code": "6811",
+    "name": "Outros ganhos e perdas não operacionais",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "68"
+  },
+  {
+    "code": "7810",
+    "name": "Correcções relativas a exercícios anteriores",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "7811",
+    "name": "Outros custos e perdas não operacionais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "7819",
+    "name": "Transferência para resultados não operacionais",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "78"
+  },
+  {
+    "code": "8219",
+    "name": "Transferência para resultados líquidos",
+    "account_type": "equity",
+    "account_nature": "credit",
+    "level": 2,
+    "is_header": false,
+    "parent_code": "82"
+  },
+  {
+    "code": "1111",
+    "name": "TERRENOS E RECURSOS NATURAIS - LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "111"
+  },
+  {
+    "code": "1112",
+    "name": "TERRENOS E RECURSOS NATURAIS - PROVINCIA SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "111"
+  },
+  {
+    "code": "1121",
+    "name": "EDIFICIOS E OUTRAS CONSTRUCOES LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "112"
+  },
+  {
+    "code": "1122",
+    "name": "EDIFICIOS E OUTRAS CONSTRUCOES - PROVINCIA SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "112"
+  },
+  {
+    "code": "1131",
+    "name": "EQUIPEMENTO DE ARMAZEM - LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "113"
+  },
+  {
+    "code": "1132",
+    "name": "EQUIPEMENTO DE ARMAZEM - PROVINCIA SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "113"
+  },
+  {
+    "code": "1141",
+    "name": "EQUIPAMENTO DE CARGA E TRANSPORTE - LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "114"
+  },
+  {
+    "code": "1142",
+    "name": "EQUIPAMENTO DE CARGA E TRANSPORTE - PROVINCIA SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "114"
+  },
+  {
+    "code": "1151",
+    "name": "Equipamento administrativo LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "115"
+  },
+  {
+    "code": "2121",
+    "name": "MERCADORIAS - LUANDA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "212"
+  },
+  {
+    "code": "2122",
+    "name": "MERCADORIAS - PROVINCIA SOYO",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "212"
+  },
+  {
+    "code": "2171",
+    "name": "DEVOLUCOES DE COMPRAS LUANDA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "217"
+  },
+  {
+    "code": "2172",
+    "name": "DEVOLUCOES DE COMPRAS - PROVINCIA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "217"
+  },
+  {
+    "code": "2181",
+    "name": "DESCONTOS E ABATIMENTOS EM COMPRAS - LUANDA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "218"
+  },
+  {
+    "code": "2182",
+    "name": "DESCONTOS E ABATIMENTOS EM COMPRAS - PROVINCIA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "218"
+  },
+  {
+    "code": "3111",
+    "name": "CLIENTES CORRENTES",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "311"
+  },
+  {
+    "code": "3211",
+    "name": "FOOD SUPPLIERS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "321"
+  },
+  {
+    "code": "3212",
+    "name": "PLASTIC SUPPLIERS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "321"
+  },
+  {
+    "code": "3213",
+    "name": "SUPPLIER OF CLEANING AND LAUNDRY PRODUCTS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "321"
+  },
+  {
+    "code": "3214",
+    "name": "FORNECEDORES DE SERVICOS ARRENDAMENTOS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "321"
+  },
+  {
+    "code": "3451",
+    "name": "IVA dedutível",
+    "account_type": "liability",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "345"
+  },
+  {
+    "code": "3452",
+    "name": "IVA liquidado",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "345"
+  },
+  {
+    "code": "3611",
+    "name": "EMPLOYEE SALARIES IN LUANDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "361"
+  },
+  {
+    "code": "3612",
+    "name": "SALARIOS DOS FUNCIONARIOS ESTRANGEIROS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "361"
+  },
+  {
+    "code": "3621",
+    "name": "PROFIT SHARING PAYABLE MANAGMENT",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "362"
+  },
+  {
+    "code": "3622",
+    "name": "PERSONEL PROFIT SHARING EMPLOYEES",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "362"
+  },
+  {
+    "code": "3746",
+    "name": "RENDAS ANTECIPADAS",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "374"
+  },
+  {
+    "code": "3771",
+    "name": "CONTAS TRANSITORIAS - LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "377"
+  },
+  {
+    "code": "3772",
+    "name": "CONTAS TRANSITORIAS PROVINCIA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "377"
+  },
+  {
+    "code": "4311",
+    "name": "BANK IN LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "431"
+  },
+  {
+    "code": "4511",
+    "name": "CASH BOXES IN LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "451"
+  },
+  {
+    "code": "4512",
+    "name": "CASH BOXES IN GOVERNORATES",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "451"
+  },
+  {
+    "code": "6131",
+    "name": "VENDAS MERCADO NAVCIONAL - LUANDA",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "613"
+  },
+  {
+    "code": "6132",
+    "name": "VENDAS MERCADO NAVCIONAL - PROVINCIA",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "613"
+  },
+  {
+    "code": "6171",
+    "name": "DEVOLUCAO DE MERCADO NACIONAL LUANDA",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "617"
+  },
+  {
+    "code": "7221",
+    "name": "EMPLOYEE SALARIES IN LUANDA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "722"
+  },
+  {
+    "code": "7222",
+    "name": "SALARIOS DOS FUNCIONARIOS ESTRANGEIROS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "722"
+  },
+  {
+    "code": "7223",
+    "name": "PARTICIPACAO NOS RESULTADOS MENSAIS PROVINCIA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "722"
+  },
+  {
+    "code": "7521",
+    "name": "Assistência técnica",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "752"
+  },
+  {
+    "code": "7531",
+    "name": "Indirectos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "753"
+  },
+  {
+    "code": "7532",
+    "name": "Directos",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": true,
+    "parent_code": "753"
+  },
+  {
+    "code": "35100001",
+    "name": "ADIANTAMENTO POR CONTA DE LUCROS - MOHAMAD",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "351"
+  },
+  {
+    "code": "35100002",
+    "name": "ADIANTAMENTO POR CONTA DE LUCROS - AHMAD",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 3,
+    "is_header": false,
+    "parent_code": "351"
   },
   {
     "code": "75200001",
@@ -2138,33 +3210,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "752"
   },
   {
-    "code": "7521",
-    "name": "Assistência técnica",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 3,
-    "is_header": true,
-    "parent_code": "752"
-  },
-  {
-    "code": "75210001",
-    "name": "Estrangeira",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 4,
-    "is_header": false,
-    "parent_code": "7521"
-  },
-  {
-    "code": "75210002",
-    "name": "Nacional",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 4,
-    "is_header": false,
-    "parent_code": "7521"
-  },
-  {
     "code": "75200021",
     "name": "Trabalhos executados no exterior",
     "account_type": "expense",
@@ -2201,22 +3246,715 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "752"
   },
   {
-    "code": "753",
-    "name": "Impostos",
-    "account_type": "expense",
+    "code": "37461",
+    "name": "RENDAS ANTECIPADAS - LUANDA",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
-    "is_header": true,
-    "parent_code": "75"
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3746"
   },
   {
-    "code": "7531",
-    "name": "Indirectos",
+    "code": "37462",
+    "name": "RENDAS ANTECIPADAS - PROVINCIA SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "3746"
+  },
+  {
+    "code": "45121",
+    "name": "CAIXA SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "45122",
+    "name": "CAIXA MBANZA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "45123",
+    "name": "CAIXA UIGE",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "45124",
+    "name": "CAIXA BENGUELA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "45125",
+    "name": "CAIXA LUBANGO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "45126",
+    "name": "CAIXA HUAMBO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "45127",
+    "name": "CAIXA CUITO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "45128",
+    "name": "CAIXA CABINDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": true,
+    "parent_code": "4512"
+  },
+  {
+    "code": "11110001",
+    "name": "TERRENOS E RECURSOS NATURAIS 1",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1111"
+  },
+  {
+    "code": "11120001",
+    "name": "TERRENOS E RECURSOS NATURAIS 1 SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1112"
+  },
+  {
+    "code": "11210001",
+    "name": "EDIFICIOS E OUTRAS CONSTRUCOES 1",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1121"
+  },
+  {
+    "code": "11220001",
+    "name": "EDIFICIOS E OUTRAS CONSTRUCOES 1 SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1122"
+  },
+  {
+    "code": "11310001",
+    "name": "EQUIPEMENTO DE ARMAZEM",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1131"
+  },
+  {
+    "code": "11320001",
+    "name": "EQUIPEMENTO DE ARMAZEM - SOYO 1",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1132"
+  },
+  {
+    "code": "11410001",
+    "name": "EQUIPAMENTO DE CARGA E TRANSPORTE",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1141"
+  },
+  {
+    "code": "11420001",
+    "name": "EQUIPAMENTO DE CARGA E TRANSPORTE - SOYO 1",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1142"
+  },
+  {
+    "code": "11510001",
+    "name": "VIATURA ADMINISTRATIVA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1151"
+  },
+  {
+    "code": "11510002",
+    "name": "EQUIPAMENTO ADMINISTRATIVO ESCRITORIO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "1151"
+  },
+  {
+    "code": "21210001",
+    "name": "MERCADORIAS GERAL",
     "account_type": "expense",
     "account_nature": "debit",
-    "level": 3,
-    "is_header": true,
-    "parent_code": "753"
+    "level": 4,
+    "is_header": false,
+    "parent_code": "2121"
+  },
+  {
+    "code": "21220001",
+    "name": "MERCADORIAS GERAL SOYO",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "2122"
+  },
+  {
+    "code": "21710001",
+    "name": "DEVOLUCOES DE COMPRAS LUANDA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "2171"
+  },
+  {
+    "code": "21720001",
+    "name": "DEVOLUCOES DE COMPRAS - SOYO",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "2172"
+  },
+  {
+    "code": "21810001",
+    "name": "DESCONTOS E ABATIMENTOS EM COMPRAS - LUANDA",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "2181"
+  },
+  {
+    "code": "21820001",
+    "name": "DESCONTOS E ABATIMENTOS EM COMPRAS - SOYO",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "2182"
+  },
+  {
+    "code": "31110001",
+    "name": "DELIGHT CATERING, LDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3111"
+  },
+  {
+    "code": "32110001",
+    "name": "ANGOALISSAR - COMERCIO E INDUSTRIA , LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3211"
+  },
+  {
+    "code": "32110002",
+    "name": "LUANDAY -COMERCIO E SERVICOS, LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3211"
+  },
+  {
+    "code": "32110003",
+    "name": "SPAA- SOCIEDADE DE PROD. AGROINDUST.DE ANGOLA LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3211"
+  },
+  {
+    "code": "32110004",
+    "name": "SOVENA ANGOLA (SU), LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3211"
+  },
+  {
+    "code": "32110005",
+    "name": "DELIGHT CATERING, LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3211"
+  },
+  {
+    "code": "32110006",
+    "name": "MAFCOM ANGOLA - COMERCIO GERAL,LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3211"
+  },
+  {
+    "code": "32120001",
+    "name": "LEAO VIVA LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3212"
+  },
+  {
+    "code": "32120002",
+    "name": "SOGEPLAST LDA",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3212"
+  },
+  {
+    "code": "36110001",
+    "name": "SALARIOS MENSAIS",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3611"
+  },
+  {
+    "code": "36120001",
+    "name": "SALARIOS KHALIL NASSER",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3612"
+  },
+  {
+    "code": "36220001",
+    "name": "PARTICIPACAO NOS RESULTADOS MENSAIS - PROVINCIA SOYO",
+    "account_type": "liability",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3622"
+  },
+  {
+    "code": "37710001",
+    "name": "FILIAL LUANDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3771"
+  },
+  {
+    "code": "37720001",
+    "name": "FILIAL SOYO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "37720002",
+    "name": "FILIAL MBANZA KONGO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "37720003",
+    "name": "FILIAL UIGE",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "37720004",
+    "name": "FILIAL BENGUELA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "37720005",
+    "name": "FILIAL LUBANGO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "37720006",
+    "name": "FILIAL HUAMBO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "37720007",
+    "name": "FILIAL CUITO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "37720008",
+    "name": "FILIAL CABINDA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "3772"
+  },
+  {
+    "code": "43110001",
+    "name": "BANCO BFA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110002",
+    "name": "BANCO BIC",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110003",
+    "name": "BANCO BNI",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110004",
+    "name": "BANCO YETU",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110005",
+    "name": "BANCO STANDARD",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110006",
+    "name": "BANCO BAI",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110007",
+    "name": "BANCO BPC",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110008",
+    "name": "BANCO BCI",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "43110009",
+    "name": "BANCO SOL",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4311"
+  },
+  {
+    "code": "45110001",
+    "name": "CAIXA ESCRITORIO - EMILIA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110002",
+    "name": "CAIXA BENFICA 01",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110003",
+    "name": "CAIXA BENFICA 02",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110004",
+    "name": "CAIXA ZANGO 01",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110005",
+    "name": "CAIXA ZANGO 03",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110006",
+    "name": "CAIXA TERRA NOVA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110007",
+    "name": "CAIXA VILA NOVA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110008",
+    "name": "CAIXA CAZENGA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110009",
+    "name": "CAIXA CALAMEBA 2",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110010",
+    "name": "CAIXA VIANA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110011",
+    "name": "CAIXA MORROBENTO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110012",
+    "name": "CAIXA CACUACO",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110013",
+    "name": "CAIXA KM 30",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "45110014",
+    "name": "CAIXA PANGUILA",
+    "account_type": "asset",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "4511"
+  },
+  {
+    "code": "61310001",
+    "name": "VENDAS DE MERCADORIAS LUANDA",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "6131"
+  },
+  {
+    "code": "61310002",
+    "name": "VENDAS GROSSO",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "6131"
+  },
+  {
+    "code": "61320001",
+    "name": "VENDAS DE MERCADORIAS SOYO",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "6132"
+  },
+  {
+    "code": "61710001",
+    "name": "DEVOLUCAO DE MERCADORIAS NACIONAL LUANDA",
+    "account_type": "revenue",
+    "account_nature": "credit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "6171"
+  },
+  {
+    "code": "72210001",
+    "name": "SALARIOS MENSAIS",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7221"
+  },
+  {
+    "code": "72220001",
+    "name": "SALARIO KHALIL NASSER",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7222"
+  },
+  {
+    "code": "72230001",
+    "name": "PARTICIPACAO NOS RESULTADOS MENSAIS - PROVINCIA SOYO",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7223"
+  },
+  {
+    "code": "75210001",
+    "name": "Estrangeira",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7521"
+  },
+  {
+    "code": "75210002",
+    "name": "Nacional",
+    "account_type": "expense",
+    "account_nature": "debit",
+    "level": 4,
+    "is_header": false,
+    "parent_code": "7521"
   },
   {
     "code": "75310001",
@@ -2246,15 +3984,6 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "7531"
   },
   {
-    "code": "7532",
-    "name": "Directos",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 3,
-    "is_header": true,
-    "parent_code": "753"
-  },
-  {
     "code": "75320001",
     "name": "Imposto de capitais",
     "account_type": "expense",
@@ -2282,696 +4011,75 @@ export const PGC_ACCOUNTS: PgcSeedAccount[] = [
     "parent_code": "7532"
   },
   {
-    "code": "754",
-    "name": "Despesas confidenciais",
-    "account_type": "expense",
+    "code": "45121001",
+    "name": "CAIXA SOYO",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
+    "level": 5,
     "is_header": false,
-    "parent_code": "75"
+    "parent_code": "45121"
   },
   {
-    "code": "755",
-    "name": "Quotizações",
-    "account_type": "expense",
+    "code": "45122001",
+    "name": "CAIXA MBANZA CONGO",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
+    "level": 5,
     "is_header": false,
-    "parent_code": "75"
+    "parent_code": "45122"
   },
   {
-    "code": "756",
-    "name": "Ofertas e amostras de existências",
-    "account_type": "expense",
+    "code": "45123001",
+    "name": "CAIXA UIGE",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
+    "level": 5,
     "is_header": false,
-    "parent_code": "75"
+    "parent_code": "45123"
   },
   {
-    "code": "758",
-    "name": "Outros custos e perdas operacionais",
-    "account_type": "expense",
+    "code": "45124001",
+    "name": "CAIXA BENGUELA",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
+    "level": 5,
     "is_header": false,
-    "parent_code": "75"
+    "parent_code": "45124"
   },
   {
-    "code": "759",
-    "name": "Transferência para resultados operacionais",
-    "account_type": "expense",
+    "code": "45125001",
+    "name": "CAIXA LUBANGO",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
+    "level": 5,
     "is_header": false,
-    "parent_code": "75"
+    "parent_code": "45125"
   },
   {
-    "code": "76",
-    "name": "CUSTOS E PERDAS FINANCEIROS GERAIS",
-    "account_type": "expense",
+    "code": "45126001",
+    "name": "CAIXA HUAMBO",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
+    "level": 5,
+    "is_header": false,
+    "parent_code": "45126"
   },
   {
-    "code": "761",
-    "name": "Juros",
-    "account_type": "expense",
+    "code": "45127001",
+    "name": "CAIXA CUITO",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
+    "level": 5,
     "is_header": false,
-    "parent_code": "76"
+    "parent_code": "45127"
   },
   {
-    "code": "762",
-    "name": "Diferenças de câmbio desfavoráveis",
-    "account_type": "expense",
+    "code": "45128001",
+    "name": "CAIXA CABINDA",
+    "account_type": "asset",
     "account_nature": "debit",
-    "level": 2,
+    "level": 5,
     "is_header": false,
-    "parent_code": "76"
-  },
-  {
-    "code": "766",
-    "name": "Perdas na alienação de aplicações financeiras",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "76"
-  },
-  {
-    "code": "767",
-    "name": "Serviços bancários",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "76"
-  },
-  {
-    "code": "769",
-    "name": "Transferência para resultados financeiros",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "76"
-  },
-  {
-    "code": "77",
-    "name": "CUSTOS E PERDAS FINANCEIROS EM FILIAIS E ASSOCIADAS",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "779",
-    "name": "Transferência para resultados financeiros",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "77"
-  },
-  {
-    "code": "78",
-    "name": "OUTROS CUSTOS E PERDAS NÃO OPERACIONAIS",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "781",
-    "name": "Provisões do exercício",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "7810",
-    "name": "Correcções relativas a exercícios anteriores",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "7811",
-    "name": "Outros custos e perdas não operacionais",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "7819",
-    "name": "Transferência para resultados não operacionais",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "782",
-    "name": "Amortizações extraordinárias",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "783",
-    "name": "Perdas em imobilizações",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "784",
-    "name": "Perdas em existências",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "785",
-    "name": "Dívidas incobráveis",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "786",
-    "name": "Multas e penalidades contratuais",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "787",
-    "name": "Custo de reestruturação",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "788",
-    "name": "Descontinuidade de operações",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "789",
-    "name": "Alterações de políticas contabilísticas",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "78"
-  },
-  {
-    "code": "79",
-    "name": "CUSTOS E PERDAS EXTRAORDINÁRIOS",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "791",
-    "name": "Perdas resultantes de catástrofes naturais",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "79"
-  },
-  {
-    "code": "792",
-    "name": "Perdas resultantes de convulsões políticas",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "79"
-  },
-  {
-    "code": "793",
-    "name": "Perdas resultantes de expropriações",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "79"
-  },
-  {
-    "code": "794",
-    "name": "Perdas resultantes de sinistros",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "79"
-  },
-  {
-    "code": "799",
-    "name": "Transferência para resultados extraordinários",
-    "account_type": "expense",
-    "account_nature": "debit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "79"
-  },
-  {
-    "code": "81",
-    "name": "RESULTADOS TRANSITADOS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "811",
-    "name": "Ano",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "81"
-  },
-  {
-    "code": "812",
-    "name": "Ano",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "81"
-  },
-  {
-    "code": "82",
-    "name": "RESULTADOS OPERACIONAIS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "821",
-    "name": "Vendas",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "8219",
-    "name": "Transferência para resultados líquidos",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "822",
-    "name": "Prestações de serviços",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "823",
-    "name": "Outros proveitos operacionais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "824",
-    "name": "Variação nos inventários de produtos acabados e produtos em vias de fabrico",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "825",
-    "name": "Trabalhos para a própria empresa",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "826",
-    "name": "Custo das mercadorias vendidas e das matérias consumidas",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "827",
-    "name": "Custos com o pessoal",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "828",
-    "name": "Amortizações do exercício",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "829",
-    "name": "Outros custos operacionais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "82"
-  },
-  {
-    "code": "83",
-    "name": "RESULTADOS FINANCEIROS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "831",
-    "name": "Proveitos e ganhos financeiros gerais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "83"
-  },
-  {
-    "code": "832",
-    "name": "Custos e perdas financeiros gerais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "83"
-  },
-  {
-    "code": "839",
-    "name": "Transferência para resultados líquidos",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "83"
-  },
-  {
-    "code": "84",
-    "name": "RESULTADOS FINANCEIROS EM FILIAIS E ASSOCIADAS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "841",
-    "name": "Proveitos e ganhos em filiais e associadas",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "84"
-  },
-  {
-    "code": "842",
-    "name": "Custos e perdas em filiais e associadas",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "84"
-  },
-  {
-    "code": "849",
-    "name": "Transferência para resultados líquidos",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "84"
-  },
-  {
-    "code": "85",
-    "name": "RESULTADOS NÃO OPERACIONAIS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "851",
-    "name": "Proveitos e ganhos não operacionais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "85"
-  },
-  {
-    "code": "852",
-    "name": "Custos e perdas não operacionais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "85"
-  },
-  {
-    "code": "859",
-    "name": "Transferência para resultados líquidos",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "85"
-  },
-  {
-    "code": "86",
-    "name": "RESULTADOS EXTRAORDINÁRIOS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "861",
-    "name": "Proveitos e ganhos extraordinários",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "86"
-  },
-  {
-    "code": "862",
-    "name": "Custos e perdas extraordinários",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "86"
-  },
-  {
-    "code": "869",
-    "name": "Transferência para resultados líquidos",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "86"
-  },
-  {
-    "code": "87",
-    "name": "IMPOSTOS SOBRE OS LUCROS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "871",
-    "name": "Imposto sobre os resultados correntes",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "87"
-  },
-  {
-    "code": "872",
-    "name": "Imposto sobre os resultados extraordinários",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "87"
-  },
-  {
-    "code": "879",
-    "name": "Transferência para resultados líquidos",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "87"
-  },
-  {
-    "code": "88",
-    "name": "RESULTADO LÍQUIDO DO EXERCÍCIO",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "881",
-    "name": "Resultados operacionais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "882",
-    "name": "Resultados financeiros gerais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "883",
-    "name": "Resultados em filiais e associadas",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "884",
-    "name": "Resultados não operacionais",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "885",
-    "name": "Imposto sobre os resultados correntes",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "886",
-    "name": "Resultados extraordinários",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "887",
-    "name": "Imposto sobre os resultados extraordinários",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "889",
-    "name": "Transferência para resultados transitados",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "88"
-  },
-  {
-    "code": "89",
-    "name": "DIVIDENDOS ANTECIPADOS",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 1,
-    "is_header": true,
-    "parent_code": null
-  },
-  {
-    "code": "899",
-    "name": "Transferência para resultados transitados",
-    "account_type": "equity",
-    "account_nature": "credit",
-    "level": 2,
-    "is_header": false,
-    "parent_code": "89"
+    "parent_code": "45128"
   }
 ];

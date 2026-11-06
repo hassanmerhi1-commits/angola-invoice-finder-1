@@ -717,9 +717,14 @@ async function postPurchaseInvoiceAccountingPhased(client, invInput, opts = {}) 
       const totalAmt = roundMoney(Number(inv.total || 0));
       const taxAmt = roundMoney(Number(inv.taxAmount ?? inv.tax_amount ?? 0));
       const goodsAmt = roundMoney(Math.max(0, totalAmt - taxAmt));
+      const { resolveBranchPurchaseAccountCode } = require('./branchPostingAccounts');
+      const purchaseAccountCode = await resolveBranchPurchaseAccountCode(
+        client,
+        inv.branchId || inv.branch_id || warehouseId,
+      );
       if (goodsAmt > 0) {
         journalLines.push({
-          accountCode: '212',
+          accountCode: purchaseAccountCode,
           debit: goodsAmt,
           credit: 0,
           description: `Mercadorias ${inv.invoiceNumber || ''}`.trim(),

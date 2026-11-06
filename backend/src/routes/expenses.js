@@ -216,6 +216,7 @@ async function payExpenseTreasury(row, paidBy, opts = {}) {
         referenceType: 'expense',
         referenceId: row.id,
         createdBy: paidBy,
+        caixaId: row.caixaId,
       });
       alreadyPosted = !!glResult?.alreadyPosted;
     } catch (glErr) {

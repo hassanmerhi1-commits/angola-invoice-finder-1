@@ -7,6 +7,7 @@ const { attachUserBranchScope, resolveListBranchId, applyWriteBranchOverride } =
 const { buildCaixaReconciliation } = require('../lib/caixaReconciliation');
 const { applyCaixaClose } = require('../sync/caixaIngest');
 const { postCaixaGlMovement, syncCaixaGlFromRecord } = require('../lib/caixaGlPosting');
+const { requireLeafAccount } = require('../lib/branchPostingAccounts');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { syncOpenSessionExpensesFromLedger } = require('../lib/caixaCashRefund');
 const { sqlDateOnly } = require('../lib/sqlDateOnly');
@@ -123,6 +124,7 @@ function mapCaixaRow(row) {
     closedAt: row.closed_at,
     closingBalance: row.closing_balance != null ? Number(row.closing_balance) : undefined,
     closingNotes: row.notes,
+    glAccountCode: String(row.gl_account_code || '').trim(),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -504,12 +506,17 @@ function caixaRouter(broadcastTable) {
       const pettyLimit = req.body?.pettyLimit != null ? Number(req.body.pettyLimit) : null;
       const dailyLimit = req.body?.dailyLimit != null ? Number(req.body.dailyLimit) : null;
       const requiresApproval = !!req.body?.requiresApproval;
+      const glAccountCode = await requireLeafAccount(
+        db,
+        req.body?.glAccountCode ?? req.body?.gl_account_code ?? '',
+        'cash',
+      );
 
       await db.query(
         `INSERT INTO caixas (
           id, branch_id, branch_name, name, opening_balance, current_balance,
-          status, petty_limit, daily_limit, requires_approval, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$7,$8,$9,$9)
+          status, petty_limit, daily_limit, requires_approval, gl_account_code, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$5,'closed',$6,$7,$8,$9,$10,$10)
         ON CONFLICT (id) DO UPDATE SET
           branch_id = EXCLUDED.branch_id,
           branch_name = EXCLUDED.branch_name,
@@ -519,6 +526,7 @@ function caixaRouter(broadcastTable) {
           petty_limit = EXCLUDED.petty_limit,
           daily_limit = EXCLUDED.daily_limit,
           requires_approval = EXCLUDED.requires_approval,
+          gl_account_code = EXCLUDED.gl_account_code,
           updated_at = EXCLUDED.updated_at`,
         [
           id,
@@ -529,6 +537,7 @@ function caixaRouter(broadcastTable) {
           pettyLimit,
           dailyLimit,
           requiresApproval,
+          glAccountCode,
           now,
         ],
       );
@@ -559,7 +568,7 @@ function caixaRouter(broadcastTable) {
       res.status(201).json({ data: mapCaixaRow(row.rows[0]) });
     } catch (error) {
       console.error('[CAIXA] registers create:', error);
-      res.status(500).json({ error: error.message || 'Failed to create caixa' });
+      res.status(error.status || 500).json({ error: error.message || 'Failed to create caixa' });
     }
   });
 
@@ -575,6 +584,7 @@ function caixaRouter(broadcastTable) {
       const pettyLimit = body.pettyLimit != null ? Number(body.pettyLimit) : null;
       const dailyLimit = body.dailyLimit != null ? Number(body.dailyLimit) : null;
       const requiresApproval = body.requiresApproval != null ? !!body.requiresApproval : null;
+      const glRaw = body.glAccountCode != null ? body.glAccountCode : body.gl_account_code;
 
       const existing = await db.query('SELECT * FROM caixas WHERE id = $1', [id]);
       if (!existing.rows[0]) return res.status(404).json({ error: 'Caixa not found' });
@@ -584,15 +594,19 @@ function caixaRouter(broadcastTable) {
       }
 
       const now = new Date().toISOString();
+      const glAccountCode = glRaw == null
+        ? String(existing.rows[0].gl_account_code || '')
+        : await requireLeafAccount(db, glRaw, 'cash');
       await db.query(
         `UPDATE caixas SET
           name = COALESCE($2, name),
           petty_limit = COALESCE($3, petty_limit),
           daily_limit = COALESCE($4, daily_limit),
           requires_approval = COALESCE($5, requires_approval),
-          updated_at = $6
+          gl_account_code = $6,
+          updated_at = $7
          WHERE id = $1`,
-        [id, name, pettyLimit, dailyLimit, requiresApproval, now],
+        [id, name, pettyLimit, dailyLimit, requiresApproval, glAccountCode, now],
       );
       if (name) {
         try {
@@ -616,7 +630,7 @@ function caixaRouter(broadcastTable) {
       res.json({ data: mapCaixaRow(row.rows[0]) });
     } catch (error) {
       console.error('[CAIXA] registers update:', error);
-      res.status(500).json({ error: error.message || 'Failed to update caixa' });
+      res.status(error.status || 500).json({ error: error.message || 'Failed to update caixa' });
     }
   });
 

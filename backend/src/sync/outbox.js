@@ -262,7 +262,7 @@ async function enqueueCreditNoteCreated(client, noteId, branchId) {
     branchId,
     idempotencyKey: `credit_note:${noteId}`,
     payload: snapshot,
-    destinations: ['agt'],
+    destinations: ['main', 'agt'],
   });
 }
 
@@ -276,7 +276,7 @@ async function enqueueDebitNoteCreated(client, noteId, branchId) {
     branchId,
     idempotencyKey: `debit_note:${noteId}`,
     payload: snapshot,
-    destinations: ['agt'],
+    destinations: ['main', 'agt'],
   });
 }
 

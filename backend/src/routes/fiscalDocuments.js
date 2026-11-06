@@ -208,14 +208,14 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       const note = await processCreditNote(client, body);
       await client.query('COMMIT');
       try {
-        await enqueueCreditNoteCreated(null, note.id, body.branchId);
-      } catch (enqueueErr) {
-        console.warn('[FISCAL] credit note AGT enqueue:', enqueueErr.message);
-      }
-      try {
         await signFiscalDocument('credit_notes', note.id, 'document_number', 'saft_hash');
       } catch (e) {
         console.warn('[FISCAL] credit note sign:', e.message);
+      }
+      try {
+        await enqueueCreditNoteCreated(null, note.id, body.branchId);
+      } catch (enqueueErr) {
+        console.warn('[FISCAL] credit note enqueue:', enqueueErr.message);
       }
       const full = await loadCreditNote(note.id);
       await logFiscalEventFromReq(req, {
@@ -320,14 +320,14 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       const note = await processDebitNote(client, body);
       await client.query('COMMIT');
       try {
-        await enqueueDebitNoteCreated(null, note.id, body.branchId);
-      } catch (enqueueErr) {
-        console.warn('[FISCAL] debit note AGT enqueue:', enqueueErr.message);
-      }
-      try {
         await signFiscalDocument('debit_notes', note.id, 'document_number', 'saft_hash');
       } catch (e) {
         console.warn('[FISCAL] debit note sign:', e.message);
+      }
+      try {
+        await enqueueDebitNoteCreated(null, note.id, body.branchId);
+      } catch (enqueueErr) {
+        console.warn('[FISCAL] debit note enqueue:', enqueueErr.message);
       }
       const full = await loadDebitNote(note.id);
       await logFiscalEventFromReq(req, {

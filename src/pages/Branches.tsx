@@ -42,10 +42,32 @@ export default function Branches() {
 
   const [formData, setFormData] = useState({
     name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1,
+    salesAccountCode: '', purchaseAccountCode: '',
   });
+  const [chartAccounts, setChartAccounts] = useState<Array<{
+    code: string; name: string; account_type?: string; is_header?: boolean | number; is_active?: boolean | number;
+  }>>([]);
+
+  useEffect(() => {
+    api.chartOfAccounts.list().then((response) => {
+      if (Array.isArray(response.data)) setChartAccounts(response.data);
+    }).catch(() => {});
+  }, []);
+
+  const leafAccounts = (kind: 'revenue' | 'purchase') => chartAccounts.filter((account) => {
+    const header = account.is_header === true || account.is_header === 1;
+    const inactive = account.is_active === false || account.is_active === 0;
+    if (header || inactive || !account.code) return false;
+    if (kind === 'revenue') return account.account_type === 'revenue';
+    const code = String(account.code);
+    return (account.account_type === 'expense' || account.account_type === 'asset') && code.startsWith('21');
+  }).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 
   const resetForm = () => {
-    setFormData({ name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1 });
+    setFormData({
+      name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1,
+      salesAccountCode: '', purchaseAccountCode: '',
+    });
     setEditingBranch(null);
   };
 
@@ -57,6 +79,8 @@ export default function Branches() {
       name: branch.name, code: branch.code || '', address: branch.address || '',
       phone: branch.phone || '', isMain: branch.isMain || false,
       priceLevel: normalizePriceLevel(branch.priceLevel ?? 1),
+      salesAccountCode: branch.salesAccountCode || '',
+      purchaseAccountCode: branch.purchaseAccountCode || '',
     });
     setDialogOpen(true);
   };
@@ -190,6 +214,7 @@ export default function Branches() {
                   <TableHead>{t.branchesUi.colPhone}</TableHead>
                   <TableHead>{t.branchesUi.colPriceLevel}</TableHead>
                   <TableHead>{t.branchesUi.colType}</TableHead>
+                  <TableHead>{t.branchesUi.salesAccountLabel}</TableHead>
                   <TableHead className="text-right">{t.branchesUi.colActions}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -229,6 +254,9 @@ export default function Branches() {
                       ) : (
                         <Badge variant="secondary">{t.branchesUi.typeBranch}</Badge>
                       )}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {(branch.salesAccountCode || '613')} / {(branch.purchaseAccountCode || '212')}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
@@ -290,6 +318,42 @@ export default function Branches() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{t.branchesUi.priceLevelHint}</p>
+            </div>
+            <div className="space-y-2">
+              <Label>{t.branchesUi.salesAccountLabel}</Label>
+              <Select
+                value={formData.salesAccountCode || '__default__'}
+                onValueChange={(value) => setFormData({ ...formData, salesAccountCode: value === '__default__' ? '' : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">{t.branchesUi.postingAccountDefault} (613)</SelectItem>
+                  {leafAccounts('revenue').map((account) => (
+                    <SelectItem key={account.code} value={account.code}>{account.code} — {account.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.branchesUi.salesAccountHint}</p>
+            </div>
+            <div className="space-y-2">
+              <Label>{t.branchesUi.purchaseAccountLabel}</Label>
+              <Select
+                value={formData.purchaseAccountCode || '__default__'}
+                onValueChange={(value) => setFormData({ ...formData, purchaseAccountCode: value === '__default__' ? '' : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">{t.branchesUi.postingAccountDefault} (212)</SelectItem>
+                  {leafAccounts('purchase').map((account) => (
+                    <SelectItem key={account.code} value={account.code}>{account.code} — {account.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.branchesUi.purchaseAccountHint}</p>
             </div>
             <div className="flex items-center justify-between">
               <Label htmlFor="isMain">{t.branchesUi.mainBranchLabel}</Label>

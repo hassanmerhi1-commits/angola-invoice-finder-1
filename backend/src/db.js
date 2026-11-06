@@ -1323,7 +1323,7 @@ function repairMisboundProductColumns() {
   }
 }
 
-// Angola PGC (novo com IVA) — generated from the official chart spreadsheet.
+// Company chart: Angola PGC plus the NEXOR accounts used on every server.
 const { PGC_ACCOUNTS } = require('./lib/pgcChartOfAccounts');
 
 const coaIdForCode = (code) => `coa-${String(code).replace(/[^A-Za-z0-9]/g, '-')}`;
@@ -1338,7 +1338,7 @@ function seedDefaultChartOfAccounts() {
   `);
   const updateParent = sqlite.prepare('UPDATE chart_of_accounts SET parent_id = ? WHERE code = ?');
 
-  // PGC_ACCOUNTS is sorted by code so parents are always inserted before children.
+  // Parents are sorted ahead of their children.
   for (const a of PGC_ACCOUNTS) {
     insert.run(
       coaIdForCode(a.code),
@@ -1368,7 +1368,7 @@ function seedDefaultChartOfAccounts() {
  *
  * Strategy (non-destructive to posted journals):
  *   1. Deactivate every existing account so anything outside the PGC disappears.
- *   2. Upsert each PGC account as active (parents first — PGC_ACCOUNTS is sorted by code).
+ *   2. Upsert each company-chart account as active (parents before children).
  *   3. Best-effort hard-delete the leftover deactivated accounts that carry no journal lines.
  *   4. Recompute children_count.
  */

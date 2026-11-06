@@ -61,6 +61,7 @@ async function postCaixaGlMovement(params) {
     referenceId,
     createdBy,
     entryDate,
+    caixaId,
   } = params || {};
 
   const amt = Number(amount);
@@ -94,7 +95,7 @@ async function postCaixaGlMovement(params) {
       }
     }
 
-    const caixaCode = await requireBranchCaixaGlAccountCode(client, { branchId });
+    const caixaCode = await requireBranchCaixaGlAccountCode(client, { branchId, caixaId });
 
     const lines = direction === 'out'
       ? [
@@ -157,6 +158,7 @@ async function syncCaixaGlFromRecord(table, record) {
       referenceType: 'expense',
       referenceId: String(id),
       createdBy: pick(data, 'paid_by', 'paidBy') || null,
+      caixaId: pick(data, 'caixa_id', 'caixaId') || null,
     });
     return { skipped: false, result };
   }

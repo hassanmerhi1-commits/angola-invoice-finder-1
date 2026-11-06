@@ -103,6 +103,7 @@ interface CaixaFormData {
   pettyLimit: number;
   dailyLimit: number;
   requiresApproval: boolean;
+  glAccountCode: string;
 }
 
 const initialFormData: CaixaFormData = {
@@ -111,6 +112,7 @@ const initialFormData: CaixaFormData = {
   pettyLimit: 50000,
   dailyLimit: 200000,
   requiresApproval: true,
+  glAccountCode: '',
 };
 
 interface TransactionFormData {
@@ -150,6 +152,7 @@ export default function CaixaManagement() {
   const searchFocusKeyRef = useRef('');
 
   const [caixas, setCaixas] = useState<Caixa[]>([]);
+  const [cashAccounts, setCashAccounts] = useState<Array<{ code: string; name: string; is_header?: boolean | number; is_active?: boolean | number }>>([]);
   const [sessions, setSessions] = useState<CaixaSession[]>([]);
   const [transactions, setTransactions] = useState<CashTransaction[]>([]);
   const [branchSales, setBranchSales] = useState<Sale[]>([]);
@@ -204,6 +207,18 @@ export default function CaixaManagement() {
   useEffect(() => {
     void loadData();
   }, [apiBranchId, treasuryAllBranches, currentBranch?.id]);
+
+  useEffect(() => {
+    api.chartOfAccounts.list().then((response) => {
+      const rows = Array.isArray(response.data) ? response.data : [];
+      setCashAccounts(rows.filter((account) => {
+        const code = String(account.code || '');
+        const header = account.is_header === true || account.is_header === 1;
+        const inactive = account.is_active === false || account.is_active === 0;
+        return code.startsWith('45') && code !== '45' && !header && !inactive;
+      }));
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!caixas.length) return;
@@ -354,7 +369,8 @@ export default function CaixaManagement() {
       formData.name,
       formData.openingBalance,
       formData.pettyLimit,
-      formData.dailyLimit
+      formData.dailyLimit,
+      formData.glAccountCode,
     ).then(() => {
       toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.cashRegisterCreated });
       setIsCreateDialogOpen(false);
@@ -381,6 +397,7 @@ export default function CaixaManagement() {
       pettyLimit: formData.pettyLimit,
       dailyLimit: formData.dailyLimit,
       requiresApproval: formData.requiresApproval,
+      glAccountCode: formData.glAccountCode,
     }).then(() => {
       toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.settingsUpdated });
       setIsEditDialogOpen(false);
@@ -564,6 +581,7 @@ export default function CaixaManagement() {
       pettyLimit: caixa.pettyLimit || 50000,
       dailyLimit: caixa.dailyLimit || 200000,
       requiresApproval: caixa.requiresApproval || false,
+      glAccountCode: caixa.glAccountCode || '',
     });
     setIsEditDialogOpen(true);
   };
@@ -829,7 +847,7 @@ export default function CaixaManagement() {
                       <div>
                         <CardTitle className="text-base">{caixa.name}</CardTitle>
                         <CardDescription className="text-xs">
-                          {caixa.branchName}
+                          {caixa.branchName}{caixa.glAccountCode ? ` · ${caixa.glAccountCode}` : ''}
                         </CardDescription>
                       </div>
                     </div>
@@ -979,6 +997,24 @@ export default function CaixaManagement() {
                 <p className="text-xs text-muted-foreground">{t.caixaUi.dailyLimitHint}</p>
               </div>
             </div>
+            <div className="space-y-2">
+              <Label>{t.caixaUi.glAccountLabel}</Label>
+              <Select
+                value={formData.glAccountCode || '__default__'}
+                onValueChange={(value) => setFormData({ ...formData, glAccountCode: value === '__default__' ? '' : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">{t.caixaUi.glAccountDefault}</SelectItem>
+                  {cashAccounts.map((account) => (
+                    <SelectItem key={account.code} value={account.code}>{account.code} — {account.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.caixaUi.glAccountHint}</p>
+            </div>
             <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
               <div>
                 <Label>{t.caixaUi.requiresApproval}</Label>
@@ -1031,6 +1067,24 @@ export default function CaixaManagement() {
                   onChange={(e) => setFormData({ ...formData, dailyLimit: parseFloat(e.target.value) || 0 })}
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>{t.caixaUi.glAccountLabel}</Label>
+              <Select
+                value={formData.glAccountCode || '__default__'}
+                onValueChange={(value) => setFormData({ ...formData, glAccountCode: value === '__default__' ? '' : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">{t.caixaUi.glAccountDefault}</SelectItem>
+                  {cashAccounts.map((account) => (
+                    <SelectItem key={`edit-${account.code}`} value={account.code}>{account.code} — {account.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.caixaUi.glAccountHint}</p>
             </div>
             <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
               <div>

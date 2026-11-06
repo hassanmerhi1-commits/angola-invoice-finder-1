@@ -171,6 +171,8 @@ export interface Caixa {
   pettyLimit?: number; // Max amount for single petty cash expense
   dailyLimit?: number; // Max daily expense without approval
   requiresApproval?: boolean;
+  /** Chart account that receives this till's cash. Empty keeps the shop match. */
+  glAccountCode?: string;
   createdAt: string;
   updatedAt?: string;
 }

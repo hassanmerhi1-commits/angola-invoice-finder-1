@@ -19,6 +19,10 @@ export interface Branch {
   phone: string;
   isMain: boolean;
   priceLevel: number; // 1-4, which price column this branch uses
+  /** Leaf revenue account for this city's sales. Empty keeps 613. */
+  salesAccountCode?: string;
+  /** Leaf purchase account for this city's goods. Empty keeps 212. */
+  purchaseAccountCode?: string;
   createdAt: string;
 }
 

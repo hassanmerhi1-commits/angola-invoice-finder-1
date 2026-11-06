@@ -589,6 +589,7 @@ export async function saveCaixa(caixa: Caixa): Promise<void> {
         pettyLimit: caixa.pettyLimit,
         dailyLimit: caixa.dailyLimit,
         requiresApproval: caixa.requiresApproval,
+        glAccountCode: caixa.glAccountCode || '',
       });
       if (!res.error) {
         invalidateCaixaListCache(caixa.branchId, caixa.branchName);
@@ -625,7 +626,8 @@ export async function createCaixa(
   name: string,
   openingBalance: number = 0,
   pettyLimit?: number,
-  dailyLimit?: number
+  dailyLimit?: number,
+  glAccountCode?: string,
 ): Promise<Caixa> {
   if (await shouldLoadCaixasFromServerApi()) {
     try {
@@ -637,6 +639,7 @@ export async function createCaixa(
         pettyLimit,
         dailyLimit,
         requiresApproval: !!pettyLimit,
+        glAccountCode: glAccountCode || '',
       });
       const row = res.data ? unwrapApiItem<any>(res.data) : null;
       if (!res.error && row) {
@@ -2014,6 +2017,7 @@ function mapCaixaFromDb(row: any): Caixa {
     pettyLimit: row.petty_limit != null ? Number(row.petty_limit) : row.pettyLimit != null ? Number(row.pettyLimit) : undefined,
     dailyLimit: row.daily_limit != null ? Number(row.daily_limit) : row.dailyLimit != null ? Number(row.dailyLimit) : undefined,
     requiresApproval: !!(row.requires_approval ?? row.requiresApproval),
+    glAccountCode: String(row.gl_account_code || row.glAccountCode || '').trim(),
     openedBy: row.opened_by || row.openedBy,
     openedAt: row.opened_at || row.openedAt,
     closedBy: row.closed_by || row.closedBy,
@@ -2039,6 +2043,7 @@ function mapCaixaToDb(caixa: Caixa): any {
     petty_limit: caixa.pettyLimit || 0,
     daily_limit: caixa.dailyLimit || 0,
     requires_approval: caixa.requiresApproval ? 1 : 0,
+    gl_account_code: caixa.glAccountCode || '',
     notes: caixa.closingNotes || '',
   };
 }

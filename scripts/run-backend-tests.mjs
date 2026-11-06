@@ -26,6 +26,8 @@ const testFiles = [
   'test/agtFePayload.test.js',
   'test/agtRequestPayload.test.js',
   'test/agtFeSpec.test.js',
+  'test/fiscalNoteMirror.test.js',
+  'test/branchPostingAccounts.test.js',
   'test/expensePaymentScope.test.js',
   'test/expenseApprovers.test.js',
   'test/expenseGlPick.test.js',

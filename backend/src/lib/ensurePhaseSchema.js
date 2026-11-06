@@ -293,6 +293,45 @@ async function ensureBranchPricingColumn(db) {
   }
 }
 
+/** City sales/purchase accounts, and the cash account chosen on each till. */
+async function ensureBranchPostingColumns(db) {
+  const addSqlite = (table, column, ddl) => {
+    if (!db.sqlite) return;
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma(`table_info(${table})`);
+    } catch (_) {
+      return;
+    }
+    if (!cols.length || cols.some((col) => col.name === column)) return;
+    try {
+      db.sqlite.exec(ddl);
+    } catch (err) {
+      console.warn(`[SCHEMA] ${table}.${column}:`, err.message);
+    }
+  };
+
+  if (db.engine === 'postgres') {
+    const statements = [
+      'ALTER TABLE branches ADD COLUMN IF NOT EXISTS sales_account_code TEXT',
+      'ALTER TABLE branches ADD COLUMN IF NOT EXISTS purchase_account_code TEXT',
+      'ALTER TABLE caixas ADD COLUMN IF NOT EXISTS gl_account_code TEXT',
+    ];
+    for (const statement of statements) {
+      try {
+        await db.query(statement);
+      } catch (err) {
+        if (err.code !== '42701') console.warn('[SCHEMA] posting account column:', err.message);
+      }
+    }
+    return;
+  }
+
+  addSqlite('branches', 'sales_account_code', 'ALTER TABLE branches ADD COLUMN sales_account_code TEXT');
+  addSqlite('branches', 'purchase_account_code', 'ALTER TABLE branches ADD COLUMN purchase_account_code TEXT');
+  addSqlite('caixas', 'gl_account_code', 'ALTER TABLE caixas ADD COLUMN gl_account_code TEXT');
+}
+
 async function ensureCoaDisplayTabColumn(db) {
   if (db.engine === 'postgres') {
     try {
@@ -1355,6 +1394,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientPricingColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
+    await ensureBranchPostingColumns(db);
     await ensureBranchActiveColumn(db);
     await ensureCoaDisplayTabColumn(db);
     await ensureProductPriceOverrideColumn(db);
@@ -1450,6 +1490,7 @@ async function ensurePhaseSchema(db) {
     await ensureClientPricingColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
+    await ensureBranchPostingColumns(db);
     await ensureBranchActiveColumn(db);
     await ensureCoaDisplayTabColumn(db);
     await ensureProductPriceOverrideColumn(db);
@@ -1504,6 +1545,7 @@ module.exports = {
   ensureClientPricingColumns,
   ensureClientsUniqueNif,
   ensureBranchPricingColumn,
+  ensureBranchPostingColumns,
   ensureBranchActiveColumn,
   ensureCoaDisplayTabColumn,
   ensureProductPriceOverrideColumn,

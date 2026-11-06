@@ -19,6 +19,10 @@ const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema'
 const { resolveBranchFilterId } = require('./lib/branchIdMatch');
 const { isCashPaymentMethod, recordCashRefundOnOpenSession } = require('./lib/caixaCashRefund');
 const { requireBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('./lib/resolveBranchCaixaGlAccount');
+const {
+  resolveRevenueAccountForDocument,
+  postedSaleSettlementAccount,
+} = require('./lib/branchPostingAccounts');
 const db = require('./db');
 
 function roundMoney(value) {
@@ -209,16 +213,22 @@ async function processCreditNote(client, data) {
     }
   }
 
+  const revenueAccountCode = await resolveRevenueAccountForDocument(client, {
+    saleId: sale.id,
+    branchId,
+  });
   const journalLines = [
-    { accountCode: '613', description: `NC ${documentNumber}`, debit: subtotal, credit: 0 },
+    { accountCode: revenueAccountCode, description: `NC ${documentNumber}`, debit: subtotal, credit: 0 },
   ];
   if (taxAmount > 0) {
     journalLines.push({ accountCode: '3452', description: `IVA NC ${documentNumber}`, debit: taxAmount, credit: 0 });
   }
   // Credit the SAME account the sale debited: 45x cash, 311 credit AR, or bank leaf / 431.
-  let refundAccountCode = '431';
+  let refundAccountCode = await postedSaleSettlementAccount(client, sale.id);
   const salePayMethod = String(sale.payment_method || '').toLowerCase();
-  if (isCashPaymentMethod(sale.payment_method)) {
+  if (refundAccountCode) {
+    // The original sale journal already names the till, the customer, or the bank.
+  } else if (isCashPaymentMethod(sale.payment_method)) {
     const linkSp = 'branch_caixa_link';
     await client.query(`SAVEPOINT ${linkSp}`);
     try {
@@ -236,6 +246,7 @@ async function processCreditNote(client, data) {
       branchName,
       branchCode,
       saleId: sale.id,
+      caixaId: sale.caixa_id || sale.caixaId,
     });
   } else if (salePayMethod === 'credit') {
     const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
@@ -441,8 +452,10 @@ async function processDebitNote(client, data) {
     );
   }
 
-  let debitAccountCode = '431';
-  if (originalInvoiceId) {
+  let debitAccountCode = originalInvoiceId
+    ? await postedSaleSettlementAccount(client, originalInvoiceId)
+    : '';
+  if (!debitAccountCode && originalInvoiceId) {
     const payRes = await client.query(
       `SELECT payment_method, client_id, customer_name, branch_id FROM sales WHERE id = $1 LIMIT 1`,
       [originalInvoiceId],
@@ -459,6 +472,7 @@ async function processDebitNote(client, data) {
     } else if (orig && isCashPaymentMethod(orig.payment_method)) {
       debitAccountCode = await requireBranchCaixaGlAccountCode(client, {
         branchId: orig.branch_id || branchId,
+        caixaId: orig.caixa_id || null,
       });
     } else {
       const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
@@ -466,7 +480,7 @@ async function processDebitNote(client, data) {
         branchId: orig?.branch_id || branchId,
       });
     }
-  } else {
+  } else if (!debitAccountCode) {
     const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
     debitAccountCode = await resolveBankGlForTreasury(client, { branchId });
   }
@@ -478,7 +492,7 @@ async function processDebitNote(client, data) {
       debit: total,
       credit: 0,
     },
-    { accountCode: '613', description: `ND ${documentNumber}`, debit: 0, credit: subtotal },
+    { accountCode: await resolveRevenueAccountForDocument(client, { saleId: originalInvoiceId, branchId }), description: `ND ${documentNumber}`, debit: 0, credit: subtotal },
   ];
   if (taxAmount > 0) {
     journalLines.push({ accountCode: '3452', description: `IVA ND ${documentNumber}`, debit: 0, credit: taxAmount });

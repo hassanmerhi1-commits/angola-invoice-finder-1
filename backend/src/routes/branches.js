@@ -4,6 +4,7 @@ const db = require('../db');
 const { branchesListSql, deactivateBranchSql, deactivateBranchWarehousesSql } = require('../lib/sqlDialect');
 const { ensureBranchCaixaAccount, ensureAllBranchCaixaAccounts, upsertOperationalCaixaFromAccount } = require('../lib/branchCaixaAccounts');
 const { requirePermission } = require('../middleware/requirePermission');
+const { requireLeafAccount } = require('../lib/branchPostingAccounts');
 const crypto = require('crypto');
 const { auditErpSafe } = require('../lib/erpAudit');
 
@@ -11,6 +12,36 @@ const { auditErpSafe } = require('../lib/erpAudit');
 function clampPriceLevel(value) {
   const n = Math.trunc(Number(value));
   return n >= 1 && n <= 4 ? n : 1;
+}
+
+function mapBranch(row) {
+  return {
+    ...row,
+    isMain: row.is_main === 1 || row.is_main === true || row.is_main === '1',
+    priceLevel: clampPriceLevel(row.price_level),
+    salesAccountCode: String(row.sales_account_code || '').trim(),
+    purchaseAccountCode: String(row.purchase_account_code || '').trim(),
+    cityId: row.city_id,
+    parentBranchId: row.parent_branch_id,
+    nodeRole: row.node_role || (row.is_main ? 'main' : 'shop'),
+  };
+}
+
+async function postingCodesFromBody(body, previous = {}) {
+  const hasSales = Object.prototype.hasOwnProperty.call(body, 'salesAccountCode')
+    || Object.prototype.hasOwnProperty.call(body, 'sales_account_code');
+  const hasPurchase = Object.prototype.hasOwnProperty.call(body, 'purchaseAccountCode')
+    || Object.prototype.hasOwnProperty.call(body, 'purchase_account_code');
+  const salesRaw = hasSales
+    ? (body.salesAccountCode ?? body.sales_account_code ?? '')
+    : (previous.sales_account_code || '');
+  const purchaseRaw = hasPurchase
+    ? (body.purchaseAccountCode ?? body.purchase_account_code ?? '')
+    : (previous.purchase_account_code || '');
+  return {
+    salesAccountCode: await requireLeafAccount(db, salesRaw, 'revenue'),
+    purchaseAccountCode: await requireLeafAccount(db, purchaseRaw, 'purchase'),
+  };
 }
 
 function buildBranchCode(name = '') {
@@ -27,16 +58,7 @@ module.exports = function(broadcastTable) {
   router.get('/', async (req, res) => {
     try {
       const result = await db.query(branchesListSql(db));
-      res.json(
-        result.rows.map((row) => ({
-          ...row,
-          isMain: row.is_main === 1 || row.is_main === true || row.is_main === '1',
-          priceLevel: clampPriceLevel(row.price_level),
-          cityId: row.city_id,
-          parentBranchId: row.parent_branch_id,
-          nodeRole: row.node_role || (row.is_main ? 'main' : 'shop'),
-        }))
-      );
+      res.json(result.rows.map(mapBranch));
     } catch (error) {
       console.error('[BRANCHES ERROR]', error);
       res.status(500).json({ error: 'Failed to fetch branches' });
@@ -50,6 +72,7 @@ module.exports = function(broadcastTable) {
       await client.query('BEGIN');
 
       const { name, code, address, phone, isMain, priceLevel } = req.body;
+      const posting = await postingCodesFromBody(req.body);
       const normalizedName = String(name || '').trim();
       const normalizedPriceLevel = clampPriceLevel(priceLevel);
       let normalizedCode = String(code || '').trim().toUpperCase();
@@ -75,10 +98,19 @@ module.exports = function(broadcastTable) {
       }
       
       const result = await client.query(
-        `INSERT INTO branches (name, code, address, phone, is_main, price_level)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO branches (name, code, address, phone, is_main, price_level, sales_account_code, purchase_account_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
-         [normalizedName, normalizedCode, address?.trim?.() || '', phone?.trim?.() || '', isMain || false, normalizedPriceLevel]
+         [
+           normalizedName,
+           normalizedCode,
+           address?.trim?.() || '',
+           phone?.trim?.() || '',
+           isMain || false,
+           normalizedPriceLevel,
+           posting.salesAccountCode,
+           posting.purchaseAccountCode,
+         ]
       );
 
       const branch = result.rows[0];
@@ -122,14 +154,15 @@ module.exports = function(broadcastTable) {
         description: `Filial criada: ${normalizedName} (${normalizedCode})`,
         newValues: { name: normalizedName, code: normalizedCode, isMain: isMain || false },
       });
-      res.status(201).json(branch);
+      res.status(201).json(mapBranch(branch));
     } catch (error) {
       await client.query('ROLLBACK');
       console.error('[BRANCHES ERROR]', error);
       if (error.code === '23505') {
         return res.status(409).json({ error: 'Branch code already exists. Please try again.' });
       }
-      res.status(500).json({ error: error.message || 'Failed to create branch' });
+      const status = error.status || 500;
+      res.status(status).json({ error: error.message || 'Failed to create branch' });
     } finally {
       client.release();
     }
@@ -155,6 +188,11 @@ module.exports = function(broadcastTable) {
     try {
       const { id } = req.params;
       const { name, code, address, phone, isMain, priceLevel } = req.body;
+      const previous = await db.query(
+        'SELECT sales_account_code, purchase_account_code FROM branches WHERE id = $1',
+        [id],
+      );
+      const posting = await postingCodesFromBody(req.body, previous.rows[0] || {});
       const normalizedName = String(name || '').trim();
       const normalizedPriceLevel = priceLevel == null ? null : clampPriceLevel(priceLevel);
       let normalizedCode = String(code || '').trim().toUpperCase() || buildBranchCode(normalizedName);
@@ -170,9 +208,21 @@ module.exports = function(broadcastTable) {
       }
       
       const result = await db.query(
-        `UPDATE branches SET name = $1, code = $2, address = $3, phone = $4, is_main = $5, price_level = COALESCE($6, price_level)
-         WHERE id = $7 RETURNING *`,
-         [normalizedName, normalizedCode, address?.trim?.() || '', phone?.trim?.() || '', isMain, normalizedPriceLevel, id]
+        `UPDATE branches SET name = $1, code = $2, address = $3, phone = $4, is_main = $5,
+            price_level = COALESCE($6, price_level),
+            sales_account_code = $7, purchase_account_code = $8
+         WHERE id = $9 RETURNING *`,
+         [
+           normalizedName,
+           normalizedCode,
+           address?.trim?.() || '',
+           phone?.trim?.() || '',
+           isMain,
+           normalizedPriceLevel,
+           posting.salesAccountCode,
+           posting.purchaseAccountCode,
+           id,
+         ]
       );
 
       if (result.rowCount === 0) {
@@ -188,20 +238,14 @@ module.exports = function(broadcastTable) {
         description: `Filial actualizada: ${normalizedName} (${normalizedCode})`,
         newValues: { name: normalizedName, code: normalizedCode, isMain },
       });
-      res.json({
-        ...row,
-        isMain: row.is_main === 1 || row.is_main === true || row.is_main === '1',
-        priceLevel: clampPriceLevel(row.price_level),
-        cityId: row.city_id,
-        parentBranchId: row.parent_branch_id,
-        nodeRole: row.node_role || (row.is_main ? 'main' : 'shop'),
-      });
+      res.json(mapBranch(row));
     } catch (error) {
       console.error('[BRANCHES ERROR]', error);
       if (error.code === '23505') {
         return res.status(409).json({ error: 'Branch code already exists' });
       }
-      res.status(500).json({ error: 'Failed to update branch' });
+      const status = error.status || 500;
+      res.status(status).json({ error: error.message || 'Failed to update branch' });
     }
   });
 

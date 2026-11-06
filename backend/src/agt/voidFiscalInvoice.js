@@ -8,6 +8,10 @@ const { restoreStockAtCurrentCost, auditLog, validatePeriod } = require('../tran
 const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { transmitVoid } = require('./connector');
 const { requireBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('../lib/resolveBranchCaixaGlAccount');
+const {
+  resolveRevenueAccountForDocument,
+  postedSaleSettlementAccount,
+} = require('../lib/branchPostingAccounts');
 const { isCashPaymentMethod } = require('../lib/caixaCashRefund');
 const { resolveSaleJournalAmounts } = require('../lib/saleJournalAmounts');
 
@@ -97,15 +101,18 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
     const total = saleAmounts.total;
     const paymentMethod = sale.payment_method || 'cash';
 
-    let cashAccountCode = '431';
+    let cashAccountCode = await postedSaleSettlementAccount(client, invoiceId);
     const payMethod = String(paymentMethod || '').toLowerCase();
-    if (isCashPaymentMethod(paymentMethod)) {
+    if (cashAccountCode) {
+      // Reverse the till, customer, or bank account the sale actually used.
+    } else if (isCashPaymentMethod(paymentMethod)) {
       await linkOrphanBranchCaixaAccounts(client);
       cashAccountCode = await requireBranchCaixaGlAccountCode(client, {
         branchId,
         branchName: sale.branch_name,
         branchCode: sale.branch_code,
         saleId: invoiceId,
+        caixaId: sale.caixa_id,
       });
     } else if (payMethod === 'credit') {
       const { resolveEntityAccountCode } = require('../lib/entityCoaAccounts');
@@ -122,7 +129,7 @@ async function voidFiscalInvoice(invoiceId, options = {}) {
 
     const reverseLines = [
       { accountCode: cashAccountCode, description: `Anulação ${invoiceNumber}`, debit: 0, credit: total },
-      { accountCode: '613', description: `Anulação receita ${invoiceNumber}`, debit: subtotal, credit: 0 },
+      { accountCode: await resolveRevenueAccountForDocument(client, { saleId: invoiceId, branchId }), description: `Anulação receita ${invoiceNumber}`, debit: subtotal, credit: 0 },
     ];
     if (taxAmount > 0) {
       reverseLines.push({
