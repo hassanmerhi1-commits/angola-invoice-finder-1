@@ -545,6 +545,7 @@ async function ensureSupplierSubAccountElectron(
       [`${resolvedParentCode}%`]
     );
     const code = nextEntityAccountCode(resolvedParentCode, siblings.data || []);
+    if (!/^\d{8}$/.test(code)) return null;
 
     const insertResult = await ipcInsert('chart_of_accounts', {
       id: generateId(),

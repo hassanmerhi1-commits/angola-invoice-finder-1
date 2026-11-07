@@ -281,6 +281,7 @@ const ENTITY_ACCOUNT_CODE_LENGTH = 8;
 
 // Next free 8-digit code under a parent (parent "321" -> "32100001").
 function nextEntityAccountCode(parentCode: string, accounts: Account[]): string {
+  if (!parentCode || parentCode.length >= ENTITY_ACCOUNT_CODE_LENGTH) return '';
   const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length;
   const maxSeq = accounts.reduce((max, a) => {
     const c = a.code || '';

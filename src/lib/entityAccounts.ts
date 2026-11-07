@@ -62,12 +62,12 @@ export function shiftLeafCodesAfterDelete<T extends CodeLike & { id?: string | n
  */
 export function nextEntityAccountCode(parentCode: string, accounts: CodeLike[]): string {
   const parent = String(parentCode || '').trim();
-  if (!parent) return '';
+  if (!parent || parent.length >= ENTITY_ACCOUNT_CODE_LENGTH) return '';
   const headers = (accounts || [])
     .filter((a) => a?.is_header)
     .map((a) => String(a.code || ''))
     .filter((code) => code.startsWith(parent) && code !== parent && code.length < ENTITY_ACCOUNT_CODE_LENGTH);
-  const suffixLen = Math.max(1, ENTITY_ACCOUNT_CODE_LENGTH - parent.length);
+  const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parent.length;
   const maxSeq = (accounts || []).reduce((max, a) => {
     if (a?.is_header) return max;
     const code = String(a?.code || '');
@@ -82,12 +82,33 @@ export function nextEntityAccountCode(parentCode: string, accounts: CodeLike[]):
 /** Next compact header under a parent (321 → 3211, 45 → 451) that is not already used. */
 export function nextCompactChildCode(parentCode: string, usedCodes: Array<string | { code?: string | null }>): string {
   const parent = String(parentCode || '').trim();
+  if (!parent || parent.length >= ENTITY_ACCOUNT_CODE_LENGTH - 1) return '';
   const used = new Set(
     (usedCodes || []).map((item) => (typeof item === 'string' ? item : String(item?.code || '')).trim()),
   );
   let n = 1;
-  while (used.has(`${parent}${n}`)) n += 1;
-  return `${parent}${n}`;
+  while (n < 100 && used.has(`${parent}${n}`)) n += 1;
+  const candidate = `${parent}${n}`;
+  if (candidate.length >= ENTITY_ACCOUNT_CODE_LENGTH) return '';
+  return candidate;
+}
+
+/** Group that can hold an 8-digit leaf. An 8-digit account walks up to its group. */
+export function postingParentAccount<T extends CodeLike & { id?: string | null }>(
+  selected: T | null | undefined,
+  accounts: T[],
+): T | null {
+  if (!selected) return null;
+  const byId = new Map((accounts || []).map((account) => [String(account.id || ''), account]));
+  let current: T | undefined = selected;
+  const seen = new Set<string>();
+  while (current && !seen.has(String(current.id || ''))) {
+    seen.add(String(current.id || ''));
+    if (isCompactCategoryParent(String(current.code || ''))) return current;
+    const parentId = String(current.parent_id || '');
+    current = parentId ? byId.get(parentId) : undefined;
+  }
+  return null;
 }
 
 export function isSupplierCategoryParent(code: string): boolean {

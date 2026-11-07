@@ -18,6 +18,7 @@ describe('supplier COA claim compact codes', () => {
   let claimChartAccountCode;
   let findEntityLeafCode;
   let ensureSupplierSubAccount;
+  let recodeOverlongLeaves;
 
   before(() => {
     harness = createSqliteHarness();
@@ -28,6 +29,7 @@ describe('supplier COA claim compact codes', () => {
       claimChartAccountCode,
       findEntityLeafCode,
       ensureSupplierSubAccount,
+      recodeOverlongLeaves,
     } = require(path.join(BACKEND_SRC, 'lib/entityCoaAccounts')));
   });
 
@@ -44,6 +46,31 @@ describe('supplier COA claim compact codes', () => {
     assert.equal(isCashCategoryParent('4511'), true);
     assert.equal(isCashCategoryParent('45110001'), false);
     assert.equal(nextEntityAccountCode('4511', ['45', '4511'], ['4511']), '45110001');
+    assert.equal(nextEntityAccountCode('45121001', ['45121001', '451210011'], ['45121']), '');
+    assert.equal(nextEntityAccountCode('45121', ['45121', '45121001'], ['45121']), '45121002');
+  });
+
+  it('shortens a 9-digit cash leaf so the cash tab can list it', async () => {
+    const andreiaId = randomUUID();
+    await harness.withClient(async (client) => {
+      const group = await client.query(`SELECT id FROM chart_of_accounts WHERE code = '45121' LIMIT 1`);
+      const leaf = await client.query(`SELECT id FROM chart_of_accounts WHERE code = '45121001' LIMIT 1`);
+      assert.ok(group.rows[0]?.id);
+      assert.ok(leaf.rows[0]?.id);
+      await client.query(
+        `INSERT INTO chart_of_accounts
+           (id, code, name, account_type, account_nature, parent_id, level, is_header, is_active)
+         VALUES ($1, '451210011', 'Caixa - SOYO 03 ANDREIA', 'asset', 'debit', $2, 5, 0, 1)`,
+        [andreiaId, leaf.rows[0].id],
+      );
+      const moved = await recodeOverlongLeaves(client);
+      const andreia = moved.find((row) => row.oldCode === '451210011');
+      assert.ok(andreia);
+      assert.equal(andreia.newCode, '45121002');
+      const row = await client.query('SELECT code, parent_id FROM chart_of_accounts WHERE id = $1', [andreiaId]);
+      assert.equal(row.rows[0].code, '45121002');
+      assert.equal(String(row.rows[0].parent_id), String(group.rows[0].id));
+    });
   });
 
   it('finds an old compact 3211 supplier leaf by name', async () => {

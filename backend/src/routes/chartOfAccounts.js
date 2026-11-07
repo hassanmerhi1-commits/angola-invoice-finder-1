@@ -676,6 +676,7 @@ module.exports = function(broadcastTable) {
       const {
         claimChartAccountCode,
         nextEntityAccountCode,
+        forceEightDigitLeaf,
         isCompactCategoryParent,
         promoteToCategoryHeader,
         SUPPLIER_PARENT_CODE,
@@ -707,17 +708,33 @@ module.exports = function(broadcastTable) {
         } else if (isCompactCategoryParent(String(code).replace(/\d$/, ''))) {
           resolvedParent = String(code).replace(/\d$/, '');
         }
-        if (resolvedParent) {
+        if (resolvedParent && String(resolvedParent).length < 8) {
           const used = await db.query(
             'SELECT code, is_header FROM chart_of_accounts WHERE CAST(code AS TEXT) LIKE $1',
             [`${resolvedParent}%`],
           );
-          code = nextEntityAccountCode(
+          const next = nextEntityAccountCode(
             resolvedParent,
             (used.rows || []).map((r) => r.code),
             (used.rows || []).filter((r) => r.is_header === true || r.is_header === 1).map((r) => r.code),
           );
+          if (next) code = next;
         }
+      }
+
+      if (!wantHeader && !/^\d{8}$/.test(String(code || '').trim())) {
+        const fixed = await forceEightDigitLeaf(db, { code, parentId: parent_id });
+        if (fixed.code) code = fixed.code;
+        if (fixed.parentId) parent_id = fixed.parentId;
+        if (fixed.level) level = fixed.level;
+      }
+      if (wantHeader && String(code || '').trim().length >= 8) {
+        return res.status(400).json({ error: 'Um grupo tem de ter menos de 8 dígitos.' });
+      }
+      if (!wantHeader && !/^\d{8}$/.test(String(code || '').trim())) {
+        return res.status(400).json({
+          error: 'Uma conta nova tem de ter 8 dígitos. Escolha um grupo, como 451 ou 4512.',
+        });
       }
 
       const claim = await claimChartAccountCode(db, { code, isHeader: wantHeader });

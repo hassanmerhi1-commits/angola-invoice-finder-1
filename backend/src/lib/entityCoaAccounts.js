@@ -23,17 +23,21 @@ function normalizeNif(value) {
 }
 
 function nextEntityAccountCode(parentCode, existingCodes, nestedHeaderCodes) {
+  const parent = String(parentCode || '').trim();
+  // A leaf is exactly 8 digits. A parent that is already 8 digits must not grow a 9th.
+  if (!parent || parent.length >= ENTITY_ACCOUNT_CODE_LENGTH) return '';
   const headers = (nestedHeaderCodes || []).filter(
-    (h) => h && h !== parentCode && String(h).startsWith(parentCode) && String(h).length > parentCode.length,
+    (h) => h && h !== parent && String(h).startsWith(parent) && String(h).length > parent.length && String(h).length < ENTITY_ACCOUNT_CODE_LENGTH,
   );
-  const suffixLen = Math.max(1, ENTITY_ACCOUNT_CODE_LENGTH - parentCode.length);
+  const suffixLen = ENTITY_ACCOUNT_CODE_LENGTH - parent.length;
   const maxSeq = existingCodes.reduce((max, code) => {
-    if (!code || !code.startsWith(parentCode) || code.length !== ENTITY_ACCOUNT_CODE_LENGTH) return max;
-    if (headers.some((h) => code.startsWith(h))) return max;
-    const parsed = Number(code.slice(parentCode.length));
+    const value = String(code || '').trim();
+    if (!value.startsWith(parent) || value.length !== ENTITY_ACCOUNT_CODE_LENGTH) return max;
+    if (headers.some((h) => value.startsWith(h))) return max;
+    const parsed = Number(value.slice(parent.length));
     return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
   }, 0);
-  return `${parentCode}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
+  return `${parent}${String(maxSeq + 1).padStart(suffixLen, '0')}`;
 }
 
 function isTruthyFlag(value) {
@@ -61,10 +65,14 @@ function isCompactEntityCode(code) {
 
 function nextCompactChildCode(parentCode, existingCodes) {
   const parent = String(parentCode || '').trim();
+  // The next group must stay shorter than 8 so it cannot occupy a leaf number.
+  if (!parent || parent.length >= ENTITY_ACCOUNT_CODE_LENGTH - 1) return '';
   const used = new Set((existingCodes || []).map((c) => String(c || '').trim()));
   let n = 1;
   while (used.has(`${parent}${n}`)) n += 1;
-  return `${parent}${n}`;
+  const candidate = `${parent}${n}`;
+  if (candidate.length >= ENTITY_ACCOUNT_CODE_LENGTH) return '';
+  return candidate;
 }
 
 /** 321 itself or a compact header under it (3211, 32111). Not an 8-digit supplier leaf. */
@@ -739,6 +747,27 @@ async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
       WHERE CAST(gl_account_code AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
   );
+  await runRewrite(
+    client,
+    `UPDATE caixas
+        SET gl_account_code = $1
+      WHERE CAST(gl_account_code AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  );
+  await runRewrite(
+    client,
+    `UPDATE branches
+        SET sales_account_code = $1
+      WHERE CAST(sales_account_code AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  );
+  await runRewrite(
+    client,
+    `UPDATE branches
+        SET purchase_account_code = $1
+      WHERE CAST(purchase_account_code AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  );
 }
 
 function retiredLeafCode(id) {
@@ -948,7 +977,158 @@ async function rewriteMovedCodes(client, moves) {
   }
 }
 
-const CHART_ROWS_SQL = 'SELECT id, code, parent_id, is_header, is_active, display_tab, account_type FROM chart_of_accounts';
+const CHART_ROWS_SQL = 'SELECT id, code, name, parent_id, level, is_header, is_active, display_tab, account_type FROM chart_of_accounts';
+
+function isOverlongLeafCode(code, isHeader) {
+  const value = String(code || '').trim();
+  return !isTruthyFlag(isHeader) && /^\d{9,}$/.test(value);
+}
+
+function compactParentOf(leaf, rows, byId) {
+  let parent = byId.get(String(leaf.parent_id || ''));
+  const seen = new Set();
+  while (parent && !seen.has(String(parent.id))) {
+    seen.add(String(parent.id));
+    const code = String(parent.code || '').trim();
+    if (isCompactCategoryParent(code)) return parent;
+    parent = byId.get(String(parent.parent_id || ''));
+  }
+  const value = String(leaf.code || '').trim();
+  for (let len = Math.min(7, value.length - 1); len >= 2; len -= 1) {
+    const prefix = value.slice(0, len);
+    const match = rows.find((row) => String(row.code || '').trim() === prefix && isActiveFlag(row.is_active));
+    if (match && isCompactCategoryParent(String(match.code || ''))) return match;
+  }
+  return null;
+}
+
+/**
+ * A leaf saved with 9 or more digits (451210011 under 45121001) is moved to the
+ * next free 8-digit number under the nearest group. The account id stays, so
+ * journals remain attached. Drawer links stored by the old number are rewritten.
+ */
+async function recodeOverlongLeaves(client) {
+  const all = await client.query(CHART_ROWS_SQL);
+  const rows = all.rows || [];
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  const overlong = rows
+    .filter((row) => isActiveFlag(row.is_active) && isOverlongLeafCode(row.code, row.is_header))
+    .sort((a, b) => String(b.code).length - String(a.code).length || String(a.code).localeCompare(String(b.code)));
+  const used = new Set(rows.map((row) => String(row.code || '').trim()));
+  const moves = [];
+  for (const leaf of overlong) {
+    const parent = compactParentOf(leaf, rows, byId);
+    if (!parent) continue;
+    const parentCode = String(parent.code || '').trim();
+    const family = [];
+    const headers = [];
+    for (const code of used) {
+      if (!code.startsWith(parentCode)) continue;
+      family.push(code);
+    }
+    for (const row of rows) {
+      const code = String(row.code || '').trim();
+      if (isTruthyFlag(row.is_header) && code.startsWith(parentCode)) headers.push(code);
+    }
+    let newCode = nextEntityAccountCode(parentCode, family, headers);
+    let guard = 0;
+    while (newCode && used.has(newCode) && guard < 30) {
+      family.push(newCode);
+      newCode = nextEntityAccountCode(parentCode, family, headers);
+      guard += 1;
+    }
+    if (!newCode || newCode.length !== ENTITY_ACCOUNT_CODE_LENGTH || used.has(newCode)) continue;
+    used.add(newCode);
+    used.delete(String(leaf.code || '').trim());
+    moves.push({
+      id: leaf.id,
+      oldCode: String(leaf.code || '').trim(),
+      newCode,
+      parentId: parent.id,
+      level: (parseInt(parent.level, 10) || 1) + 1,
+    });
+  }
+  const applied = [];
+  for (const move of moves) {
+    const parked = await runChartUpdate(
+      client,
+      'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [retiredLeafCode(move.id), move.id],
+    );
+    if (!parked) continue;
+    const ok = await runChartUpdate(
+      client,
+      `UPDATE chart_of_accounts
+          SET code = $1, parent_id = $2, level = $3, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $4`,
+      [move.newCode, move.parentId, move.level, move.id],
+    );
+    if (ok) applied.push(move);
+    else {
+      await runChartUpdate(
+        client,
+        'UPDATE chart_of_accounts SET code = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        [move.oldCode, move.id],
+      );
+    }
+  }
+  return applied;
+}
+
+/**
+ * A new leaf must be 8 digits under a group (451, 4512), never under another leaf.
+ * Returns the code and parent to store. An already-valid 8-digit code is kept.
+ */
+async function forceEightDigitLeaf(client, { code, parentId } = {}) {
+  let parent = null;
+  if (parentId) {
+    const row = await client.query(
+      'SELECT id, code, parent_id, level FROM chart_of_accounts WHERE id = $1 LIMIT 1',
+      [parentId],
+    );
+    parent = row.rows?.[0] || null;
+  }
+  const seen = new Set();
+  while (
+    parent
+    && String(parent.code || '').trim().length >= ENTITY_ACCOUNT_CODE_LENGTH
+    && parent.parent_id
+    && !seen.has(String(parent.id))
+  ) {
+    seen.add(String(parent.id));
+    const up = await client.query(
+      'SELECT id, code, parent_id, level FROM chart_of_accounts WHERE id = $1 LIMIT 1',
+      [parent.parent_id],
+    );
+    parent = up.rows?.[0] || null;
+  }
+  const parentCode = String(parent?.code || '').trim();
+  const current = String(code || '').trim();
+  const fits = /^\d{8}$/.test(current)
+    && isCompactCategoryParent(parentCode)
+    && current.startsWith(parentCode);
+  if (fits) {
+    return { code: current, parentId: parent.id, level: (parseInt(parent.level, 10) || 1) + 1 };
+  }
+  if (!parent || !isCompactCategoryParent(parentCode)) {
+    return { code: current, parentId: parentId || null, level: null };
+  }
+  const used = await client.query(
+    'SELECT code, is_header FROM chart_of_accounts WHERE CAST(code AS TEXT) LIKE $1',
+    [`${parentCode}%`],
+  );
+  const next = nextEntityAccountCode(
+    parentCode,
+    (used.rows || []).map((row) => row.code),
+    (used.rows || []).filter((row) => isTruthyFlag(row.is_header)).map((row) => row.code),
+  );
+  if (!next) return { code: current, parentId: parentId || null, level: null };
+  return {
+    code: next,
+    parentId: parent.id,
+    level: (parseInt(parent.level, 10) || 1) + 1,
+  };
+}
 
 /** Close existing 8-digit holes on every parent. Safe to run on each server start. */
 async function compactLeafCodeGaps(client) {
@@ -984,10 +1164,11 @@ async function ensureLeafCodeGapsClosed(db) {
       release = () => client.release();
       await client.query('BEGIN');
     }
+    const recoded = await recodeOverlongLeaves(client);
     const all = await client.query(CHART_ROWS_SQL);
     const moves = planLeafCodeCompaction(all.rows || []);
-    planned = moves.length;
-    applied = await applyChartCodeMoves(client, moves);
+    planned = moves.length + recoded.length;
+    applied = recoded.concat(await applyChartCodeMoves(client, moves));
     if (release) await client.query('COMMIT');
   } catch (err) {
     if (release) {
@@ -1001,7 +1182,13 @@ async function ensureLeafCodeGapsClosed(db) {
   // Stored codes on invoices are updated after the chart numbers are saved.
   if (applied.length) {
     await rewriteMovedCodes(db, applied);
-    console.log(`[SCHEMA] Closed ${applied.length} chart account number gap(s)`);
+    const recoded = applied.filter((move) => String(move.oldCode || '').length > ENTITY_ACCOUNT_CODE_LENGTH);
+    if (recoded.length) {
+      console.log(`[SCHEMA] Shortened ${recoded.length} account number(s) to 8 digits: ${recoded.map((move) => `${move.oldCode}->${move.newCode}`).join(', ')}`);
+    }
+    if (applied.length > recoded.length) {
+      console.log(`[SCHEMA] Closed ${applied.length - recoded.length} chart account number gap(s)`);
+    }
   }
   if (applied.length || planned === 0) gapCloseDone = true;
   else console.warn('[SCHEMA] chart number gaps were not saved');
@@ -1242,6 +1429,8 @@ module.exports = {
   ENTITY_ACCOUNT_CODE_LENGTH,
   nextEntityAccountCode,
   nextCompactChildCode,
+  recodeOverlongLeaves,
+  forceEightDigitLeaf,
   isCompactEntityCode,
   isSupplierCategoryParent,
   isClientCategoryParent,

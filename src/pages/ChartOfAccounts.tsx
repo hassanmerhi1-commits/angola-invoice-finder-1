@@ -49,7 +49,7 @@ import {
   isBranchCaixaLeaf,
   isReservedCashCode,
 } from '@/lib/chartOfAccountsEngine';
-import { isCashCategoryParent, isCompactCategoryParent, isEightDigitAccountCode, nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
+import { isCashCategoryParent, isCompactCategoryParent, isEightDigitAccountCode, nextCompactChildCode, nextEntityAccountCode, postingParentAccount } from '@/lib/entityAccounts';
 
 // Category tabs
 // Angola PGC (novo com IVA) — no-dot numbering. Tabs map to PGC class/main codes:
@@ -1410,12 +1410,15 @@ export default function ChartOfAccounts() {
                               code: editingAccount ? prev.code : buildSuggestedRootCode(rootCodes),
                             };
                           }
-                          const children = accounts.filter(a => a.parent_id === parent.id && a.is_active !== false);
+                          const postingParent = prev.is_header
+                            ? parent
+                            : (postingParentAccount(parent, accounts) || parent);
+                          const children = accounts.filter(a => a.parent_id === postingParent.id && a.is_active !== false);
                           return {
                             ...prev,
-                            parent_id: parentId,
-                            level: parent.level + 1,
-                            code: editingAccount ? prev.code : buildSuggestedChildCode(parent.code, children.map(c => c.code), prev.is_header, accounts),
+                            parent_id: postingParent.id,
+                            level: (postingParent.level || 1) + 1,
+                            code: editingAccount ? prev.code : buildSuggestedChildCode(postingParent.code, children.map(c => c.code), prev.is_header, accounts),
                             account_type: parent.account_type,
                             account_nature: parent.account_nature,
                           };
