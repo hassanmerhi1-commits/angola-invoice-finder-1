@@ -71,9 +71,18 @@ jobs:
         run: node scripts/stage-updater-runtime-deps.cjs
 
       - name: Build Electron installer
-        run: npx electron-builder --win --publish never --config.win.signAndEditExecutable=false
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for ($i = 1; $i -le 4; $i++) {
+            npx electron-builder --win --publish never --config.win.signAndEditExecutable=false
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "electron-builder failed (attempt $i of 4)"
+            if (Test-Path release) { Remove-Item -Recurse -Force release }
+            Start-Sleep 30
+          }
+          exit 1
 
       - name: Build city-server update pack
         run: |
