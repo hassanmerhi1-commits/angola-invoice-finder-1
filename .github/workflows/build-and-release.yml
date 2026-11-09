@@ -23,14 +23,38 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 5; $i++) {
+            npm install --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=120000
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "npm install failed (attempt $i of 5)"
+            Start-Sleep 25
+          }
+          exit 1
 
       - name: Install backend dependencies
-        run: npm ci --omit=dev
+        shell: pwsh
         working-directory: backend
+        run: |
+          for ($i = 1; $i -le 5; $i++) {
+            npm ci --omit=dev --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=120000
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "backend npm ci failed (attempt $i of 5)"
+            Start-Sleep 25
+          }
+          exit 1
 
       - name: Install Electron build dependencies
-        run: npm install --save-dev electron electron-builder
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 5; $i++) {
+            npm install --save-dev electron electron-builder --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=120000
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "electron install failed (attempt $i of 5)"
+            Start-Sleep 25
+          }
+          exit 1
 
       - name: Build web application
         run: npm run build
