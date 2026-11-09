@@ -105,9 +105,102 @@ async function backfillMissingCustomerOpenItems() {
   if (created > 0) {
     console.log(`[DB] Backfilled ${created} customer receivable open item(s) from credit sales`);
   }
+  const notes = await backfillMissingDebitNoteOpenItems();
+  return { created: created + notes.created, skipped: skipped + notes.skipped };
+}
+
+/**
+ * Issued customer debit notes on credit invoices that never became something a receipt can collect.
+ * Cash and card notes already posted to the till or the bank, so they are left alone.
+ */
+async function backfillMissingDebitNoteOpenItems() {
+  if (!(await tableExists('open_items')) || !(await tableExists('debit_notes')) || !(await tableExists('sales'))) {
+    return { created: 0, skipped: 0 };
+  }
+
+  const missing = await db.query(
+    `SELECT dn.id, dn.document_number, dn.total, dn.branch_id, dn.issued_at,
+            s.client_id, s.due_date
+     FROM debit_notes dn
+     INNER JOIN sales s ON s.id = dn.original_invoice_id
+     LEFT JOIN open_items oi ON oi.document_id = dn.id
+       AND oi.entity_type = 'customer'
+       AND ${OPEN_ITEM_IS_DEBIT_SQL}
+     WHERE LOWER(COALESCE(dn.status, 'issued')) NOT IN ('cancelled', 'canceled', 'voided')
+       AND LOWER(COALESCE(s.payment_method, '')) = 'credit'
+       AND TRIM(COALESCE(s.client_id, '')) != ''
+       AND COALESCE(dn.total, 0) > 0.01
+       AND oi.id IS NULL
+     ORDER BY dn.issued_at ASC
+     LIMIT 500`,
+  );
+
+  const rows = missing.rows || [];
+  if (!rows.length) return { created: 0, skipped: 0 };
+
+  const client = await db.pool.connect();
+  let created = 0;
+  let skipped = 0;
+  const touchedClients = new Set();
+
+  try {
+    await client.query('BEGIN');
+    for (const note of rows) {
+      const docDate = normalizeSqlDate(note.issued_at, { allowNull: false });
+      const dueDate = normalizeSqlDate(note.due_date);
+      try {
+        await createOpenItem(client, {
+          entityType: 'customer',
+          entityId: String(note.client_id),
+          documentType: 'debit_note',
+          documentId: String(note.id),
+          documentNumber: String(note.document_number || note.id),
+          documentDate: docDate,
+          dueDate,
+          originalAmount: Number(note.total || 0),
+          isDebit: true,
+          branchId: note.branch_id || null,
+        });
+        created += 1;
+        touchedClients.add(String(note.client_id));
+      } catch (err) {
+        if (/já registado|already|duplicate/i.test(String(err.message || ''))) {
+          skipped += 1;
+          continue;
+        }
+        throw err;
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  if (touchedClients.size > 0) {
+    const syncClient = await db.pool.connect();
+    try {
+      for (const clientId of touchedClients) {
+        try {
+          await syncClientBalanceFromOpenItems(syncClient, clientId);
+        } catch (_) {
+          /* best effort */
+        }
+      }
+    } finally {
+      syncClient.release();
+    }
+  }
+
+  if (created > 0) {
+    console.log(`[DB] Backfilled ${created} debit-note receivable(s)`);
+  }
   return { created, skipped };
 }
 
 module.exports = {
   backfillMissingCustomerOpenItems,
+  backfillMissingDebitNoteOpenItems,
 };

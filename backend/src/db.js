@@ -921,6 +921,21 @@ function ensureAgtConfigSchemaSqlite() {
   tryAlterAdd('agt_config', 'api_username TEXT');
   tryAlterAdd('agt_config', 'iva_exemption_code TEXT');
   tryAlterAdd('agt_config', 'eac_code TEXT');
+  tryAlterAdd('agt_config', 'nif_lookup_enabled INTEGER DEFAULT 0');
+  tryAlterAdd('agt_config', 'nif_lookup_url TEXT');
+  tryAlterAdd('agt_config', "nif_lookup_method TEXT DEFAULT 'GET'");
+  tryAlterAdd('agt_config', 'nif_lookup_username TEXT');
+  tryAlterAdd('agt_config', 'nif_lookup_password_encrypted TEXT');
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS nif_lookup_cache (
+      nif TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      address TEXT,
+      taxpayer_status TEXT,
+      raw_response TEXT,
+      fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
   tryAlterAdd('sales', 'atcud TEXT');
   tryAlterAdd('sales', 'agt_request_id TEXT');
   tryAlterAdd('credit_notes', 'agt_validated_at TEXT');

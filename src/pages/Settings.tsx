@@ -8,6 +8,7 @@ import { PosPricingSettingsCard } from '@/components/settings/PosPricingSettings
 import { FinalConsumerDocSettingsCard } from '@/components/settings/FinalConsumerDocSettingsCard';
 import { SigningSettingsCard } from '@/components/settings/SigningSettingsCard';
 import { AgtSettingsCard } from '@/components/settings/AgtSettingsCard';
+import { NifLookupSettingsCard } from '@/components/settings/NifLookupSettingsCard';
 import { AgtTransmissionsCard } from '@/components/settings/AgtTransmissionsCard';
 import { SecuritySettingsCard } from '@/components/settings/SecuritySettingsCard';
 import { MfaSettingsCard } from '@/components/settings/MfaSettingsCard';
@@ -287,6 +288,7 @@ export default function Settings() {
             <FinalConsumerDocSettingsCard />
             <SigningSettingsCard />
             <AgtSettingsCard />
+            <NifLookupSettingsCard />
             <AgtTransmissionsCard />
           </div>
         );

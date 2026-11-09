@@ -193,4 +193,6 @@ module.exports = {
   getAgtConfig,
   getAgtConfigWithSecrets,
   saveAgtConfig,
+  encryptApiKey,
+  decryptApiKey,
 };

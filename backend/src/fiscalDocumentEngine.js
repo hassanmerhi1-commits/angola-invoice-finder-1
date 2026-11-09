@@ -13,6 +13,7 @@ const {
   auditLog,
   validatePeriod,
   linkDocuments,
+  createOpenItem,
   syncClientBalanceFromOpenItems,
 } = require('./transactionEngine');
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
@@ -452,35 +453,43 @@ async function processDebitNote(client, data) {
     );
   }
 
-  let debitAccountCode = originalInvoiceId
-    ? await postedSaleSettlementAccount(client, originalInvoiceId)
-    : '';
-  if (!debitAccountCode && originalInvoiceId) {
+  let customerId = '';
+  let dueDate = today;
+  let debitAccountCode = '';
+  if (originalInvoiceId) {
     const payRes = await client.query(
-      `SELECT payment_method, client_id, customer_name, branch_id FROM sales WHERE id = $1 LIMIT 1`,
+      `SELECT payment_method, client_id, customer_name, branch_id, due_date
+       FROM sales WHERE id = $1 LIMIT 1`,
       [originalInvoiceId],
     );
     const orig = payRes.rows[0];
-    if (orig && String(orig.payment_method || '').toLowerCase() === 'credit') {
+    customerId = String(orig?.client_id || '').trim();
+    dueDate = orig?.due_date || today;
+    if (customerId) {
+      // The customer still owes this charge. Cash and bank are touched when the receipt is recorded.
       const { resolveEntityAccountCode } = require('./lib/entityCoaAccounts');
       debitAccountCode = await resolveEntityAccountCode(
         client,
         'client',
-        orig.client_id || null,
-        orig.customer_name || customerName || '',
+        customerId,
+        orig?.customer_name || customerName || '',
       );
     } else if (orig && isCashPaymentMethod(orig.payment_method)) {
       debitAccountCode = await requireBranchCaixaGlAccountCode(client, {
         branchId: orig.branch_id || branchId,
-        caixaId: orig.caixa_id || null,
+        caixaId: null,
       });
-    } else {
+    } else if (orig) {
       const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
       debitAccountCode = await resolveBankGlForTreasury(client, {
-        branchId: orig?.branch_id || branchId,
+        branchId: orig.branch_id || branchId,
       });
     }
-  } else if (!debitAccountCode) {
+  }
+  if (!debitAccountCode) {
+    debitAccountCode = await postedSaleSettlementAccount(client, originalInvoiceId);
+  }
+  if (!debitAccountCode) {
     const { resolveBankGlForTreasury } = require('./lib/bankGlAccounts');
     debitAccountCode = await resolveBankGlForTreasury(client, { branchId });
   }
@@ -517,6 +526,22 @@ async function processDebitNote(client, data) {
       originalInvoiceId,
       originalInvoiceNumber,
     );
+  }
+
+  if (customerId && total > 0.01) {
+    await createOpenItem(client, {
+      entityType: 'customer',
+      entityId: customerId,
+      documentType: 'debit_note',
+      documentId: noteId,
+      documentNumber,
+      documentDate: today,
+      dueDate,
+      originalAmount: total,
+      isDebit: true,
+      branchId,
+    });
+    await syncClientBalanceFromOpenItems(client, customerId);
   }
 
   await auditLog(client, {

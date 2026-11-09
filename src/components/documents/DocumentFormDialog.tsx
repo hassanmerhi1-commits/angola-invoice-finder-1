@@ -35,6 +35,8 @@ import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
+import { useNifLookup, isCompleteNif } from '@/hooks/useNifLookup';
+import { NifLookupHint } from '@/components/NifLookupHint';
 import { usePermissions } from '@/hooks/usePermissions';
 import { OPEN_ITEMS_CHANGED_EVENT, SALES_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import { newClientRequestId } from '@/lib/sync/offlineSales';
@@ -334,9 +336,59 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const adjustmentPct = clientPricing(selectedClientForPricing).adjustmentPct;
   const showPricingControls = config.entityType === 'customer' && !contentLocked;
 
+  const nifLookup = useNifLookup();
+  const [nifNameReplaced, setNifNameReplaced] = useState(false);
+  const entityNameRef = useRef(entityName);
+  entityNameRef.current = entityName;
+  const entityAddressRef = useRef(entityAddress);
+  entityAddressRef.current = entityAddress;
+
+  useEffect(() => {
+    nifLookup.reset();
+    setNifNameReplaced(false);
+  }, [open, nifLookup.reset]);
+
+  const handleNifInput = (value: string) => {
+    setEntityNif(value);
+    setNifNameReplaced(false);
+    if (!isCompleteNif(value)) {
+      nifLookup.reset();
+      return;
+    }
+    void nifLookup.lookup(value).then((res) => {
+      if (!res || res.status !== 'found' || !res.name) return;
+      if (config.entityType === 'customer' && res.source === 'client' && res.clientId) {
+        const client = clients.find((c) => String(c.id) === res.clientId);
+        if (client) {
+          setEntityPickerOpen(false);
+          fillCustomerContact(client);
+          return;
+        }
+      }
+      if (config.entityType === 'supplier' && res.source === 'supplier' && res.supplierId) {
+        const supplier = suppliers.find((s) => String(s.id) === res.supplierId);
+        if (supplier) {
+          selectEntity(supplier);
+          return;
+        }
+      }
+      const current = entityNameRef.current.trim();
+      const official = res.source === 'agt' || res.source === 'cache';
+      if (!current) {
+        setEntityName(res.name);
+      } else if (official && current.toLowerCase() !== res.name.trim().toLowerCase()) {
+        setEntityName(res.name);
+        setNifNameReplaced(true);
+      }
+      if (!entityAddressRef.current.trim() && res.address) setEntityAddress(res.address);
+    });
+  };
+
   const selectEntity = (entity: Client | Supplier) => {
     setEntityPickerOpen(false);
     setSelectedOpenItemIds(new Set());
+    nifLookup.reset();
+    setNifNameReplaced(false);
     if (config.entityType === 'customer') {
       applySavedCustomer(entity as Client);
       return;
@@ -1617,7 +1669,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                       <Label className="text-xs">{t.documentFormUi.nif}</Label>
                       <Input
                         value={entityNif}
-                        onChange={(e) => setEntityNif(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        onChange={(e) => handleNifInput(e.target.value.replace(/\D/g, '').slice(0, 10))}
                         placeholder={t.documentFormUi.walkInNifPlaceholder}
                         className="h-8 font-mono text-sm"
                         inputMode="numeric"
@@ -1625,6 +1677,13 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                         autoComplete="off"
                       />
                     </div>
+                    <NifLookupHint
+                      className="col-span-2"
+                      result={nifLookup.result}
+                      loading={nifLookup.loading}
+                      currentName={entityName}
+                      replaced={nifNameReplaced}
+                    />
                   </div>
                 )}
               </div>
@@ -1789,7 +1848,13 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t.documentFormUi.nif}</Label>
-              <Input value={entityNif} onChange={e => setEntityNif(e.target.value)} placeholder="999999999" className="h-8 text-xs" />
+              <Input value={entityNif} onChange={e => handleNifInput(e.target.value)} placeholder="999999999" className="h-8 text-xs" />
+              <NifLookupHint
+                result={nifLookup.result}
+                loading={nifLookup.loading}
+                currentName={entityName}
+                replaced={nifNameReplaced}
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t.documentFormUi.address}</Label>

@@ -879,7 +879,10 @@ function InvoiceViewPage({
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    const barcodeValue = invoice.supplierInvoiceNo || invoice.invoiceNumber;
+    const supplierNo = String(invoice.supplierInvoiceNo || '').trim();
+    const ourNo = String(invoice.invoiceNumber || '').trim();
+    const printedNo = supplierNo || ourNo;
+    const barcodeValue = printedNo;
     const barcodeBars = buildBarcodeSvgMarkup(barcodeValue);
     let qrCodeSvg = '<div class="qr-placeholder">QR</div>';
     if (!isDraft) {
@@ -919,14 +922,16 @@ function InvoiceViewPage({
         *{box-sizing:border-box}
         body{font-family:Arial,Helvetica,sans-serif;font-size:10.5px;color:#111;margin:0;background:#fff}
         .page{width:190mm;min-height:277mm;margin:0 auto;padding:4mm 2mm;position:relative}
-        .header{display:grid;grid-template-columns:30mm 1fr 58mm;gap:8mm;align-items:start}
+        .header{display:grid;grid-template-columns:28mm minmax(0,1fr) 72mm;gap:4mm;align-items:start}
+        .header > *{min-width:0}
         .logo{width:27mm;height:22mm;border:1px solid #bbb;display:flex;align-items:center;justify-content:center;overflow:hidden;font-weight:900;font-size:20px;color:#8b1d1d;letter-spacing:-1px;text-align:center}
         .logo img{max-width:100%;max-height:100%;object-fit:contain}
         .supplier h1{font-size:14px;margin:0 0 2px 0;line-height:1.05;text-transform:uppercase}
         .supplier div,.meta div,.customer div{line-height:1.28}
         .meta{text-align:center;font-size:9.5px}
         .meta .copy{font-weight:700;margin-bottom:5px}
-        .meta .docno{font-weight:700}
+        .meta .docno{font-weight:800;font-size:12px;line-height:1.25;word-break:break-word}
+        .meta .docno-kind{font-size:9px;font-weight:700}
         .barcode{height:16mm;margin:7px auto 2px;max-width:52mm;background:#fff}
         .barcode svg{width:100%;height:100%;display:block}
         .barcode-label{font-family:"Courier New",monospace;font-size:8px;letter-spacing:1px}
@@ -983,7 +988,11 @@ function InvoiceViewPage({
           </div>
           <div class="meta">
             <div class="copy">${isDraft ? escapeHtml(t.purchaseInvoicesUi.draftCopyLabel) : 'Original'}</div>
-            <div class="docno">${isDraft ? escapeHtml(t.purchaseInvoicesUi.draftWatermark) + ' — ' : ''}Factura Compra Nº : ${escapeHtml(invoice.supplierInvoiceNo || invoice.invoiceNumber)}</div>
+            <div class="docno">
+              <div class="docno-kind">${isDraft ? escapeHtml(t.purchaseInvoicesUi.draftWatermark) + ' — ' : ''}Factura Compra Nº</div>
+              <div>${escapeHtml(printedNo)}</div>
+              ${supplierNo && ourNo && supplierNo !== ourNo ? `<div class="docno-kind">Nº interno: ${escapeHtml(ourNo)}</div>` : ''}
+            </div>
             <div class="barcode">${barcodeBars}</div>
             <div class="barcode-label">${escapeHtml(barcodeValue)}</div>
             <div class="qr-code">${isDraft ? `<div class="qr-placeholder">${escapeHtml(t.purchaseInvoicesUi.draftWatermark)}</div>` : qrCodeSvg}</div>
@@ -1153,7 +1162,7 @@ function InvoiceViewPage({
                 </span>
               </div>
             )}
-            <div className="grid grid-cols-[32mm_1fr_62mm] gap-6 items-start">
+            <div className="grid grid-cols-[32mm_minmax(0,1fr)_72mm] gap-4 items-start">
               <div className="w-[28mm] h-[23mm] border border-zinc-400 flex items-center justify-center overflow-hidden text-2xl font-black text-red-900 tracking-tighter text-center">
                 {company.logo ? (
                   <img src={company.logo} alt={companyName} className="max-h-full max-w-full object-contain" />
@@ -1161,7 +1170,7 @@ function InvoiceViewPage({
                   companyName.slice(0, 2).toUpperCase()
                 )}
               </div>
-              <div className="leading-tight">
+              <div className="min-w-0 leading-tight">
                 <h2 className="text-[15px] font-black uppercase leading-none mb-1">{companyName}</h2>
                 <div><strong>Tel:</strong> {company.phone || 'Desconhecido'}</div>
                 <div><strong>Email:</strong> {company.email || ''}</div>
@@ -1169,13 +1178,21 @@ function InvoiceViewPage({
                 <div>{company.address || ''}</div>
                 <div>{companyLocation}</div>
               </div>
-              <div className="text-center text-[9px] leading-tight">
+              <div className="min-w-0 text-center text-[9px] leading-tight">
                 <div className={cn('font-bold mb-2', isDraft && 'uppercase tracking-wide text-red-800')}>
                   {isDraft ? t.purchaseInvoicesUi.draftCopyLabel : 'Original'}
                 </div>
-                <div className="font-bold">
-                  {isDraft ? `${t.purchaseInvoicesUi.draftWatermark} — ` : ''}
-                  Factura Compra Nº : {invoice.supplierInvoiceNo || invoice.invoiceNumber}
+                <div className="font-bold text-[12px] leading-tight break-words">
+                  <div className="text-[9px]">
+                    {isDraft ? `${t.purchaseInvoicesUi.draftWatermark} — ` : ''}
+                    Factura Compra Nº
+                  </div>
+                  <div>{String(invoice.supplierInvoiceNo || '').trim() || invoice.invoiceNumber}</div>
+                  {String(invoice.supplierInvoiceNo || '').trim()
+                    && String(invoice.invoiceNumber || '').trim()
+                    && String(invoice.supplierInvoiceNo).trim() !== String(invoice.invoiceNumber).trim() && (
+                    <div className="text-[9px] font-semibold">Nº interno: {invoice.invoiceNumber}</div>
+                  )}
                 </div>
                 <svg
                   viewBox={`0 0 ${previewBarcodeWidth} 42`}

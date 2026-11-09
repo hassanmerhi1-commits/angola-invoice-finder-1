@@ -25,6 +25,8 @@ import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { validateNIF } from '@/lib/companySettings';
 import { ENTITY_ACCOUNT_CODE_LENGTH, nextEntityAccountCode } from '@/lib/entityAccounts';
+import { useNifLookup, isCompleteNif } from '@/hooks/useNifLookup';
+import { NifLookupHint } from '@/components/NifLookupHint';
 import { Plus } from 'lucide-react';
 
 function normalizeClientNif(nif: string): string {
@@ -178,6 +180,34 @@ export function ClientFormDialog({
     setNewSubName('');
   }, [open, client, initialName, initialCreditLimit]);
 
+  const nifLookup = useNifLookup();
+  const resetNifLookup = nifLookup.reset;
+  useEffect(() => {
+    resetNifLookup();
+  }, [open, client, resetNifLookup]);
+
+  const handleNifChange = (value: string) => {
+    setFormData((prev) => ({ ...prev, nif: value }));
+    if (!isCompleteNif(value)) {
+      nifLookup.reset();
+      return;
+    }
+    void nifLookup.lookup(value).then((res) => {
+      if (!res || res.status !== 'found' || !res.name) return;
+      if (res.source !== 'agt' && res.source !== 'cache') return;
+      setFormData((prev) => ({
+        ...prev,
+        name: prev.name.trim() ? prev.name : res.name!,
+        address: prev.address.trim() || !res.address ? prev.address : res.address,
+      }));
+    });
+  };
+
+  const nifHintResult =
+    nifLookup.result?.source === 'client' && client && nifLookup.result.clientId === String(client.id)
+      ? null
+      : nifLookup.result;
+
   const canSave = formData.name.trim().length > 0 && validateNIF(normalizeClientNif(formData.nif));
 
   const handleSave = async () => {
@@ -285,13 +315,19 @@ export function ClientFormDialog({
                 placeholder={t.clientsUi.namePlaceholder}
                 required
               />
+              <NifLookupHint
+                result={nifHintResult}
+                loading={nifLookup.loading}
+                currentName={formData.name}
+                onUseName={(name) => setFormData((prev) => ({ ...prev, name }))}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="coa-client-nif">{t.clientsUi.nifLabel}</Label>
               <Input
                 id="coa-client-nif"
                 value={formData.nif}
-                onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
+                onChange={(e) => handleNifChange(e.target.value)}
                 placeholder={t.clientsUi.nifPlaceholder}
                 required
                 inputMode="numeric"

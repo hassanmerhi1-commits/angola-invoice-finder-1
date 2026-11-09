@@ -463,6 +463,14 @@ module.exports = function(broadcastTable) {
   router.get('/open-items', async (req, res) => {
     try {
       const { entityType, entityId, status, branchId } = req.query;
+      if (!entityType || entityType === 'customer') {
+        try {
+          const { backfillMissingDebitNoteOpenItems } = require('../customerBalanceRepair');
+          await backfillMissingDebitNoteOpenItems();
+        } catch (repairErr) {
+          console.warn('[TX] debit note receivables:', repairErr.message);
+        }
+      }
       let query = `
         SELECT oi.*,
           CASE

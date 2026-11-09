@@ -59,6 +59,29 @@ export interface ApiResponse<T> {
   status?: number;
 }
 
+export interface NifLookupConfig {
+  enabled: boolean;
+  url: string;
+  method: 'GET' | 'POST';
+  username: string;
+  hasPassword: boolean;
+}
+
+export interface NifLookupResult {
+  nif: string;
+  status: 'found' | 'not_found' | 'not_configured' | 'unavailable' | 'auth_failed' | 'invalid';
+  source?: 'client' | 'supplier' | 'agt' | 'cache' | 'history';
+  name?: string;
+  address?: string;
+  phone?: string;
+  taxpayerStatus?: string;
+  clientId?: string;
+  supplierId?: string;
+  message?: string;
+  httpStatus?: number;
+  raw?: string;
+}
+
 // ==================== MODE DETECTION ====================
 export function isElectronMode(): boolean {
   return !!window.electronAPI?.isElectron && !!window.electronAPI?.db;
@@ -3358,6 +3381,17 @@ export const api = {
     }>('/agt/config'),
     saveConfig: (data: Record<string, unknown>) =>
       apiFetch<any>('/agt/config', { method: 'PUT', body: JSON.stringify(data) }),
+    getNifLookupConfig: () => apiFetch<NifLookupConfig>('/agt/nif-lookup/config'),
+    saveNifLookupConfig: (data: {
+      enabled: boolean;
+      url: string;
+      method: 'GET' | 'POST';
+      username: string;
+      password?: string;
+    }) => apiFetch<NifLookupConfig>('/agt/nif-lookup/config', { method: 'PUT', body: JSON.stringify(data) }),
+    testNifLookup: (nif: string) =>
+      apiFetch<NifLookupResult>('/agt/nif-lookup/test', { method: 'POST', body: JSON.stringify({ nif }) }),
+    lookupNif: (nif: string) => apiFetch<NifLookupResult>(`/agt/nif-lookup/${encodeURIComponent(nif)}`),
     transmit: (data: { entityType: string; entityId: string; force?: boolean; documentNumber?: string; invoiceNumber?: string }) =>
       apiFetch<{
         success: boolean;

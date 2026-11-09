@@ -24,6 +24,8 @@ import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import { findSupplierLeafAccount, isSupplierCategoryParent, nextCompactChildCode, nextEntityAccountCode } from '@/lib/entityAccounts';
 import { api } from '@/lib/api/client';
+import { useNifLookup, isCompleteNif } from '@/hooks/useNifLookup';
+import { NifLookupHint } from '@/components/NifLookupHint';
 import { Plus } from 'lucide-react';
 
 const PAYMENT_TERMS = [
@@ -173,6 +175,34 @@ export function SupplierFormDialog({
     }
   }, [open, supplier, accounts]);
 
+  const nifLookup = useNifLookup();
+  const resetNifLookup = nifLookup.reset;
+  useEffect(() => {
+    resetNifLookup();
+  }, [open, supplier, resetNifLookup]);
+
+  const handleNifChange = (value: string) => {
+    setFormData((prev) => ({ ...prev, nif: value }));
+    if (!isCompleteNif(value)) {
+      nifLookup.reset();
+      return;
+    }
+    void nifLookup.lookup(value).then((res) => {
+      if (!res || res.status !== 'found' || !res.name) return;
+      if (res.source !== 'agt' && res.source !== 'cache') return;
+      setFormData((prev) => ({
+        ...prev,
+        name: prev.name.trim() ? prev.name : res.name!,
+        address: prev.address.trim() || !res.address ? prev.address : res.address,
+      }));
+    });
+  };
+
+  const nifHintResult =
+    nifLookup.result?.source === 'supplier' && supplier && nifLookup.result.supplierId === String(supplier.id)
+      ? null
+      : nifLookup.result;
+
   const handleSave = async () => {
     if (!formData.name.trim() || !formData.nif.trim()) {
       toast({
@@ -257,13 +287,19 @@ export function SupplierFormDialog({
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               required
             />
+            <NifLookupHint
+              result={nifHintResult}
+              loading={nifLookup.loading}
+              currentName={formData.name}
+              onUseName={(name) => setFormData((prev) => ({ ...prev, name }))}
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="coa-supplier-nif">{t.suppliersUi.colNif}</Label>
             <Input
               id="coa-supplier-nif"
               value={formData.nif}
-              onChange={(e) => setFormData({ ...formData, nif: e.target.value })}
+              onChange={(e) => handleNifChange(e.target.value)}
               required
             />
           </div>

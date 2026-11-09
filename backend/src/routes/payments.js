@@ -237,6 +237,15 @@ module.exports = function(broadcastTable) {
         }
       }
 
+      if (entityType === 'customer') {
+        try {
+          const { backfillMissingDebitNoteOpenItems } = require('../customerBalanceRepair');
+          await backfillMissingDebitNoteOpenItems();
+        } catch (repairErr) {
+          console.warn('[PAYMENTS] debit note receivables:', repairErr.message);
+        }
+      }
+
       const { resolveSupplierEntityIds } = require('../supplierBalanceRepair');
       const entityIds =
         entityType === 'supplier'

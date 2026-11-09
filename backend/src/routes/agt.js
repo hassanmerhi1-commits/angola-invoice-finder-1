@@ -42,6 +42,44 @@ module.exports = function(broadcastTable) {
     }
   });
 
+  // ==================== NIF CONSULTATION ====================
+
+  router.get('/nif-lookup/config', requireAuth, async (_req, res) => {
+    try {
+      const { getNifLookupConfig } = require('../agt/nifLookup');
+      res.json(await getNifLookupConfig());
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.put('/nif-lookup/config', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const { saveNifLookupConfig } = require('../agt/nifLookup');
+      res.json(await saveNifLookupConfig(req.body || {}));
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.post('/nif-lookup/test', requireAuth, requirePermission('admin_settings'), async (req, res) => {
+    try {
+      const { lookupNif } = require('../agt/nifLookup');
+      res.json(await lookupNif(req.body?.nif, { remoteOnly: true, includeRaw: true }));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.get('/nif-lookup/:nif', requireAuth, async (req, res) => {
+    try {
+      const { lookupNif } = require('../agt/nifLookup');
+      res.json(await lookupNif(req.params.nif));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ==================== RSA SIGNING (Server-side backup) ====================
   
   /**
