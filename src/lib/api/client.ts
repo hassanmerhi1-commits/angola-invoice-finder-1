@@ -3672,9 +3672,19 @@ export const api = {
       apiFetch<any>('/fiscal-documents/credit-notes', { method: 'POST', body: JSON.stringify(data) }),
     cancelCreditNote: (id: string) =>
       apiFetch<any>(`/fiscal-documents/credit-notes/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
-    listDebitNotes: (branchId?: string) => {
-      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
-      return apiFetch<any[]>(`/fiscal-documents/debit-notes${qs}`);
+    listDebitNotes: (
+      branchId?: string,
+      opts?: { light?: boolean; dateFrom?: string; dateTo?: string; limit?: number; offset?: number },
+    ) => {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branchId', branchId);
+      if (opts?.light) params.set('light', '1');
+      if (opts?.dateFrom) params.set('dateFrom', opts.dateFrom);
+      if (opts?.dateTo) params.set('dateTo', opts.dateTo);
+      if (opts?.limit != null) params.set('limit', String(opts.limit));
+      if (opts?.offset != null) params.set('offset', String(opts.offset));
+      const qs = params.toString();
+      return apiFetch<any[]>(`/fiscal-documents/debit-notes${qs ? `?${qs}` : ''}`);
     },
     createDebitNote: (data: Record<string, unknown>) =>
       apiFetch<any>('/fiscal-documents/debit-notes', { method: 'POST', body: JSON.stringify(data) }),

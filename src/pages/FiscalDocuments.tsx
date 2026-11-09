@@ -117,6 +117,7 @@ export default function FiscalDocuments() {
 
   const [editCompanyInfo, setEditCompanyInfo] = useState(companyInfo);
   const openCreditNoteFetchRef = useRef<string | null>(null);
+  const openDebitNoteFetchRef = useRef<string | null>(null);
 
   const notifyCreditNoteDenied = useCallback(() => {
     toast({
@@ -253,6 +254,26 @@ export default function FiscalDocuments() {
     openCreditNoteFetchRef.current = lookupKey;
     void refreshCreditNotes();
   }, [location.state, creditNotes, location.pathname, navigate, refreshCreditNotes]);
+
+  useEffect(() => {
+    const st = location.state as { openDebitNoteId?: string } | null;
+    const openId = st?.openDebitNoteId;
+    if (!openId) {
+      openDebitNoteFetchRef.current = null;
+      return;
+    }
+    const note = debitNotes.find((n) => n.id === openId);
+    if (note) {
+      setFiscalTab('debit');
+      setViewDebitNote(note);
+      openDebitNoteFetchRef.current = null;
+      navigate(location.pathname, { replace: true, state: {} });
+      return;
+    }
+    if (openDebitNoteFetchRef.current === openId) return;
+    openDebitNoteFetchRef.current = openId;
+    void refreshDebitNotes();
+  }, [location.state, debitNotes, location.pathname, navigate, refreshDebitNotes]);
 
   const searchFocusKeyRef = useRef('');
   useEffect(() => {

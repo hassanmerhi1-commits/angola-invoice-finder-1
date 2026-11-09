@@ -39,13 +39,14 @@ import {
   getSaleInvoiceAsDocument,
   getPurchaseInvoicesAsDocuments,
   mapCreditNoteToDocument,
+  mapDebitNoteToDocument,
   mapTransportDocumentToErpDocument,
   sortDocumentsByIssue,
 } from '@/lib/documentStorage';
 import type { BranchRef } from '@/lib/purchaseInvoiceStorage';
 import { NEXOR_TOOLBAR } from '@/lib/nexorToolbarEvents';
 import { NEXOR_TOOLBAR_BTN_SM } from '@/lib/nexorToolbarStyles';
-import { SALES_CHANGED_EVENT, CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
+import { SALES_CHANGED_EVENT, CREDIT_NOTES_CHANGED_EVENT, DEBIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import {
   documentTypeForNewFromTab,
   getInvoicesWorkspaceTab,
@@ -358,10 +359,12 @@ export default function Invoices() {
     };
     window.addEventListener(SALES_CHANGED_EVENT, scheduleSoftRefresh);
     window.addEventListener(CREDIT_NOTES_CHANGED_EVENT, scheduleSoftRefresh);
+    window.addEventListener(DEBIT_NOTES_CHANGED_EVENT, scheduleSoftRefresh);
     return () => {
       if (debounce) clearTimeout(debounce);
       window.removeEventListener(SALES_CHANGED_EVENT, scheduleSoftRefresh);
       window.removeEventListener(CREDIT_NOTES_CHANGED_EVENT, scheduleSoftRefresh);
+      window.removeEventListener(DEBIT_NOTES_CHANGED_EVENT, scheduleSoftRefresh);
     };
   }, []);
 
@@ -457,6 +460,15 @@ export default function Invoices() {
           return;
         }
 
+        if (type === 'nota_debito') {
+          const dnRes = await api.fiscalDocuments.listDebitNotes(listBranchId, listOpts);
+          const mapped = (dnRes.data || []).map((dn: DebitNote) =>
+            mapDebitNoteToDocument(dn, dn.branchName || branchNames[dn.branchId] || '', t.pos.finalConsumer),
+          );
+          paintDocs(mapped);
+          return;
+        }
+
         if (type === 'guia_remessa') {
           const gtRes = await api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts);
           const rows = (gtRes.data || []) as TransportDocument[];
@@ -472,6 +484,7 @@ export default function Invoices() {
         const loadSales = !type || type === 'fatura_venda';
         const loadPurchase = !type || type === 'fatura_compra';
         const loadFiscalCreditNotes = !type;
+        const loadFiscalDebitNotes = !type;
         const loadFiscalTransport = !type;
         // Proformas have their own page. The All tab is invoices only — old drafts
         // were landing here and never on Proforma.
@@ -513,6 +526,7 @@ export default function Invoices() {
           fiscalCreditDocs: ERPDocument[],
           storedDocs: ERPDocument[],
           fiscalTransportDocs: ERPDocument[] = [],
+          fiscalDebitDocs: ERPDocument[] = [],
         ) => {
           const salesByNumber = new Map(
             salesDocs.filter((d) => d.documentNumber).map((d) => [d.documentNumber, d]),
@@ -524,7 +538,7 @@ export default function Invoices() {
               continue;
             }
             // Local erp_documents copies are stale; fiscal API is canonical for credit notes and GTs.
-            if (doc.documentType === 'nota_credito' || doc.documentType === 'guia_remessa') continue;
+            if (doc.documentType === 'nota_credito' || doc.documentType === 'nota_debito' || doc.documentType === 'guia_remessa') continue;
             if (!type && doc.documentType === 'proforma') continue;
             // Tab-scoped local docs: skip purchase rows when not loading purchases, etc.
             if (type === 'fatura_venda' && doc.documentType === 'fatura_compra') continue;
@@ -534,7 +548,7 @@ export default function Invoices() {
             seenKeys.add(key);
             merged.push(doc);
           }
-          for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs, ...fiscalTransportDocs]) {
+          for (const doc of [...salesDocs, ...purchaseDocs, ...fiscalCreditDocs, ...fiscalDebitDocs, ...fiscalTransportDocs]) {
             const key = invoiceDocKey(doc);
             if (seenKeys.has(key)) continue;
             seenKeys.add(key);
@@ -555,24 +569,28 @@ export default function Invoices() {
           mergeAndPaint(salesDocs, [], [], storedWithPf);
           if (!cancelled) setListLoading(false);
 
-          const [purchaseDocs, cnRes, gtRes] = await Promise.all([
+          const [purchaseDocs, cnRes, dnRes, gtRes] = await Promise.all([
             getPurchaseInvoicesAsDocuments(listBranchId, branchNames, branchCatalog, isHeadOffice, listOpts),
             api.fiscalDocuments.listCreditNotes(listBranchId, listOpts),
+            api.fiscalDocuments.listDebitNotes(listBranchId, listOpts),
             api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts),
           ]);
           const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
+          );
+          const fiscalDebitDocs = (dnRes.data || []).map((dn: DebitNote) =>
+            mapDebitNoteToDocument(dn, dn.branchName || branchNames[dn.branchId] || '', t.pos.finalConsumer),
           );
           const gtRows = (gtRes.data || []) as TransportDocument[];
           transportByIdRef.current = new Map(gtRows.map((row) => [row.id, row]));
           const fiscalTransportDocs = gtRows.map((row) =>
             mapTransportDocumentToErpDocument(row, row.branchName || branchNames[row.branchId] || '', t.pos.finalConsumer),
           );
-          mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, storedWithPf, fiscalTransportDocs);
+          mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, storedWithPf, fiscalTransportDocs, fiscalDebitDocs);
           return;
         }
 
-        const [storedDocs, salesDocs, purchaseDocs, cnRes, pfDocs, gtRes] = await Promise.all([
+        const [storedDocs, salesDocs, purchaseDocs, cnRes, dnRes, pfDocs, gtRes] = await Promise.all([
           storedDocsPromise,
           fetchSalesDocs(),
           loadPurchase
@@ -581,6 +599,9 @@ export default function Invoices() {
           loadFiscalCreditNotes
             ? api.fiscalDocuments.listCreditNotes(listBranchId, listOpts)
             : Promise.resolve({ data: [] as CreditNote[] }),
+          loadFiscalDebitNotes
+            ? api.fiscalDocuments.listDebitNotes(listBranchId, listOpts)
+            : Promise.resolve({ data: [] as DebitNote[] }),
           proformaDocsPromise,
           loadFiscalTransport
             ? api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts)
@@ -590,6 +611,9 @@ export default function Invoices() {
         const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
           mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
         );
+        const fiscalDebitDocs = (dnRes.data || []).map((dn: DebitNote) =>
+          mapDebitNoteToDocument(dn, dn.branchName || branchNames[dn.branchId] || '', t.pos.finalConsumer),
+        );
         const gtRows = (gtRes.data || []) as TransportDocument[];
         if (gtRows.length) {
           transportByIdRef.current = new Map(gtRows.map((row) => [row.id, row]));
@@ -597,7 +621,7 @@ export default function Invoices() {
         const fiscalTransportDocs = gtRows.map((row) =>
           mapTransportDocumentToErpDocument(row, row.branchName || branchNames[row.branchId] || '', t.pos.finalConsumer),
         );
-        mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, mergeStoredWithProformas(storedDocs, pfDocs), fiscalTransportDocs);
+        mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, mergeStoredWithProformas(storedDocs, pfDocs), fiscalTransportDocs, fiscalDebitDocs);
       } catch (err) {
         console.error('[Invoices] load failed:', err);
         // Keep showing the last cached list instead of blanking the tab on a transient failure.
@@ -770,7 +794,6 @@ export default function Invoices() {
     let toPrint = doc;
     if (
       toPrint.documentType === 'fatura_venda'
-      && (!toPrint.lines || toPrint.lines.length === 0)
       && toPrint.id
       && !toPrint.id.startsWith('doc_')
     ) {
@@ -1327,7 +1350,7 @@ export default function Invoices() {
               void printErpDocument(selectedDoc);
               return;
             }
-            downloadDocumentHTML(selectedDoc);
+            void downloadDocumentHTML(selectedDoc);
           }}>
           <Download className="w-3 h-3" /> {t.invoicesUi.pdf}
         </Button>
@@ -1596,6 +1619,16 @@ export default function Invoices() {
                 variant="secondary"
                 className="ml-auto h-6 text-[10px] gap-1 px-2"
                 onClick={() => navigate('/fiscal-documents', { state: { openCreditNoteId: selectedDoc.id } })}
+              >
+                {t.fiscalDocumentsUi.actionView}
+              </Button>
+            )}
+            {selectedDoc.documentType === 'nota_debito' && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="ml-auto h-6 text-[10px] gap-1 px-2"
+                onClick={() => navigate('/fiscal-documents', { state: { openDebitNoteId: selectedDoc.id } })}
               >
                 {t.fiscalDocumentsUi.actionView}
               </Button>

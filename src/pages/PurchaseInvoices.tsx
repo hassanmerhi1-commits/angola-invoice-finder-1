@@ -761,6 +761,41 @@ function buildPurchaseInvoiceJournalLines({
   ];
 }
 
+function purchaseTaxDesignation(rate: number): string {
+  if (rate <= 0) return 'ISENTO';
+  if (rate === 5 || rate === 7) return 'CESTA BÁSICA';
+  if (rate === 14) return 'NORMAL IVA';
+  return `IVA ${rate}`;
+}
+
+/** One row per real IVA rate. Incidence is the ex-VAT base; tax is that base times the rate. */
+function purchaseTaxRows(lines: PurchaseInvoiceLine[]): Array<{ rate: number; designation: string; base: number; tax: number }> {
+  const map = new Map<number, { base: number; tax: number }>();
+  for (const line of lines) {
+    const rate = Number(line.ivaRate || 0);
+    const base = Number(line.total || 0);
+    const tax = Number(line.ivaAmount || 0);
+    if (base === 0 && tax === 0) continue;
+    const current = map.get(rate) || { base: 0, tax: 0 };
+    current.base += base;
+    current.tax += tax;
+    map.set(rate, current);
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([rate, row]) => ({
+      rate,
+      designation: purchaseTaxDesignation(rate),
+      base: Math.round(row.base * 100) / 100,
+      tax: Math.round(row.tax * 100) / 100,
+    }));
+}
+
+function formatPrintedTaxRate(rate: number): string {
+  if (Number.isInteger(rate)) return String(rate);
+  return rate.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // ─────────── Invoice View (full page) ───────────
 function InvoiceViewPage({
   invoice, loading, onClose, onCreateReturn, onContinueDraft,
@@ -824,9 +859,10 @@ function InvoiceViewPage({
   const previewBarcodeValue = invoice.supplierInvoiceNo || invoice.invoiceNumber;
   const previewBarcodeBars = buildBarcodePattern(previewBarcodeValue);
   const previewBarcodeWidth = Math.max(120, (previewBarcodeBars.at(-1)?.x || 0) + 6);
-  const previewTaxRate = invoice.ivaTotal > 0 && invoice.subtotal > 0 ? (invoice.ivaTotal / invoice.subtotal) * 100 : 0;
-  const previewGross = invoice.subtotal + invoice.ivaTotal;
-  const previewDiscount = lines.reduce((s, l) => s + ((l.totalQty * l.unitPrice) - l.total), 0);
+  const previewTaxRows = purchaseTaxRows(lines);
+  const previewDiscount = Math.max(0, lines.reduce((s, l) => s + ((Number(l.totalQty || 0) * Number(l.unitPrice || 0)) - Number(l.total || 0)), 0));
+  const previewNet = invoice.subtotal;
+  const previewValor = Math.round((previewNet + previewDiscount) * 100) / 100;
 
   const handlePrint = async () => {
     const escapeHtml = (value: unknown) => String(value ?? '')
@@ -860,7 +896,10 @@ function InvoiceViewPage({
     }
     const issueDate = new Date(invoice.date || invoice.createdAt || Date.now());
     const dueDate = new Date(invoice.paymentDate || invoice.date || Date.now());
-    const subtotalWithTax = invoice.subtotal + invoice.ivaTotal;
+    const printDiscount = Math.max(0, lines.reduce((s, l) => s + ((Number(l.totalQty || 0) * Number(l.unitPrice || 0)) - Number(l.total || 0)), 0));
+    const printNet = invoice.subtotal;
+    const printValor = Math.round((printNet + printDiscount) * 100) / 100;
+    const printTaxRows = purchaseTaxRows(lines);
     const printLinesHtml = lines.map(l => `
       <tr>
         <td class="mono">${escapeHtml(l.productCode || l.barcode || '')}</td>
@@ -870,7 +909,7 @@ function InvoiceViewPage({
         <td class="num">${money(l.unitPrice)}</td>
         <td class="num">${money(l.discountPct || 0)}</td>
         <td class="num">${money(l.ivaRate)}</td>
-        <td class="num">${money(l.totalWithIva)}</td>
+        <td class="num">${money(l.total || 0)}</td>
         <td class="num">${money(l.ivaAmount)}</td>
       </tr>
     `).join('');
@@ -1009,12 +1048,13 @@ function InvoiceViewPage({
                   <tr><th>DESIGNAÇÃO</th><th>TAXA%</th><th>INCIDENCIA</th><th>IMPOSTO</th></tr>
                 </thead>
                 <tbody>
+                  ${printTaxRows.map((row) => `
                   <tr>
-                    <td>NORMAL IVA</td>
-                    <td class="center">${money(invoice.ivaTotal > 0 && invoice.subtotal > 0 ? (invoice.ivaTotal / invoice.subtotal) * 100 : 0).replace(',00', '')}</td>
-                    <td class="num">${money(invoice.subtotal)}</td>
-                    <td class="num">${money(invoice.ivaTotal)}</td>
-                  </tr>
+                    <td>${escapeHtml(row.designation)}</td>
+                    <td class="center">${escapeHtml(formatPrintedTaxRate(row.rate))}</td>
+                    <td class="num">${money(row.base)}</td>
+                    <td class="num">${money(row.tax)}</td>
+                  </tr>`).join('')}
                 </tbody>
               </table>
               <div class="note-line">Motivo de Isencao</div>
@@ -1023,9 +1063,9 @@ function InvoiceViewPage({
             <div>
               <table class="totals">
                 <tbody>
-                  <tr><td class="label">VALOR</td><td class="value">${money(subtotalWithTax)}</td></tr>
-                  <tr><td class="label">DESCONTO</td><td class="value">${money(previewDiscount)}</td></tr>
-                  <tr><td class="label">SUB TOTAL</td><td class="value">${money(subtotalWithTax)}</td></tr>
+                  <tr><td class="label">VALOR</td><td class="value">${money(printValor)}</td></tr>
+                  <tr><td class="label">DESCONTO</td><td class="value">${money(printDiscount)}</td></tr>
+                  <tr><td class="label">SUB TOTAL</td><td class="value">${money(printNet)}</td></tr>
                   <tr><td class="label">IMPOSTO</td><td class="value">${money(invoice.ivaTotal)}</td></tr>
                   <tr class="grand"><td class="label">TOTAL</td><td class="value">${escapeHtml(invoice.currency)} ${money(invoice.total)}</td></tr>
                 </tbody>
@@ -1223,7 +1263,7 @@ function InvoiceViewPage({
                     <td className="text-right py-1 font-mono">{previewMoney(l.unitPrice)}</td>
                     <td className="text-right py-1 font-mono">{previewMoney(l.discountPct || 0)}</td>
                     <td className="text-right py-1 font-mono">{previewMoney(l.ivaRate)}</td>
-                    <td className="text-right py-1 font-mono">{previewMoney(l.totalWithIva)}</td>
+                    <td className="text-right py-1 font-mono">{previewMoney(l.total || 0)}</td>
                     <td className="text-right py-1 font-mono">{previewMoney(l.ivaAmount)}</td>
                   </tr>
                 ))}
@@ -1245,12 +1285,14 @@ function InvoiceViewPage({
                       </tr>
                     </thead>
                     <tbody>
-                      <tr>
-                        <td className="border border-black p-1">NORMAL IVA</td>
-                        <td className="border border-black p-1 text-center">{previewMoney(previewTaxRate).replace(',00', '')}</td>
-                        <td className="border border-black p-1 text-right font-mono">{previewMoney(invoice.subtotal)}</td>
-                        <td className="border border-black p-1 text-right font-mono">{previewMoney(invoice.ivaTotal)}</td>
-                      </tr>
+                      {previewTaxRows.map((row) => (
+                        <tr key={row.rate}>
+                          <td className="border border-black p-1">{row.designation}</td>
+                          <td className="border border-black p-1 text-center">{formatPrintedTaxRate(row.rate)}</td>
+                          <td className="border border-black p-1 text-right font-mono">{previewMoney(row.base)}</td>
+                          <td className="border border-black p-1 text-right font-mono">{previewMoney(row.tax)}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                   <div className="border-b border-black w-[92mm] mt-12 font-bold">Motivo de Isencao</div>
@@ -1259,9 +1301,9 @@ function InvoiceViewPage({
                 <div>
                   <table className="w-full border-collapse text-[10px]">
                     <tbody>
-                      <tr><td className="border border-black p-1 font-bold">VALOR</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewGross)}</td></tr>
+                      <tr><td className="border border-black p-1 font-bold">VALOR</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewValor)}</td></tr>
                       <tr><td className="border border-black p-1 font-bold">DESCONTO</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewDiscount)}</td></tr>
-                      <tr><td className="border border-black p-1 font-bold">SUBTOTAL</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewGross)}</td></tr>
+                      <tr><td className="border border-black p-1 font-bold">SUB TOTAL</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(previewNet)}</td></tr>
                       <tr><td className="border border-black p-1 font-bold">IMPOSTO</td><td className="border border-black p-1 text-right font-mono font-bold">{previewMoney(invoice.ivaTotal)}</td></tr>
                       <tr><td className="border border-black p-2 font-black text-lg">TOTAL</td><td className="border border-black p-2 text-right font-mono font-black text-lg">{invoice.currency} {previewMoney(invoice.total)}</td></tr>
                     </tbody>

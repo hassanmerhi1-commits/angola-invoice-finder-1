@@ -14,7 +14,7 @@ import {
 import * as fiscalStorage from '@/lib/fiscalDocuments';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
-import { CREDIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
+import { CREDIT_NOTES_CHANGED_EVENT, DEBIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import { getCompanySettings, hydrateCompanySettingsFromServer, saveCompanySettingsToServer } from '@/lib/companySettings';
 import { exportSAFTToXML } from '@/lib/saftAO';
 
@@ -175,6 +175,12 @@ export function useDebitNotes(branchId?: string, deferInitialLoad = false) {
     void refreshDebitNotes();
   }, [refreshDebitNotes, deferInitialLoad]);
 
+  useEffect(() => {
+    const onChanged = () => { void refreshDebitNotes(); };
+    window.addEventListener(DEBIT_NOTES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(DEBIT_NOTES_CHANGED_EVENT, onChanged);
+  }, [refreshDebitNotes]);
+
   const createDebitNote = useCallback(async (
     branchIdParam: string,
     branchCode: string,
@@ -208,6 +214,11 @@ export function useDebitNotes(branchId?: string, deferInitialLoad = false) {
 
     const note = result.data as DebitNote;
     setDebitNotes((prev) => [note, ...prev]);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(DEBIT_NOTES_CHANGED_EVENT, {
+        detail: { branchId: note.branchId },
+      }));
+    }
     return note;
   }, []);
 

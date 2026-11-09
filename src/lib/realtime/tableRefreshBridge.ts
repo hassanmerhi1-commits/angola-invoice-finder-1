@@ -38,6 +38,7 @@ const TABLE_EVENT_MAP: Partial<Record<RefreshableTable, string>> = {
   suppliers: storage.SUPPLIERS_CHANGED_EVENT,
   stock_transfers: storage.STOCK_TRANSFERS_CHANGED_EVENT,
   credit_notes: storage.CREDIT_NOTES_CHANGED_EVENT,
+  debit_notes: storage.DEBIT_NOTES_CHANGED_EVENT,
   payments: storage.OPEN_ITEMS_CHANGED_EVENT,
   expenses: 'nexor:expenses-changed',
   company_settings: 'company-settings-updated',

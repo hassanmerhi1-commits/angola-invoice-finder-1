@@ -20,7 +20,7 @@ import {
   type PurchaseInvoice,
 } from '@/lib/purchaseInvoiceStorage';
 import { isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
-import type { CreditNote, TransportDocument } from '@/types/erp';
+import type { CreditNote, DebitNote, TransportDocument } from '@/types/erp';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
 import { timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
 
@@ -77,6 +77,7 @@ export function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
       productSku: item.sku || '',
       description: item.productName || item.product_name || '',
       quantity,
+      unit: item.unit || item.unit_name || 'UN',
       unitPrice,
       discount: discountPct,
       discountAmount,
@@ -132,6 +133,7 @@ export function mapSaleRowToDocument(sale: any, branchName = ''): ERPDocument {
     createdAt,
     updatedAt: createdAt,
     fiscalLocked: String(sale.fiscalStatus || sale.fiscal_status || 'issued') !== 'draft',
+    saftHash: sale.saftHash || sale.saft_hash || undefined,
     agtStatus: sale.agtStatus || sale.agt_status || undefined,
     agtCode: sale.agtCode || sale.agt_code || undefined,
     invoiceType: sale.invoiceType || sale.invoice_type || undefined,
@@ -240,6 +242,58 @@ export function mapCreditNoteToDocument(
     createdBy: cn.issuedBy || '',
     createdAt: cn.createdAt || issuedAt,
     updatedAt: cn.createdAt || issuedAt,
+  };
+}
+
+/** Fiscal debit notes (`debit_notes` table) — canonical source for nota_debito. */
+export function mapDebitNoteToDocument(
+  dn: DebitNote,
+  branchName = '',
+  finalConsumerLabel = 'Consumidor Final',
+): ERPDocument {
+  const issuedAt = dn.issuedAt || dn.createdAt || new Date().toISOString();
+  const issueDate = timestampLocalDate(issuedAt) || String(issuedAt).slice(0, 10);
+  return {
+    id: dn.id,
+    documentType: 'nota_debito',
+    documentNumber: dn.documentNumber,
+    branchId: dn.branchId || '',
+    branchName: branchName || dn.branchName || '',
+    entityType: 'customer',
+    entityName: dn.customerName || finalConsumerLabel,
+    entityNif: dn.customerNif,
+    lines: (dn.items || []).map((item, idx) => ({
+      id: `dn_${dn.id}_${idx}`,
+      productId: item.sourceProductId || '',
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      discount: 0,
+      discountAmount: 0,
+      taxRate: item.taxRate,
+      taxAmount: item.taxAmount,
+      lineTotal: item.subtotal + item.taxAmount,
+    })),
+    subtotal: dn.subtotal,
+    totalDiscount: 0,
+    totalTax: dn.taxAmount,
+    total: dn.total,
+    currency: 'AOA',
+    amountPaid: 0,
+    amountDue: dn.total,
+    parentDocumentId: dn.originalInvoiceId,
+    parentDocumentNumber: dn.originalInvoiceNumber,
+    parentDocumentType: dn.originalInvoiceId ? 'fatura_venda' : undefined,
+    status: dn.status === 'cancelled' ? 'cancelled' : 'confirmed',
+    issueDate,
+    issueTime: timestampLocalTime(issuedAt),
+    fiscalLocked: true,
+    saftHash: dn.saftHash,
+    agtStatus: dn.agtStatus as ERPDocument['agtStatus'],
+    agtCode: dn.agtCode,
+    createdBy: dn.issuedBy || '',
+    createdAt: dn.createdAt || issuedAt,
+    updatedAt: dn.createdAt || issuedAt,
   };
 }
 

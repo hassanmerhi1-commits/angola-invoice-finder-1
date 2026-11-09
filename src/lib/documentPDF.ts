@@ -2,6 +2,7 @@
 // Angolan-standard professional invoice layout matching AGT requirements
 
 import { ERPDocument, DOCUMENT_TYPE_CONFIG, DocumentLine } from '@/types/documents';
+import type { Sale } from '@/types/erp';
 import { getCompanySettings } from '@/lib/companySettings';
 import { printHtml } from '@/lib/printHtml';
 import { recordDocumentPrint, type PrintSource } from '@/lib/recordPrintAudit';
@@ -12,6 +13,12 @@ interface PDFOptions {
   copies?: number;
   source?: PrintSource;
   reprint?: boolean;
+  /** Already-rendered AGT QR. Empty means the page prints with no QR box. */
+  qrCodeDataUrl?: string;
+  /** Normalized software number, e.g. 398/AGT/2026. */
+  softwareNumber?: string;
+  bankLines?: string[];
+  customerCountry?: string;
 }
 
 function formatCurrency(value: number): string {
@@ -28,8 +35,9 @@ function formatDateTime(dateStr: string): string {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 }
 
-function numberToWords(num: number): string {
-  if (num === 0) return 'ZERO KWANZAS';
+function numberToWords(num: number, currency: string): string {
+  const unit = currency === 'AKZ' || currency === 'AOA' || !currency ? 'AOA' : currency;
+  if (num === 0) return `Total (${unit}): ZERO KWANZAS`;
   
   const units = ['', 'UM', 'DOIS', 'TRÊS', 'QUATRO', 'CINCO', 'SEIS', 'SETE', 'OITO', 'NOVE'];
   const teens = ['DEZ', 'ONZE', 'DOZE', 'TREZE', 'CATORZE', 'QUINZE', 'DEZASSEIS', 'DEZASSETE', 'DEZOITO', 'DEZANOVE'];
@@ -79,7 +87,20 @@ function numberToWords(num: number): string {
   const remainder = intPart % 1000;
   if (remainder > 0) parts.push(convertGroup(remainder));
   
-  return 'Total (AKZ): ' + (parts.join(' E ').replace(/\s+/g, ' ').trim()) + ' KWANZAS';
+  return `Total (${unit}): ` + (parts.join(' E ').replace(/\s+/g, ' ').trim()) + ' KWANZAS';
+}
+
+/** Date column. A date-only issueDate is midnight UTC, which prints as 01:00 in Angola. */
+function documentIssueStamp(doc: ERPDocument): string {
+  const datePart = String(doc.issueDate || '').slice(0, 10);
+  const timePart = String(doc.issueTime || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(datePart) && /^\d{2}:\d{2}(:\d{2})?$/.test(timePart)) {
+    const [year, month, day] = datePart.split('-');
+    const time = timePart.length === 5 ? `${timePart}:00` : timePart;
+    return `${day}/${month}/${year} ${time}`;
+  }
+  const source = doc.createdAt || doc.issueDate;
+  return source ? formatDateTime(source) : '';
 }
 
 // Group tax lines by rate for the tax summary table
@@ -95,110 +116,112 @@ function getTaxSummary(lines: DocumentLine[]): Array<{ rate: number; base: numbe
   return Array.from(map.entries()).map(([rate, data]) => ({ rate, ...data }));
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function isoDay(value: string | undefined): string {
+  const raw = String(value || '').trim();
+  const ymd = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (ymd) return ymd[1];
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) return '';
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+function issueClock(doc: ERPDocument): string {
+  const time = String(doc.issueTime || '').trim();
+  if (/^\d{2}:\d{2}/.test(time)) return time.length === 5 ? `${time}:00` : time.slice(0, 8);
+  if (!doc.createdAt) return '';
+  return formatDateTime(doc.createdAt).slice(11);
+}
+
+function taxDesignation(rate: number): string {
+  if (rate <= 0) return 'ISENTO';
+  if (rate === 5 || rate === 7) return 'CESTA BÁSICA';
+  if (rate === 14) return 'NORMAL IVA';
+  return `IVA ${rate.toFixed(0)}`;
+}
+
+function lineNet(line: DocumentLine): number {
+  return Math.round((Number(line.lineTotal) - Number(line.taxAmount || 0)) * 100) / 100;
+}
+
 export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {}): string {
   const config = DOCUMENT_TYPE_CONFIG[doc.documentType];
   const company = getCompanySettings();
-  const entityLabel = config.entityType === 'customer' ? 'Cliente' : 'Fornecedor';
   const taxSummary = getTaxSummary(doc.lines);
-  const goodsTotal = doc.subtotal;
+  const goodsTotal = Number(doc.subtotal) || 0;
+  const discountTotal = Number(doc.totalDiscount) || 0;
+  const netGoods = Math.round((goodsTotal - discountTotal) * 100) / 100;
   const isPurchaseDraft = doc.documentType === 'fatura_compra'
     && (doc.status === 'draft' || doc.status === 'pending');
-  const copyLabel = isPurchaseDraft ? 'RASCUNHO' : (doc.copyLabel || 'Original');
+  const copyLabels = isPurchaseDraft
+    ? ['Rascunho']
+    : doc.documentType === 'fatura_venda'
+      ? ['Original', 'Duplicado'].slice(0, Math.max(1, options.copies ?? 2))
+      : [doc.copyLabel || 'Original'];
+  const refLabel = doc.entityType === 'supplier' ? 'FORNECEDOR V/REF' : 'CLIENTE V/REF';
+  const country = options.customerCountry || 'AO';
+  const banks = options.bankLines || [];
 
-  return `<!DOCTYPE html>
+  const documentHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <style>
-  @page { size: A4; margin: 12mm 15mm; }
+  @page { size: A4; margin: 10mm 12mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 9px; color: #333; line-height: 1.35; background: #fff; }
-  @media print {
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  }
-  
-  /* Page number */
-  .page-info { text-align: right; font-size: 8px; color: #666; margin-bottom: 4px; }
-  
-  /* Header */
-  .header { margin-bottom: 14px; }
-  .company-block { margin-bottom: 6px; }
-  .company-name { font-size: 16px; font-weight: 700; color: #2d7d2d; }
-  .company-detail { font-size: 8px; color: #555; line-height: 1.5; }
-  .company-detail span { color: #2d7d2d; }
-  
-  /* Customer block */
-  .customer-block { text-align: right; margin-bottom: 10px; }
-  .customer-title { font-size: 9px; color: #555; }
-  .customer-name { font-size: 11px; font-weight: 700; color: #333; }
-  .customer-address { font-size: 9px; color: #555; }
-  
-  /* Document title */
-  .doc-title-section { margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
-  .doc-title { font-size: 14px; font-weight: 700; color: #333; }
-  .doc-sub { font-size: 9px; color: #666; margin-top: 2px; }
-  .copy-label { float: right; font-size: 10px; font-weight: 700; color: #2d7d2d; font-style: italic; }
-  
-  /* Entity info row */
-  .entity-row { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-  .entity-row th { background: #2d7d2d; color: white; padding: 3px 5px; font-size: 7px; text-transform: uppercase; font-weight: 600; text-align: left; letter-spacing: 0.3px; }
-  .entity-row td { padding: 3px 5px; font-size: 8px; border: 1px solid #ddd; background: #fafafa; }
-  
-  /* Line items table */
-  .items-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
-  .items-table th { background: #2d7d2d; color: white; padding: 4px 5px; font-size: 7px; text-transform: uppercase; font-weight: 600; text-align: left; letter-spacing: 0.3px; }
-  .items-table th.r { text-align: right; }
-  .items-table td { padding: 3px 5px; font-size: 8px; border-bottom: 1px solid #eee; }
-  .items-table td.r { text-align: right; font-family: 'Courier New', monospace; }
-  .items-table tr:nth-child(even) { background: #f9f9f9; }
-  
-  /* Transport / notes */
-  .transport-info { font-size: 8px; color: #555; margin-bottom: 10px; padding: 4px 0; }
-  
-  /* UAP line */
-  .uap-line { font-size: 6.5px; color: #888; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; padding: 4px 0; margin-bottom: 8px; }
-  
-  /* Bottom section - tax summary + totals side by side */
-  .bottom-section { display: flex; gap: 12px; margin-bottom: 10px; }
-  .bottom-left { flex: 1; }
-  .bottom-right { width: 240px; }
-  
-  /* Tax summary table */
-  .tax-summary { width: 100%; border-collapse: collapse; font-size: 8px; }
-  .tax-summary th { background: #f0f0f0; padding: 3px 5px; text-align: left; font-size: 7px; text-transform: uppercase; border: 1px solid #ccc; }
-  .tax-summary td { padding: 3px 5px; border: 1px solid #ddd; }
-  .tax-summary td.r { text-align: right; font-family: 'Courier New', monospace; }
-  .tax-summary-title { font-size: 7px; font-weight: 700; margin-bottom: 3px; padding: 2px 4px; background: #e8e8e8; border: 1px solid #ccc; }
-  
-  /* Totals on right */
-  .totals-table { width: 100%; border-collapse: collapse; font-size: 8px; }
-  .totals-table td { padding: 2px 5px; }
-  .totals-table td.label { text-align: left; color: #555; }
-  .totals-table td.value { text-align: right; font-family: 'Courier New', monospace; }
-  .totals-table tr.grand-total { border-top: 2px solid #2d7d2d; }
-  .totals-table tr.grand-total td { font-size: 12px; font-weight: 800; padding-top: 6px; color: #2d7d2d; }
-  
-  /* QR code */
-  .qr-placeholder { width: 90px; height: 90px; border: 1px solid #ccc; display: flex; align-items: center; justify-content: center; font-size: 7px; color: #999; margin: 4px auto 0; }
-  
-  /* Shipping section */
-  .shipping-section { margin-bottom: 10px; }
-  .shipping-table { width: 100%; border-collapse: collapse; font-size: 8px; }
-  .shipping-table th { background: #f0f0f0; padding: 3px 6px; text-align: left; font-size: 7px; text-transform: uppercase; border: 1px solid #ccc; font-weight: 600; }
-  .shipping-table td { padding: 3px 6px; border: 1px solid #ddd; font-size: 8px; }
-  
-  /* Bank details */
-  .bank-section { margin-bottom: 10px; }
-  .bank-table { width: 100%; border-collapse: collapse; font-size: 8px; }
-  .bank-table th { background: #f0f0f0; padding: 3px 6px; text-align: left; font-size: 7px; text-transform: uppercase; border: 1px solid #ccc; font-weight: 600; }
-  .bank-table td { padding: 3px 6px; border: 1px solid #ddd; font-size: 8px; }
-  
-  /* Total in words */
-  .total-words { font-size: 8px; font-weight: 600; color: #333; margin-top: 8px; padding: 4px 0; border-top: 1px solid #ccc; }
-  
-  /* Document hash / audit */
-  .audit-line { font-size: 7px; color: #999; text-align: right; margin-top: 4px; }
-
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; background: #fff; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  .sheet { min-height: 270mm; display: flex; flex-direction: column; page-break-after: always; break-after: page; }
+  .sheet:last-child { page-break-after: auto; break-after: auto; }
+  .grow { flex: 1; }
+  .head { display: flex; align-items: flex-start; gap: 12px; }
+  .logo img { max-height: 78px; max-width: 130px; object-fit: contain; }
+  .company { flex: 1; line-height: 1.35; }
+  .company-name { font-size: 15px; font-weight: 800; text-transform: uppercase; margin-bottom: 2px; }
+  .docno { text-align: right; min-width: 220px; padding-top: 6px; }
+  .copy { margin-bottom: 12px; }
+  .docno-line { font-weight: 700; font-size: 13px; }
+  .party { display: flex; gap: 16px; margin-top: 16px; }
+  .party-left { width: 42%; }
+  .party-right { flex: 1; }
+  .nota { margin-bottom: 14px; }
+  .warehouse { font-weight: 700; margin-top: 8px; }
+  .exmo { text-align: center; font-weight: 700; margin-bottom: 2px; }
+  .who { font-weight: 700; }
+  .meta { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  .meta th, .meta td { border: none; border-bottom: 1px solid #111; text-align: left; padding: 2px 10px 3px 0; font-size: 11px; }
+  .meta th { font-size: 10px; font-weight: 700; }
+  .items { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .items th { border-bottom: 1px solid #111; font-size: 9px; text-align: left; padding: 3px 4px; }
+  .items td { padding: 2px 4px; font-size: 10px; vertical-align: top; }
+  .r { text-align: right; }
+  .foot { margin-top: 8px; }
+  .soft-row { display: flex; justify-content: space-between; gap: 12px; font-size: 8px; margin: 6px 0 4px; }
+  .totals-wrap { display: flex; gap: 18px; align-items: flex-start; }
+  .tax { flex: 1.15; }
+  .sum { flex: 0.85; }
+  .tax-title { font-weight: 800; font-size: 12px; margin-bottom: 2px; }
+  .grid { width: 100%; border-collapse: collapse; }
+  .grid th, .grid td { border: 1px solid #111; padding: 3px 5px; font-size: 10px; }
+  .grid th { text-align: left; font-size: 9px; }
+  .sum td:first-child { font-weight: 700; width: 46%; }
+  .grand td { font-weight: 800; font-size: 12px; }
+  .exempt { margin-top: 10px; border-bottom: 1px solid #111; font-weight: 700; min-height: 22px; }
+  .qr { width: 28mm; height: 28mm; display: block; margin: 6px 0 0 auto; }
+  .banks-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-top: 14px; }
+  .banks { font-size: 11px; line-height: 1.45; }
+  .operator { border: 1px solid #111; padding: 6px 10px; min-width: 190px; }
+  .goods { text-align: center; margin-top: 16px; font-size: 11px; }
   .draft-wrap { position: relative; }
   .draft-mark { position: absolute; inset: 40px 10px; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 20; overflow: hidden; }
   .draft-mark span { font-size: 64px; font-weight: 900; color: rgba(185,28,28,0.16); transform: rotate(-32deg); letter-spacing: 8px; text-transform: uppercase; white-space: nowrap; }
@@ -211,220 +234,444 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   <div class="draft-mark"><span>RASCUNHO</span></div>
   <div class="draft-banner">RASCUNHO — não lançado em stock nem contabilidade</div>
   ` : ''}
-  <!-- PAGE INFO -->
-  <div class="page-info">Pág. 1/1</div>
-  
-  <!-- HEADER -->
-  <div class="header">
-    <div class="company-block">
-      <div class="company-name">${company.name || company.tradeName || 'NEXOR ERP'}</div>
-      ${company.logo ? `<div style="margin-bottom: 4px;"><img src="${company.logo}" alt="Logo" style="max-height: 50px; max-width: 160px; object-fit: contain;"></div>` : ''}
-      <div class="company-detail">
-        <span>Contribuinte N.º:</span> ${company.nif || ''}<br>
-        ${company.address ? `${company.address}<br>` : ''}
-        ${company.city ? `${company.city}<br>` : ''}
-        ${company.phone ? `Telef. ${company.phone} |<br>` : ''}
-        ${company.email || ''}
+  <!--SHEET_START-->
+  <div class="sheet">
+    <div class="head">
+      <div class="logo">${company.logo ? `<img src="${company.logo}" alt="">` : ''}</div>
+      <div class="company">
+        <div class="company-name">${escapeHtml(company.name || company.tradeName || '')}</div>
+        ${company.phone ? `<div>Tel: ${escapeHtml(company.phone)}</div>` : ''}
+        ${company.email ? `<div>Email: ${escapeHtml(company.email)}</div>` : ''}
+        ${company.website ? `<div>Website: ${escapeHtml(company.website)}</div>` : ''}
+        <div>NIF: ${escapeHtml(company.nif || '')}</div>
+        ${company.city ? `<div>${escapeHtml(company.city)}</div>` : ''}
+      </div>
+      <div class="docno">
+        <div class="copy">___COPY_LABEL___</div>
+        <div class="docno-line">${escapeHtml(config.label)} No : ${escapeHtml(doc.documentNumber)}</div>
       </div>
     </div>
-    
-    <!-- CUSTOMER / SUPPLIER -->
-    <div class="customer-block">
-      <div class="customer-title">Exmo.(s) Sr.(s)</div>
-      <div class="customer-name">${doc.entityName}</div>
-      ${doc.entityAddress ? `<div class="customer-address">${doc.entityAddress}</div>` : ''}
+
+    <div class="party">
+      <div class="party-left">
+        <div class="nota"><b>NOTA:</b> ${escapeHtml(doc.notes || '')}</div>
+        ${doc.branchName ? `<div class="warehouse">ARMAZÉM: ${escapeHtml(doc.branchName)}</div>` : ''}
+      </div>
+      <div class="party-right">
+        <div class="exmo">Exmo(s) Senhor(es)</div>
+        <div class="who">${escapeHtml(doc.entityName || '')}</div>
+        <div>NIF: ${escapeHtml(doc.entityNif || '')}</div>
+        <div>ENDEREÇO: ${escapeHtml(doc.entityAddress || '')}</div>
+        <div>TELE: ${escapeHtml(doc.entityPhone || '')}</div>
+        <div>${escapeHtml(country)}</div>
+      </div>
     </div>
-  </div>
-  
-  <!-- DOCUMENT TITLE -->
-  <div class="doc-title-section">
-    <span class="copy-label">${copyLabel}</span>
-    <div class="doc-title">${config.label} ${doc.documentNumber}</div>
-    <div class="doc-sub">${config.label} ${doc.documentNumber}</div>
-  </div>
-  
-  <!-- ENTITY INFO ROW -->
-  <table class="entity-row">
-    <thead>
-      <tr>
-        <th>Entidade</th>
-        <th>Contribuinte</th>
-        <th>Requisição</th>
-        <th>Moeda</th>
-        <th>Data</th>
-        <th>Vencimento</th>
-        <th>Desc. Comercial</th>
-        <th>Desc. Financeiro</th>
-        <th>Condição Pagamento</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>${doc.entityCode || doc.entityId || ''}</td>
-        <td>${doc.entityNif || ''}</td>
-        <td>${doc.requisition || ''}</td>
-        <td>${doc.currency || 'AKZ'}</td>
-        <td>${formatDateTime(doc.issueDate)}</td>
-        <td>${doc.dueDate ? formatDate(doc.dueDate) : ''}</td>
-        <td class="r">${formatCurrency(doc.totalDiscount)}</td>
-        <td class="r">0,00</td>
-        <td>${doc.paymentCondition || ''}</td>
-      </tr>
-    </tbody>
-  </table>
-  
-  <!-- LINE ITEMS -->
-  <table class="items-table">
-    <thead>
-      <tr>
-        <th style="width:55px">Artigo</th>
-        <th>Descrição</th>
-        <th class="r" style="width:50px">Qtd.</th>
-        <th class="r" style="width:35px">Un.</th>
-        <th class="r" style="width:75px">Pr. Unitário</th>
-        <th class="r" style="width:40px">Desc.</th>
-        <th class="r" style="width:35px">IVA</th>
-        <th class="r" style="width:85px">Valor</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${doc.lines.map(line => `
-      <tr>
-        <td>${line.productSku || ''}</td>
-        <td>${line.description}</td>
-        <td class="r">${formatCurrency(line.quantity)}</td>
-        <td class="r">${line.unit || 'UN'}</td>
-        <td class="r">${formatCurrency(line.unitPrice)}</td>
-        <td class="r">${line.discount > 0 ? formatCurrency(line.discount) : '0,00'}</td>
-        <td class="r">${line.taxRate.toFixed(0)},00</td>
-        <td class="r">${formatCurrency(line.lineTotal)}</td>
-      </tr>
-      `).join('')}
-    </tbody>
-  </table>
-  
-  <!-- TRANSPORT REFERENCES -->
-  ${doc.transportRef ? `<div class="transport-info">${doc.transportRef}</div>` : ''}
-  
-  <!-- UAP SOFTWARE LINE -->
-  <div class="uap-line">
-    UAP→Processado por programa validado n.º 41/AGT/2019 | Os bens e/ou serviços foram colocados à disposição na data ${formatDateTime(doc.createdAt)} / ©
-  </div>
-  
-  <!-- BOTTOM: TAX SUMMARY + QR + TOTALS -->
-  <div class="bottom-section">
-    <div class="bottom-left">
-      <div class="tax-summary-title">Quadro Resumo de Impostos (IVA Incluído à Taxa)</div>
-      <table class="tax-summary">
+
+    <table class="meta">
+      <thead>
+        <tr>
+          <th>${refLabel}</th>
+          <th>Hora</th>
+          <th>DATA EMISSÃO</th>
+          <th>DATA VENCIMENTO</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>${escapeHtml(printableEntityCode(doc))}</td>
+          <td>${escapeHtml(issueClock(doc))}</td>
+          <td>${escapeHtml(isoDay(doc.issueDate) || isoDay(doc.createdAt))}</td>
+          <td>${escapeHtml(doc.dueDate ? isoDay(doc.dueDate) : '')}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="grow">
+      <table class="items">
         <thead>
           <tr>
-            <th>Taxa/Valor</th>
-            <th>Incid./Qtd.</th>
-            <th>Total</th>
-            <th>Motivo Isenção</th>
+            <th>REFERÊNCIA</th>
+            <th>DESCRIÇÃO</th>
+            <th class="r">QTD.</th>
+            <th>UNI</th>
+            <th class="r">P.UNIT</th>
+            <th class="r">DESC.%</th>
+            <th class="r">TAXA%</th>
+            <th class="r">TOTAL</th>
+            <th class="r">IVA VALOR</th>
           </tr>
         </thead>
         <tbody>
-          ${taxSummary.map(t => `
+          ${doc.lines.map((line) => `
           <tr>
-            <td>IVA (${t.rate.toFixed(0)},00)</td>
-            <td class="r">${formatCurrency(t.base)}</td>
-            <td class="r">${formatCurrency(t.total)}</td>
-            <td></td>
-          </tr>
-          `).join('')}
+            <td>${escapeHtml(line.productSku || '')}</td>
+            <td>${escapeHtml(line.description || '')}</td>
+            <td class="r">${formatCurrency(line.quantity)}</td>
+            <td>${escapeHtml(line.unit || 'UN')}</td>
+            <td class="r">${formatCurrency(line.unitPrice)}</td>
+            <td class="r">${formatCurrency(line.discount || 0)}</td>
+            <td class="r">${formatCurrency(line.taxRate || 0)}</td>
+            <td class="r">${formatCurrency(lineNet(line))}</td>
+            <td class="r">${formatCurrency(line.taxAmount || 0)}</td>
+          </tr>`).join('')}
         </tbody>
       </table>
-      
-      ${options.showQR ? `<div class="qr-placeholder">QR AGT</div>` : ''}
     </div>
-    
-    <div class="bottom-right">
-      <table class="totals-table">
-        <tr><td class="label">Mercadoria/Serviços</td><td class="value">${formatCurrency(goodsTotal)}</td></tr>
-        <tr><td class="label">Desconto Comercial</td><td class="value">${formatCurrency(doc.totalDiscount)}</td></tr>
-        <tr><td class="label">Desconto Adicional</td><td class="value">0,00</td></tr>
-        <tr><td class="label">Outros Serviços</td><td class="value">0,00</td></tr>
-        <tr><td class="label">Adiantamentos</td><td class="value">0,00</td></tr>
-        <tr><td class="label">IVA</td><td class="value">${formatCurrency(doc.totalTax)}</td></tr>
-        <tr><td class="label">Acerto</td><td class="value">0,00</td></tr>
-        <tr class="grand-total">
-          <td class="label">Total ( ${doc.currency || 'AKZ'} )</td>
-          <td class="value">${formatCurrency(doc.total)}</td>
-        </tr>
-      </table>
+
+    <div class="foot">
+      <div class="soft-row">
+        <span>${escapeHtml(softwareValidationFooter(options.softwareNumber || ''))}</span>
+        <span>${escapeHtml(doc.saftHash || '')}</span>
+      </div>
+      <div class="totals-wrap">
+        <div class="tax">
+          <div class="tax-title">RESUMO DE IMPOSTOS</div>
+          <table class="grid">
+            <thead>
+              <tr>
+                <th>DESIGNAÇÃO</th>
+                <th class="r">TAXA%</th>
+                <th class="r">INCIDÊNCIA</th>
+                <th class="r">IMPOSTO</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${taxSummary.map((row) => `
+              <tr>
+                <td>${escapeHtml(taxDesignation(row.rate))}</td>
+                <td class="r">${formatCurrency(row.rate)}</td>
+                <td class="r">${formatCurrency(row.base)}</td>
+                <td class="r">${formatCurrency(row.total)}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="exempt">Motivo de Isenção</div>
+        </div>
+        <div class="sum">
+          <table class="grid">
+            <tr><td>VALOR</td><td class="r">${formatCurrency(goodsTotal)}</td></tr>
+            <tr><td>DESCONTO</td><td class="r">${formatCurrency(discountTotal)}</td></tr>
+            <tr><td>SUB TOTAL</td><td class="r">${formatCurrency(netGoods)}</td></tr>
+            <tr><td>IMPOSTO</td><td class="r">${formatCurrency(doc.totalTax || 0)}</td></tr>
+            <tr class="grand"><td>TOTAL</td><td class="r">KZ ${formatCurrency(doc.total || 0)}</td></tr>
+          </table>
+          ${options.showQR && options.qrCodeDataUrl ? `<img class="qr" src="${options.qrCodeDataUrl}" alt="QR AGT">` : ''}
+        </div>
+      </div>
+      <div class="banks-row">
+        <div class="banks">
+          ${banks.map((line) => `<div>${escapeHtml(line)}</div>`).join('')}
+        </div>
+        <div class="operator">Operador: ${escapeHtml(doc.createdByName || '')}</div>
+      </div>
+      <div class="goods">Os bens/serviços foram colocados à disposição do adquirente na data de factura</div>
     </div>
   </div>
-  
-  <!-- SHIPPING / CARGA & DESCARGA -->
-  ${(doc.loadAddress || doc.unloadAddress) ? `
-  <div class="shipping-section">
-    <table class="shipping-table">
-      <thead>
-        <tr>
-          <th style="width:50%">Carga</th>
-          <th style="width:50%">Descarga</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>
-            ${doc.loadAddress ? `N/ Morada - ${doc.loadDate ? formatDateTime(doc.loadDate) : ''}<br>${doc.loadAddress}` : ''}
-          </td>
-          <td>${doc.unloadAddress || 'V/ Morada'}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-  ` : ''}
-  
-  <!-- BANK DETAILS -->
-  ${doc.bankDetails && doc.bankDetails.length > 0 ? `
-  <div class="bank-section">
-    <table class="bank-table">
-      <thead>
-        <tr>
-          <th>Banco</th>
-          <th>Conta</th>
-          <th>IBAN</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${doc.bankDetails.map(b => `
-        <tr>
-          <td>${b.bank}</td>
-          <td>${b.account}</td>
-          <td>${b.iban}</td>
-        </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  </div>
-  ` : ''}
-  
-  <!-- TOTAL IN WORDS -->
-  <div class="total-words">${numberToWords(doc.total)}</div>
-  
-  <!-- AUDIT LINE -->
-  <div class="audit-line">
-    ${doc.saftHash ? doc.saftHash : ''} &nbsp;&nbsp; ${formatDateTime(doc.createdAt)}
-  </div>
+  <!--SHEET_END-->
   ${isPurchaseDraft ? '</div>' : ''}
 </body>
 </html>`;
+  const start = documentHtml.indexOf('<!--SHEET_START-->');
+  const end = documentHtml.indexOf('<!--SHEET_END-->');
+  const sheet = documentHtml.slice(start + '<!--SHEET_START-->'.length, end);
+  const sheets = copyLabels
+    .map((label) => sheet.replace('___COPY_LABEL___', escapeHtml(label)))
+    .join('');
+  return documentHtml.slice(0, start) + sheets + documentHtml.slice(end + '<!--SHEET_END-->'.length);
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function looksLikeInternalId(value: string): boolean {
+  const v = value.trim();
+  return UUID_RE.test(v) || /^[0-9a-f]{32}$/i.test(v);
+}
+
+/** Customer/supplier account code. Never the database id. */
+function printableEntityCode(doc: ERPDocument): string {
+  const code = String(doc.entityCode || '').trim();
+  if (code && !looksLikeInternalId(code)) return code;
+  return '';
+}
+
+/** FE/398/AGT/2026 and 398/AGT/2026 both print as 398/AGT/2026. */
+function printedSoftwareNumber(): string {
+  const raw = String(getCompanySettings().agtCertificateNumber || '').trim();
+  const match = raw.match(/(\d+)\/AGT\/(\d{4})/i);
+  return match ? `${match[1]}/AGT/${match[2]}` : '';
+}
+
+function softwareValidationFooter(number: string): string {
+  const version = String(getCompanySettings().softwareVersion || '').trim();
+  const prefix = version ? `${version} - ` : '';
+  const processed = number
+    ? `Processado por programa validado n.º ${number}`
+    : 'Processado por programa validado pela AGT';
+  return `${prefix}${processed} - NEXOR ERP`;
+}
+
+let agtSoftwareNumberPromise: Promise<string> | null = null;
+
+/** Company settings first, then the AGT configuration, normalized to NNN/AGT/YYYY. */
+async function resolveSoftwareNumber(): Promise<string> {
+  const fromCompany = printedSoftwareNumber();
+  if (fromCompany) return fromCompany;
+  if (!agtSoftwareNumberPromise) {
+    agtSoftwareNumberPromise = import('@/lib/api/client').then(async ({ api }) => {
+      const res = await api.agt.getConfig();
+      const raw = String(res.data?.softwareCertificateNumber || '');
+      const match = raw.match(/(\d+)\/AGT\/(\d{4})/i);
+      return match ? `${match[1]}/AGT/${match[2]}` : '';
+    }).catch((err) => {
+      agtSoftwareNumberPromise = null;
+      console.warn('[documentPDF] software number lookup skipped:', err);
+      return '';
+    });
+  }
+  return agtSoftwareNumberPromise;
+}
+
+function nifDigits(value: string | undefined): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
+let chartRowsPromise: Promise<Array<Record<string, unknown>>> | null = null;
+
+function loadChartRows(): Promise<Array<Record<string, unknown>>> {
+  if (!chartRowsPromise) {
+    chartRowsPromise = import('@/lib/api/client').then(async ({ api }) => {
+      const res = await api.chartOfAccounts.list();
+      if (res.error || !Array.isArray(res.data)) {
+        throw new Error(res.error || 'chart unavailable');
+      }
+      return res.data as Array<Record<string, unknown>>;
+    }).catch((err) => {
+      chartRowsPromise = null;
+      throw err;
+    });
+  }
+  return chartRowsPromise;
+}
+
+function matchEntityAccount(rows: Array<Record<string, unknown>>, doc: ERPDocument): string {
+  const prefix = doc.entityType === 'supplier' ? '32' : doc.entityType === 'customer' ? '31' : '';
+  if (!prefix) return '';
+  const nif = nifDigits(doc.entityNif);
+  const name = String(doc.entityName || '').trim().toLowerCase();
+  if (!nif && (!name || name === 'consumidor final')) return '';
+  let byName = '';
+  for (const row of rows) {
+    const code = String(row.code || '').trim();
+    if (!/^\d{8}$/.test(code) || !code.startsWith(prefix) || row.is_header) continue;
+    const description = String(row.description || '');
+    const rowNif = nifDigits((description.match(/NIF:\s*([^\s]+)/i) || [])[1] || '');
+    if (nif && rowNif && rowNif === nif) return code;
+    if (!byName && name && name !== 'consumidor final' && String(row.name || '').trim().toLowerCase() === name) {
+      byName = code;
+    }
+  }
+  return byName;
+}
+
+let clientRowsPromise: Promise<Array<Record<string, unknown>>> | null = null;
+let bankRowsPromise: Promise<Array<Record<string, unknown>>> | null = null;
+
+function loadClientRows(): Promise<Array<Record<string, unknown>>> {
+  if (!clientRowsPromise) {
+    clientRowsPromise = import('@/lib/api/client').then(async ({ api }) => {
+      const res = await api.clients.list();
+      if (res.error || !Array.isArray(res.data)) throw new Error(res.error || 'clients unavailable');
+      return res.data as Array<Record<string, unknown>>;
+    }).catch((err) => {
+      clientRowsPromise = null;
+      throw err;
+    });
+  }
+  return clientRowsPromise;
+}
+
+function loadBankRows(): Promise<Array<Record<string, unknown>>> {
+  if (!bankRowsPromise) {
+    bankRowsPromise = import('@/lib/api/client').then(async ({ api }) => {
+      const res = await api.bankAccounts.list();
+      if (res.error || !Array.isArray(res.data)) throw new Error(res.error || 'banks unavailable');
+      return res.data as Array<Record<string, unknown>>;
+    }).catch((err) => {
+      bankRowsPromise = null;
+      throw err;
+    });
+  }
+  return bankRowsPromise;
+}
+
+function textOf(row: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = String(row[key] ?? '').trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+function countryCode(value: string): string {
+  const raw = value.trim();
+  if (!raw || raw.toLowerCase() === 'angola') return 'AO';
+  return raw;
+}
+
+function matchClient(rows: Array<Record<string, unknown>>, doc: ERPDocument): Record<string, unknown> | undefined {
+  const id = String(doc.entityId || '').trim();
+  const nif = nifDigits(doc.entityNif);
+  if (id) {
+    const byId = rows.find((row) => String(row.id || '') === id);
+    if (byId) return byId;
+  }
+  if (!nif) return undefined;
+  return rows.find((row) => nifDigits(textOf(row, 'nif')) === nif);
+}
+
+function bankLine(row: Record<string, unknown>): string {
+  return [
+    textOf(row, 'bankName', 'bank_name', 'bank'),
+    textOf(row, 'accountNumber', 'account_number', 'account'),
+    textOf(row, 'iban'),
+  ].filter(Boolean).join(' - ');
+}
+
+interface PreparedPrint {
+  doc: ERPDocument;
+  bankLines: string[];
+  customerCountry: string;
+}
+
+/** Account code, customer address, and the bank lines the invoice prints. */
+async function preparePrintedDocument(doc: ERPDocument): Promise<PreparedPrint> {
+  let next = doc;
+  if (!printableEntityCode(next)) {
+    try {
+      const code = matchEntityAccount(await loadChartRows(), next);
+      if (code) next = { ...next, entityCode: code };
+    } catch (err) {
+      console.warn('[documentPDF] customer account lookup skipped:', err);
+    }
+  }
+
+  let customerCountry = 'AO';
+  try {
+    const client = matchClient(await loadClientRows(), next);
+    if (client) {
+      const address = [textOf(client, 'address'), textOf(client, 'city')].filter(Boolean).join(', ');
+      customerCountry = countryCode(textOf(client, 'country'));
+      next = {
+        ...next,
+        entityAddress: next.entityAddress || address,
+        entityPhone: next.entityPhone || textOf(client, 'phone'),
+      };
+    }
+  } catch (err) {
+    console.warn('[documentPDF] customer details lookup skipped:', err);
+  }
+
+  const fromDoc = (next.bankDetails || []).map((bank) => bankLine(bank as unknown as Record<string, unknown>)).filter(Boolean);
+  let bankLines = fromDoc;
+  if (bankLines.length === 0) {
+    try {
+      const rows = await loadBankRows();
+      bankLines = rows
+        .filter((row) => {
+          const flag = row.is_active ?? row.isActive;
+          if (flag === undefined || flag === null || flag === '') return true;
+          return flag === true || flag === 1 || flag === '1' || flag === 't';
+        })
+        .map(bankLine)
+        .filter(Boolean);
+    } catch (err) {
+      console.warn('[documentPDF] bank lookup skipped:', err);
+    }
+  }
+  if (bankLines.length === 0) {
+    const company = getCompanySettings();
+    const line = [company.bankName, company.iban].filter(Boolean).join(' - ');
+    if (line) bankLines = [line];
+  }
+
+  return { doc: next, bankLines, customerCountry };
+}
+
+async function documentQrDataUrl(doc: ERPDocument): Promise<string> {
+  const fiscal = doc.documentType === 'fatura_venda'
+    || doc.documentType === 'nota_credito'
+    || doc.documentType === 'nota_debito';
+  if (!fiscal || !doc.documentNumber) return '';
+  try {
+    const { generateAGTQRCodeDataURL } = await import('@/lib/agtQRCode');
+    const net = Math.round((Number(doc.subtotal) - Number(doc.totalDiscount || 0)) * 100) / 100;
+    const rawType = String(doc.invoiceType || '').toUpperCase();
+    const invoiceType = (['FT', 'FR', 'FS', 'TV'].includes(rawType) ? rawType : undefined) as Sale['invoiceType'];
+    const sale = {
+      id: doc.id,
+      invoiceNumber: doc.documentNumber,
+      branchId: doc.branchId,
+      cashierId: doc.createdBy || '',
+      items: [],
+      subtotal: net,
+      taxAmount: doc.totalTax,
+      discount: doc.totalDiscount,
+      total: doc.total,
+      paymentMethod: doc.paymentMethod === 'cheque' ? 'transfer' : (doc.paymentMethod || 'cash'),
+      amountPaid: doc.amountPaid,
+      change: 0,
+      customerNif: doc.entityNif,
+      customerName: doc.entityName,
+      status: 'completed',
+      invoiceType,
+      saftHash: doc.saftHash,
+      agtCode: doc.agtCode,
+      createdAt: doc.createdAt,
+    } as Sale;
+    return await generateAGTQRCodeDataURL(sale);
+  } catch (err) {
+    console.warn('[documentPDF] QR skipped:', err);
+    return '';
+  }
 }
 
 // Open system print dialog for the document (Electron or browser)
 export async function printDocument(doc: ERPDocument, options: PDFOptions = {}) {
   const { source = 'invoices', reprint, showQR, showTerms, copies } = options;
-  const html = generateDocumentHTML(doc, { showQR: showQR ?? true, showTerms, copies });
+  const [prepared, softwareNumber] = await Promise.all([
+    preparePrintedDocument(doc),
+    resolveSoftwareNumber(),
+  ]);
+  const wantQr = showQR ?? true;
+  const qrCodeDataUrl = wantQr ? await documentQrDataUrl(prepared.doc) : '';
+  const html = generateDocumentHTML(prepared.doc, {
+    showQR: wantQr,
+    showTerms,
+    copies,
+    qrCodeDataUrl,
+    softwareNumber,
+    bankLines: prepared.bankLines,
+    customerCountry: prepared.customerCountry,
+  });
   await printHtml(html);
-  void recordDocumentPrint(doc, { format: 'a4', source, reprint });
+  void recordDocumentPrint(prepared.doc, { format: 'a4', source, reprint });
 }
 
 // Download as HTML (can be opened and printed to PDF)
-export function downloadDocumentHTML(doc: ERPDocument) {
-  const html = generateDocumentHTML(doc, { showQR: true, showTerms: true });
+export async function downloadDocumentHTML(doc: ERPDocument) {
+  const [prepared, softwareNumber] = await Promise.all([
+    preparePrintedDocument(doc),
+    resolveSoftwareNumber(),
+  ]);
+  const qrCodeDataUrl = await documentQrDataUrl(prepared.doc);
+  const html = generateDocumentHTML(prepared.doc, {
+    showQR: true,
+    showTerms: true,
+    qrCodeDataUrl,
+    softwareNumber,
+    bankLines: prepared.bankLines,
+    customerCountry: prepared.customerCountry,
+  });
   const blob = new Blob([html], { type: 'text/html' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
