@@ -32,6 +32,8 @@ describe('companySettings', { concurrency: 1 }, () => {
     assert.equal(saved.name, 'AFRIBEST LDA');
     assert.equal(saved.address, 'Rua 1, Luanda');
     assert.equal(saved.agtCertificateNumber, '123/AGT/2026');
+    assert.equal(companySettings.formatSoftwareValidationNumber('FE/398/AGT/2026'), '398/AGT/2026');
+    assert.equal(companySettings.formatSoftwareValidationNumber('398/AGT/2026'), '398/AGT/2026');
     assert.equal(saved.finalConsumerDocType, 'TV');
 
     const reloaded = await companySettings.getCompanySettings();

@@ -12,7 +12,7 @@ const {
 const { getSecurityStatus } = require('./securityStatus');
 const { getAgtConfig } = require('../agt/agtConfig');
 const { getSigningStatus } = require('../agt/fiscalSigning');
-const { getCompanySettings } = require('../agt/companySettings');
+const { getCompanySettings, formatSoftwareValidationNumber } = require('../agt/companySettings');
 const { resolveXsdPath } = require('../saft/saftXsdValidate');
 
 const PLACEHOLDER_NIFS = new Set(['5000000000', '0000000000', '']);
@@ -40,6 +40,14 @@ async function tableHasColumn(table, column) {
   } catch {
     return false;
   }
+}
+
+function resolveSoftwareValidationNumber(...values) {
+  for (const value of values) {
+    const formatted = formatSoftwareValidationNumber(value);
+    if (formatted && formatted !== '0') return formatted;
+  }
+  return '';
 }
 
 function levelFromOk(ok, warnOnly = false) {
@@ -73,10 +81,11 @@ async function getCertificationStatus() {
 
   const nifDigits = String(company.nif || agtConfig.companyNif || '').replace(/\D/g, '');
   const nifOk = nifDigits.length >= 9 && !PLACEHOLDER_NIFS.has(nifDigits);
-  const softwareCert = String(
-    company.agtCertificateNumber || agtConfig.softwareCertificateNumber || '',
-  ).trim();
-  const softwareCertOk = /^\d+\/AGT\/\d{4}$/.test(softwareCert);
+  const softwareCert = resolveSoftwareValidationNumber(
+    company.agtCertificateNumber,
+    agtConfig.softwareCertificateNumber,
+  );
+  const softwareCertOk = Boolean(softwareCert);
 
   const signingRsa = signing.mode === 'rsa';
   const agtSimulate = agtConfig.simulate;

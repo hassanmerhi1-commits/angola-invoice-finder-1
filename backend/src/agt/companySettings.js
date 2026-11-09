@@ -184,4 +184,5 @@ module.exports = {
   saveCompanySettings,
   resolveCompanyForSaft,
   companyToSaftHeader,
+  formatSoftwareValidationNumber,
 };
