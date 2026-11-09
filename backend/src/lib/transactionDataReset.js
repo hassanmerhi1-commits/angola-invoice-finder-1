@@ -140,13 +140,14 @@ async function postOpeningStock(client, engine, { createdBy, createdByName }) {
     .map((c) => `NULLIF(${c}, 0)`);
   if (!costParts.length) return { posted: [], skipped: 'no_cost_column' };
   const unitCost = `COALESCE(${costParts.join(', ')}, 0)`;
-  const branchExpr = cols.has('branch_id') ? "COALESCE(branch_id, '')" : "''";
+  // branch_id is a UUID on PostgreSQL. Never coalesce it to ''.
+  const branchSelect = cols.has('branch_id') ? 'branch_id' : 'NULL';
 
   const r = await client.query(
-    `SELECT ${branchExpr} AS branch_id, SUM(stock * ${unitCost}) AS value
+    `SELECT ${branchSelect} AS branch_id, SUM(stock * ${unitCost}) AS value
      FROM products
      WHERE stock > 0
-     GROUP BY ${branchExpr}`,
+     GROUP BY ${branchSelect}`,
   );
 
   const accounts = await client.query(
