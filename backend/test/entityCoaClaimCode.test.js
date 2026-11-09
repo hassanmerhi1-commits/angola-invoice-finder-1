@@ -73,7 +73,7 @@ describe('supplier COA claim compact codes', () => {
     });
   });
 
-  it('finds an old compact 3211 supplier leaf by name', async () => {
+  it('finds an old compact 3219 supplier leaf by name', async () => {
     const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
     const name = `Old Fuel ${suffix}`;
     const leafId = randomUUID();
@@ -91,11 +91,11 @@ describe('supplier COA claim compact codes', () => {
       await client.query(
         `INSERT INTO chart_of_accounts
          (id, code, name, description, account_type, account_nature, parent_id, level, is_header, is_active)
-         VALUES ($1, '3211', $2, $3, 'liability', 'credit', $4, 3, 0, 1)`,
+         VALUES ($1, '3219', $2, $3, 'liability', 'credit', $4, 3, 0, 1)`,
         [leafId, name, `NIF: 5417${suffix}`, id321],
       );
       const found = await findEntityLeafCode(client, '32', '321', name, `5417${suffix}`);
-      assert.equal(found, '3211');
+      assert.equal(found, '3219');
     });
   });
 

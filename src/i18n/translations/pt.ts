@@ -6536,6 +6536,28 @@ export const pt: TranslationKeys = {
     offsiteCopyFailed: "Falha na cópia externa: {error}",
   },
 
+  transactionResetUi: {
+    title: "Começar do zero (apagar movimentos)",
+    description: "Apaga todos os movimentos de treino deste servidor e põe todos os saldos a zero. Antes de apagar, é criada uma cópia de segurança.",
+    clearsLabel: "Apaga:",
+    clearsList: "facturas, notas de crédito e de débito, compras, despesas, recibos, pagamentos a fornecedores, sessões de caixa, movimentos de stock e todos os lançamentos do diário. A numeração dos documentos volta ao 1.",
+    keepsLabel: "Mantém:",
+    keepsList: "produtos e quantidades, clientes, fornecedores, plano de contas, utilizadores, filiais, bancos e caixas.",
+    beforeHint: "Antes de usar: conte o stock e corrija as quantidades dos produtos, e confirme que nenhuma caixa tem vendas por enviar. Faça isto também no servidor principal.",
+    openButton: "Apagar movimentos…",
+    dialogTitle: "Apagar todos os movimentos?",
+    dialogDescription: "Isto não se pode desfazer sem restaurar a cópia de segurança. Feche a aplicação nas outras caixas antes de continuar.",
+    openingStockOption: "Lançar o stock actual como saldo inicial (débito 261 Mercadorias, crédito 811 Resultados transitados), a quantidade vezes o custo de cada produto.",
+    typeToConfirm: "Escreva {phrase} para confirmar",
+    cancel: "Cancelar",
+    confirmButton: "Apagar agora",
+    done: "Movimentos apagados",
+    doneDescription: "{count} registos apagados. Cópia de segurança: {backup}.",
+    stockPosted: "Stock inicial lançado na 261: {value} Kz.",
+    stockSkippedAccounts: "O stock inicial não foi lançado porque falta a conta 261 ou 811 no plano.",
+    failed: "Não foi possível apagar os movimentos",
+  },
+
   dataConsistencyUi: {
     title: "Consistência de dados",
     description:

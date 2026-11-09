@@ -315,6 +315,7 @@ async function createJournalEntry(client, params) {
     sale: 'VD', purchase: 'CP', purchase_invoice: 'CP', transfer: 'TRF',
     expense: 'DSP', adjustment: 'AJ', adjustment_void: 'AJV', receipt: 'REC', payment: 'PAG',
     credit_note: 'NC', debit_note: 'ND', payment_receipt: 'REC', payment_out: 'PAG',
+    opening_balance: 'AB',
   };
   const prefix = prefixMap[referenceType] || 'JE';
   const entryNumber = await generateSequenceNumber(client, 'journal', prefix);

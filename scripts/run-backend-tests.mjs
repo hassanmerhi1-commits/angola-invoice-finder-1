@@ -49,6 +49,7 @@ const testFiles = [
   'test/coaEntityNameSync.test.js',
   'test/entityCoaMoveCategory.test.js',
   'test/entityCoaClaimCode.test.js',
+  'test/transactionDataReset.test.js',
   'test/closeAccountCodeGap.test.js',
   'test/manualJournalEdit.test.js',
   'test/ensureAuthUsersReady.test.js',

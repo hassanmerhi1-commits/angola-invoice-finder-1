@@ -122,6 +122,73 @@ module.exports = function backupRoutes() {
     }
   });
 
+  // POST /api/backup/reset-transactions — backup, then wipe practice transactions
+  router.post('/reset-transactions', requirePermission('admin_restore'), async (req, res) => {
+    if (assertNotRestoring(res)) return;
+    const { CONFIRM_PHRASE, resetTransactionData } = require('../lib/transactionDataReset');
+    const phrase = String(req.body?.confirm || '').trim().toUpperCase();
+    if (phrase !== CONFIRM_PHRASE) {
+      return res.status(400).json({ error: `Escreva ${CONFIRM_PHRASE} para confirmar.` });
+    }
+
+    restoreInProgress = true;
+    let backup;
+    try {
+      try {
+        backup = await createDbBackup();
+      } catch (error) {
+        console.error('[BACKUP] reset aborted, backup failed:', error.message);
+        return res.status(500).json({
+          error: `Não foi possível criar a cópia de segurança, nada foi apagado: ${error.message}`,
+        });
+      }
+
+      const client = await db.pool.connect();
+      let result;
+      try {
+        await client.query('BEGIN');
+        result = await resetTransactionData(client, {
+          engine: db.engine,
+          postOpeningStock: req.body?.postOpeningStock !== false,
+          createdBy: req.user?.id,
+          createdByName: req.user?.name || req.user?.username || '',
+        });
+        await client.query('COMMIT');
+      } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+
+      const totalDeleted = Object.values(result.deleted).reduce((a, b) => a + b, 0);
+      console.log(`[BACKUP] Transactions reset: ${totalDeleted} rows deleted, backup ${backup.filename}`);
+      auditErpSafe(req, {
+        table: 'backup',
+        id: backup.filename,
+        action: 'reset_transactions',
+        description: `Movimentos apagados (${totalDeleted} registos). Cópia antes: ${backup.filename}`,
+        newValues: { backup: backup.filename, deleted: result.deleted, openingStock: result.openingStock },
+      });
+
+      res.json({
+        success: true,
+        backup: backup.filename,
+        totalDeleted,
+        ...result,
+      });
+    } catch (error) {
+      console.error('[BACKUP RESET ERROR]', error.message);
+      const status = error.code === 'AGT_DOCUMENTS_SENT' ? 409 : 500;
+      res.status(status).json({
+        error: error.message,
+        backup: backup?.filename || null,
+      });
+    } finally {
+      restoreInProgress = false;
+    }
+  });
+
   // POST /api/backup/restore/upload — body = raw .db / .sql file
   router.post(
     '/restore/upload',

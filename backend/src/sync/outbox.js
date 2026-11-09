@@ -364,7 +364,7 @@ async function enqueueJournalPosted(client, entryId, branchId) {
     [entryId]
   );
   const ref = entryRes.rows[0].reference_type;
-  if (['sale', 'receipt', 'payment', 'payment_receipt', 'payment_out'].includes(ref)) {
+  if (['sale', 'receipt', 'payment', 'payment_receipt', 'payment_out', 'opening_balance'].includes(ref)) {
     return null;
   }
   return enqueueSyncEvent(client, {

@@ -23,6 +23,7 @@ import { SyncHealthSettingsCard } from '@/components/settings/SyncHealthSettings
 import { DeploymentHealthCard } from '@/components/settings/DeploymentHealthCard';
 import { ServerUpdateCard } from '@/components/settings/ServerUpdateCard';
 import { DataConsistencyCard } from '@/components/settings/DataConsistencyCard';
+import { TransactionResetCard } from '@/components/settings/TransactionResetCard';
 import {
   SettingsSectionNav,
   SettingsSectionHeader,
@@ -324,6 +325,7 @@ export default function Settings() {
             <DatabaseBackupCard />
             <ClientSyncSettingsCard />
             <DataConsistencyCard />
+            <TransactionResetCard />
           </div>
         );
       case 'advanced':

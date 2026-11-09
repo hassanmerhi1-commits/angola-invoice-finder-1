@@ -298,6 +298,25 @@ export async function restoreDatabaseBackupByName(filename: string): Promise<{ r
   );
 }
 
+export interface ResetTransactionsResult {
+  success: boolean;
+  backup: string;
+  totalDeleted: number;
+  deleted: Record<string, number>;
+  openingStock: { posted: { branchId: string | null; value: number }[]; skipped: string | null };
+}
+
+export async function resetTransactionData(
+  confirm: string,
+  postOpeningStock: boolean,
+): Promise<ResetTransactionsResult> {
+  return backupFetch<ResetTransactionsResult>('/api/backup/reset-transactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm, postOpeningStock }),
+  });
+}
+
 export async function deleteDatabaseBackup(filename: string): Promise<void> {
   await backupFetch<void>(`/api/backup/${encodeURIComponent(filename)}`, { method: 'DELETE' });
 }

@@ -6534,6 +6534,28 @@ export const en = {
     offsiteCopyFailed: "Offsite copy failed: {error}",
   },
 
+  transactionResetUi: {
+    title: "Start from zero (delete transactions)",
+    description: "Deletes every practice transaction on this server and sets every balance to zero. A backup is created before anything is deleted.",
+    clearsLabel: "Deletes:",
+    clearsList: "invoices, credit and debit notes, purchases, expenses, receipts, supplier payments, cash sessions, stock movements and every journal entry. Document numbering goes back to 1.",
+    keepsLabel: "Keeps:",
+    keepsList: "products and their quantities, customers, suppliers, the chart of accounts, users, branches, banks and tills.",
+    beforeHint: "Before you use it, count the stock and correct the product quantities, and make sure no till still has sales waiting to send. Do this on the main server too.",
+    openButton: "Delete transactions…",
+    dialogTitle: "Delete all transactions?",
+    dialogDescription: "This cannot be undone without restoring the backup. Close the app on the other tills before you continue.",
+    openingStockOption: "Post the current stock as the opening balance (debit 261 Merchandise, credit 811 Retained earnings), quantity times cost for each product.",
+    typeToConfirm: "Type {phrase} to confirm",
+    cancel: "Cancel",
+    confirmButton: "Delete now",
+    done: "Transactions deleted",
+    doneDescription: "{count} records deleted. Backup: {backup}.",
+    stockPosted: "Opening stock posted to 261: {value} Kz.",
+    stockSkippedAccounts: "The opening stock was not posted because account 261 or 811 is missing from the chart.",
+    failed: "Could not delete the transactions",
+  },
+
   dataConsistencyUi: {
     title: "Data consistency",
     description:
