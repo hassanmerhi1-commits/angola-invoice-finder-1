@@ -181,8 +181,15 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; background: #fff; }
   @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-  .sheet { min-height: 270mm; display: flex; flex-direction: column; page-break-after: always; break-after: page; }
-  .sheet:last-child { page-break-after: auto; break-after: auto; }
+  .sheet { display: block; break-after: page; page-break-after: always; }
+  .sheet:last-child { break-after: auto; page-break-after: auto; }
+  .sheet-body { min-height: 250mm; display: flex; flex-direction: column; }
+  @media screen { .print-only { display: none !important; } }
+  @media print {
+    .print-only { display: block !important; }
+    .sheet { break-after: page; page-break-after: always; }
+    .sheet:last-child { break-after: auto; page-break-after: auto; }
+  }
   .grow { flex: 1; }
   .head { display: flex; align-items: flex-start; gap: 12px; }
   .logo img { max-height: 78px; max-width: 130px; object-fit: contain; }
@@ -236,6 +243,7 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   ` : ''}
   <!--SHEET_START-->
   <div class="sheet">
+  <div class="sheet-body">
     <div class="head">
       <div class="logo">${company.logo ? `<img src="${company.logo}" alt="">` : ''}</div>
       <div class="company">
@@ -367,6 +375,7 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
       <div class="goods">Os bens/serviços foram colocados à disposição do adquirente na data de factura</div>
     </div>
   </div>
+  </div>
   <!--SHEET_END-->
   ${isPurchaseDraft ? '</div>' : ''}
 </body>
@@ -375,7 +384,9 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   const end = documentHtml.indexOf('<!--SHEET_END-->');
   const sheet = documentHtml.slice(start + '<!--SHEET_START-->'.length, end);
   const sheets = copyLabels
-    .map((label) => sheet.replace('___COPY_LABEL___', escapeHtml(label)))
+    .map((label, index) => sheet
+      .replace('class="sheet"', index === 0 ? 'class="sheet"' : 'class="sheet print-only"')
+      .replace('___COPY_LABEL___', escapeHtml(label)))
     .join('');
   return documentHtml.slice(0, start) + sheets + documentHtml.slice(end + '<!--SHEET_END-->'.length);
 }

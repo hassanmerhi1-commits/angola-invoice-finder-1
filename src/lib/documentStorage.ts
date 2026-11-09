@@ -549,6 +549,57 @@ export async function allocateDocumentNumber(
   return generateDocumentNumber(type, branchCode, seq);
 }
 
+function isOpenSalesDraft(doc: ERPDocument): boolean {
+  return doc.documentType === 'fatura_venda' && doc.status === 'draft' && !doc.fiscalLocked;
+}
+
+/** Local number only. A draft must not consume the fiscal FT/FR sequence. */
+async function nextSalesDraftNumber(branchCode: string): Promise<string> {
+  const code = String(branchCode || 'SEDE').replace(/\s+/g, '') || 'SEDE';
+  const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^RASC-${escaped}-(\\d+)$`, 'i');
+  const drafts = await listSalesInvoiceDrafts();
+  let max = 0;
+  for (const draft of drafts) {
+    const match = re.exec(String(draft.documentNumber || ''));
+    if (match) max = Math.max(max, Number(match[1]) || 0);
+  }
+  return `RASC-${code}-${String(max + 1).padStart(4, '0')}`;
+}
+
+/**
+ * Sales-invoice drafts live on this computer (localStorage, and the server PC's
+ * local erp_documents). They are not rows in `sales` until Confirmar.
+ */
+export async function listSalesInvoiceDrafts(branchId?: string): Promise<ERPDocument[]> {
+  const byId = new Map<string, ERPDocument>();
+  const keep = (doc: ERPDocument) => {
+    if (!isOpenSalesDraft(doc)) return;
+    if (branchId && !branchIdsEqual(doc.branchId, branchId)) return;
+    byId.set(doc.id, doc);
+  };
+  for (const doc of lsGet<ERPDocument[]>(STORAGE_KEY, [])) keep(doc);
+  if (isElectronMode()) {
+    const rows = await dbGetAll<any>('erp_documents');
+    for (const row of rows) {
+      if (!row) continue;
+      keep(row.documentType ? row as ERPDocument : mapDocFromDb(row));
+    }
+  }
+  return sortDocumentsByIssue(Array.from(byId.values()));
+}
+
+export async function deleteLocalDocument(id: string): Promise<void> {
+  const target = String(id || '').trim();
+  if (!target) return;
+  if (isElectronMode()) {
+    await dbDelete('erp_documents', target);
+  }
+  const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
+  const next = docs.filter((d) => d.id !== target);
+  if (next.length !== docs.length) lsSet(STORAGE_KEY, next);
+}
+
 function assertDocumentMayBeSaved(existing: ERPDocument | undefined, doc: ERPDocument): ERPDocument {
   if (!existing || !isFiscallyImmutable(existing)) {
     return { ...doc, updatedAt: new Date().toISOString() };
@@ -591,6 +642,14 @@ export async function removeLocalDocumentsByNumber(
   }
 }
 
+function mirrorDocumentInLocalStorage(doc: ERPDocument): void {
+  const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
+  const idx = docs.findIndex((d) => d.id === doc.id);
+  if (idx >= 0) docs[idx] = doc;
+  else docs.push(doc);
+  lsSet(STORAGE_KEY, docs);
+}
+
 export async function saveDocument(doc: ERPDocument): Promise<ERPDocument> {
   const existing = await getDocumentById(doc.id);
   const nextDoc = assertDocumentMayBeSaved(existing, doc);
@@ -598,6 +657,7 @@ export async function saveDocument(doc: ERPDocument): Promise<ERPDocument> {
   if (isElectronMode()) {
     const saved = await dbInsert('erp_documents', mapDocToDb(nextDoc));
     if (saved) {
+      if (isOpenSalesDraft(nextDoc)) mirrorDocumentInLocalStorage(nextDoc);
       return nextDoc;
     }
     const docs = lsGet<ERPDocument[]>(STORAGE_KEY, []);
@@ -631,8 +691,11 @@ export async function createDocument(
     throw new Error('Credit notes must be issued in Fiscal Documents (stock and AGT compliance).');
   }
   const now = new Date().toISOString();
-  const documentNumber =
-    data.documentNumber || (await allocateDocumentNumber(type, branchId, branchCode));
+  const documentNumber = data.documentNumber || (
+    type === 'fatura_venda' && (data.status || 'draft') === 'draft'
+      ? await nextSalesDraftNumber(branchCode)
+      : await allocateDocumentNumber(type, branchId, branchCode)
+  );
 
   const doc: ERPDocument = {
     id: data.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,

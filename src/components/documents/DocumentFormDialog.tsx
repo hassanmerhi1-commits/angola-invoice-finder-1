@@ -16,7 +16,7 @@ import { Plus, Trash2, Search, Save, Printer, X, Send, Link2, UserRound, UserPlu
 import { printDocument } from '@/lib/documentPDF';
 import { cn } from '@/lib/utils';
 import { DocumentType, DocumentLine, ERPDocument, DOCUMENT_TYPE_CONFIG } from '@/types/documents';
-import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument, removeLocalDocumentsByNumber, getSaleInvoiceAsDocument } from '@/lib/documentStorage';
+import { calculateLineTotals, calculateDocumentTotals, createDocument, saveDocument, removeLocalDocumentsByNumber, deleteLocalDocument, getSaleInvoiceAsDocument } from '@/lib/documentStorage';
 import { linkProformaAfterInvoiceConfirm } from '@/lib/linkProformaConversion';
 import { useProducts, useAuth, useClients, useSuppliers } from '@/hooks/useERP';
 import type { Client, Supplier, OpenItem } from '@/types/erp';
@@ -865,7 +865,15 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       resolvedIssueDate = today;
     }
 
-      if (editDocument) {
+      const issuingDraftSale = Boolean(
+        documentType === 'fatura_venda'
+        && status === 'confirmed'
+        && editDocument
+        && editDocument.status === 'draft'
+        && !editDocument.fiscalLocked
+      );
+
+      if (editDocument && !issuingDraftSale) {
         if (formReadOnly) {
           toast.error(t.documentFormUi.fiscalLockedSaveError);
           return;
@@ -893,11 +901,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           dueDate,
           validUntil: dueDateOnlyEdit ? editDocument.validUntil : validUntil,
           notes: dueDateOnlyEdit ? editDocument.notes : notes,
-          status: editDocument.status,
+          status: editDocument.status === 'draft' ? status : editDocument.status,
         };
         await saveDocument(updated);
         if (
           editDocument.documentType === 'fatura_venda' &&
+          editDocument.status !== 'draft' &&
           dueDate &&
           dueDate !== editDocument.dueDate
         ) {
@@ -1054,6 +1063,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
           }
 
           await removeLocalDocumentsByNumber('fatura_venda', saleInvoiceNumber, saleId);
+          if (editDocument?.id) await deleteLocalDocument(editDocument.id);
 
           // Mirror in erp_documents using the same id as `sales` (required for AGT transmit)
           const doc = await createDocument(

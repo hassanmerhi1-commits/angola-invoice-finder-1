@@ -34,6 +34,7 @@ import { invalidateInventoryGridCacheForBranches } from '@/lib/inventoryGrid';
 import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import {
   getDocuments,
+  listSalesInvoiceDrafts,
   convertDocument,
   getSalesInvoicesAsDocuments,
   getSaleInvoiceAsDocument,
@@ -95,6 +96,12 @@ function invoiceFallsOnRange(doc: ERPDocument, from: string, to: string): boolea
   if (from && day < from) return false;
   if (to && day > to) return false;
   return true;
+}
+
+/** Open sales drafts stay on the list on any selected day, so Guardar rascunho can be reopened. */
+function invoiceStaysOnList(doc: ERPDocument, from: string, to: string): boolean {
+  if (doc.documentType === 'fatura_venda' && doc.status === 'draft') return true;
+  return invoiceFallsOnRange(doc, from, to);
 }
 
 function formatInvoiceDay(doc: ERPDocument, locale: string): string {
@@ -332,7 +339,7 @@ export default function Invoices() {
     setDateFrom(from);
     setDateTo(to);
     if (from || to) {
-      setDocuments((prev) => prev.filter((doc) => invoiceFallsOnRange(doc, from, to)));
+      setDocuments((prev) => prev.filter((doc) => invoiceStaysOnList(doc, from, to)));
     }
     if (same) setRefreshKey((k) => k + 1);
   }, []);
@@ -386,7 +393,7 @@ export default function Invoices() {
     const loadGen = rangeGenRef.current;
     const onPickedDays = (doc: ERPDocument) => {
       const live = listRangeRef.current;
-      return invoiceFallsOnRange(doc, live.from.slice(0, 10), live.to.slice(0, 10));
+      return invoiceStaysOnList(doc, live.from.slice(0, 10), live.to.slice(0, 10));
     };
     const cached = (getCachedList<ERPDocument[]>(cacheKey) ?? []).filter(onPickedDays);
     const seeded = sortDocumentsByIssue(
@@ -508,6 +515,19 @@ export default function Invoices() {
         const storedDocsPromise = datedList
           ? Promise.resolve([] as ERPDocument[])
           : getDocuments(type, branchFilter, { skipLocalDb: true });
+        const salesDraftsPromise = loadSales
+          ? listSalesInvoiceDrafts(isHeadOffice ? undefined : branchFilter)
+          : Promise.resolve([] as ERPDocument[]);
+        const withSalesDrafts = (stored: ERPDocument[], drafts: ERPDocument[]) => {
+          const seen = new Set(stored.map((d) => d.id));
+          const out = [...stored];
+          for (const draft of drafts) {
+            if (seen.has(draft.id)) continue;
+            seen.add(draft.id);
+            out.push(draft);
+          }
+          return out;
+        };
         const mergeStoredWithProformas = (stored: ERPDocument[], pfDocs: ERPDocument[]) => {
           const seen = new Set(stored.map((d) => d.id));
           const out = [...stored];
@@ -560,12 +580,13 @@ export default function Invoices() {
 
         // "All" tab: paint sales first so the grid is usable; purchases/CN fill in after.
         if (!type) {
-          const [storedDocs, salesDocs, pfDocs] = await Promise.all([
+          const [storedDocs, salesDocs, pfDocs, salesDrafts] = await Promise.all([
             storedDocsPromise,
             fetchSalesDocs(),
             proformaDocsPromise,
+            salesDraftsPromise,
           ]);
-          const storedWithPf = mergeStoredWithProformas(storedDocs, pfDocs);
+          const storedWithPf = withSalesDrafts(mergeStoredWithProformas(storedDocs, pfDocs), salesDrafts);
           mergeAndPaint(salesDocs, [], [], storedWithPf);
           if (!cancelled) setListLoading(false);
 
@@ -590,7 +611,7 @@ export default function Invoices() {
           return;
         }
 
-        const [storedDocs, salesDocs, purchaseDocs, cnRes, dnRes, pfDocs, gtRes] = await Promise.all([
+        const [storedDocs, salesDocs, purchaseDocs, cnRes, dnRes, pfDocs, gtRes, salesDrafts] = await Promise.all([
           storedDocsPromise,
           fetchSalesDocs(),
           loadPurchase
@@ -606,6 +627,7 @@ export default function Invoices() {
           loadFiscalTransport
             ? api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts)
             : Promise.resolve({ data: [] as TransportDocument[] }),
+          salesDraftsPromise,
         ]);
 
         const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
@@ -621,7 +643,14 @@ export default function Invoices() {
         const fiscalTransportDocs = gtRows.map((row) =>
           mapTransportDocumentToErpDocument(row, row.branchName || branchNames[row.branchId] || '', t.pos.finalConsumer),
         );
-        mergeAndPaint(salesDocs, purchaseDocs, fiscalCreditDocs, mergeStoredWithProformas(storedDocs, pfDocs), fiscalTransportDocs, fiscalDebitDocs);
+        mergeAndPaint(
+          salesDocs,
+          purchaseDocs,
+          fiscalCreditDocs,
+          withSalesDrafts(mergeStoredWithProformas(storedDocs, pfDocs), salesDrafts),
+          fiscalTransportDocs,
+          fiscalDebitDocs,
+        );
       } catch (err) {
         console.error('[Invoices] load failed:', err);
         // Keep showing the last cached list instead of blanking the tab on a transient failure.
@@ -874,7 +903,7 @@ export default function Invoices() {
     const to = dateTo.slice(0, 10);
     return sortDocumentsByIssue(
       documents.filter((d) => {
-        if (!invoiceFallsOnRange(d, from, to)) return false;
+        if (!invoiceStaysOnList(d, from, to)) return false;
         if (d.documentType === 'fatura_compra' && (d.status === 'draft' || d.status === 'pending')) return false;
         if (!q) return true;
         const hay = [d.documentNumber, d.entityName, d.entityNif].join(' ').toLowerCase();
@@ -1520,17 +1549,21 @@ export default function Invoices() {
                     onDoubleClick={() => openEditDocument(doc)}
                     onContextMenu={() => setSelectedDocId(doc.id)}
                   >
-                    <td className={cn("px-3 py-1.5 font-medium", config.color)}>{config.prefix}</td>
+                    <td className={cn("px-3 py-1.5 font-medium", config.color)}>
+                      {doc.documentType === 'fatura_venda' && doc.status === 'draft' ? 'RASC' : config.prefix}
+                    </td>
                     <td className="px-3 py-1.5 font-mono">
                       <div>{doc.documentNumber}</div>
                       {doc.documentType === 'fatura_venda' && (
                         <div className={cn(
                           "text-[10px] font-sans mt-0.5",
-                          isProvisionalInvoiceNumber(doc.documentNumber)
+                          doc.status === 'draft' || isProvisionalInvoiceNumber(doc.documentNumber)
                             ? "text-amber-600 font-medium"
                             : "text-muted-foreground",
                         )}>
-                          {isProvisionalInvoiceNumber(doc.documentNumber)
+                          {doc.status === 'draft'
+                            ? t.documentStatus.draft
+                            : isProvisionalInvoiceNumber(doc.documentNumber)
                             ? t.invoicesUi.pendingSyncOffline
                             : <>
                               {doc.paymentMethod === 'credit'
