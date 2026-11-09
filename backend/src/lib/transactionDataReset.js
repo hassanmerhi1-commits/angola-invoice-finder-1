@@ -181,6 +181,61 @@ async function postOpeningStock(client, engine, { createdBy, createdByName }) {
   return { posted, skipped: null };
 }
 
+async function deleteTables(client, tables) {
+  const deleted = {};
+  for (const table of tables) {
+    const r = await client.query(`DELETE FROM ${table}`);
+    deleted[table] = r.rowCount || 0;
+  }
+  return deleted;
+}
+
+// Row-by-row DELETE re-checks every foreign key per row and blows the pool's
+// 30s statement_timeout on real data; TRUNCATE empties the set in one step.
+async function clearPostgresTables(client, tables) {
+  await client.query('SET LOCAL statement_timeout = 0');
+  await client.query("SET LOCAL lock_timeout = '20s'");
+  if (!tables.length) return {};
+
+  const deleted = {};
+  for (const table of tables) {
+    const r = await client.query(`SELECT COUNT(*)::bigint AS n FROM ${table}`);
+    deleted[table] = Number(r.rows[0]?.n || 0);
+  }
+
+  const outside = await client.query(
+    `SELECT DISTINCT src.relname::text AS referencing
+     FROM pg_constraint c
+     JOIN pg_class src ON src.oid = c.conrelid
+     JOIN pg_class dst ON dst.oid = c.confrelid
+     JOIN pg_namespace n ON n.oid = dst.relnamespace
+     WHERE c.contype = 'f'
+       AND n.nspname = 'public'
+       AND dst.relname::text = ANY($1::text[])
+       AND NOT (src.relname::text = ANY($1::text[]))`,
+    [tables],
+  );
+  if (outside.rows.length) {
+    console.warn(
+      '[RESET] Kept tables reference transactions, using DELETE:',
+      outside.rows.map((r) => r.referencing).join(', '),
+    );
+    return deleteTables(client, tables);
+  }
+
+  await client.query('SAVEPOINT reset_truncate');
+  try {
+    await client.query(`TRUNCATE ${tables.join(', ')}`);
+    await client.query('RELEASE SAVEPOINT reset_truncate');
+  } catch (error) {
+    if (error?.code === '55P03') throw error;
+    console.warn('[RESET] TRUNCATE refused, using DELETE:', error.message);
+    await client.query('ROLLBACK TO SAVEPOINT reset_truncate');
+    return deleteTables(client, tables);
+  }
+  return deleted;
+}
+
 /**
  * @param {object} client  query-capable client inside an open transaction
  * @param {{ engine: 'postgres'|'sqlite', postOpeningStock?: boolean, createdBy?: string, createdByName?: string }} opts
@@ -197,11 +252,25 @@ async function resetTransactionData(client, opts = {}) {
     throw err;
   }
 
-  const deleted = {};
+  const existing = [];
   for (const table of TRANSACTION_TABLES) {
-    if (!(await tableExists(client, engine, table))) continue;
-    const r = await client.query(`DELETE FROM ${table}`);
-    deleted[table] = r.rowCount || 0;
+    if (await tableExists(client, engine, table)) existing.push(table);
+  }
+
+  let deleted;
+  try {
+    deleted = engine === 'postgres'
+      ? await clearPostgresTables(client, existing)
+      : await deleteTables(client, existing);
+  } catch (error) {
+    if (error?.code === '55P03' || /lock timeout/i.test(String(error?.message || ''))) {
+      const busy = new Error(
+        'A base de dados está ocupada por outra caixa ou serviço. Feche o NEXOR nas outras caixas e tente de novo.',
+      );
+      busy.code = 'TABLES_BUSY';
+      throw busy;
+    }
+    throw error;
   }
 
   if (await tableExists(client, engine, 'sync_events')) {

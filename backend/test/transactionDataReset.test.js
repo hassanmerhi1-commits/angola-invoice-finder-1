@@ -120,6 +120,26 @@ describe('transaction data reset', { concurrency: 1 }, () => {
     assert.equal(result.deleted.sales, 1);
   });
 
+  it('empties Postgres tables in one TRUNCATE without the 30s limit', async () => {
+    const sql = [];
+    const client = {
+      async query(text) {
+        const q = String(text);
+        sql.push(q);
+        if (q.includes('to_regclass')) return { rows: [{ t: 'x' }] };
+        if (q.includes('COUNT(*)')) return { rows: [{ n: 3 }] };
+        return { rows: [], rowCount: 0 };
+      },
+    };
+    const result = await resetTransactionData(client, { engine: 'postgres' });
+    assert.ok(sql.includes('SET LOCAL statement_timeout = 0'));
+    const truncates = sql.filter((q) => q.startsWith('TRUNCATE'));
+    assert.equal(truncates.length, 1);
+    assert.ok(truncates[0].includes('journal_entry_lines') && truncates[0].includes('sales'));
+    assert.equal(sql.some((q) => /^DELETE FROM sales\b/.test(q)), false);
+    assert.equal(result.deleted.sales, 3);
+  });
+
   it('refuses when documents were really sent to AGT', async () => {
     await harness.withClient((client) =>
       client.query(

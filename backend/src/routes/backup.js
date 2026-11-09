@@ -179,7 +179,7 @@ module.exports = function backupRoutes() {
       });
     } catch (error) {
       console.error('[BACKUP RESET ERROR]', error.message);
-      const status = error.code === 'AGT_DOCUMENTS_SENT' ? 409 : 500;
+      const status = error.code === 'AGT_DOCUMENTS_SENT' || error.code === 'TABLES_BUSY' ? 409 : 500;
       res.status(status).json({
         error: error.message,
         backup: backup?.filename || null,
