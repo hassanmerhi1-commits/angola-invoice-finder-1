@@ -3676,7 +3676,7 @@ export const en = {
     colType: "Type",
     colStatus: "Status",
     colCode: "CUCE / code",
-    colError: "Error",
+    colError: "AGT reply",
     colDate: "Sent",
     statusValidated: "Validated",
     statusPending: "Pending",

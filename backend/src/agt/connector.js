@@ -221,9 +221,11 @@ function interpretStatusResponse(body, documentNo) {
   const list = Array.isArray(body?.documentStatusList) ? body.documentStatusList : [];
   const target = String(documentNo || '').trim();
   const entry = list.find((row) => String(row?.documentNo || '').trim() === target) || (list.length === 1 ? list[0] : null);
+  const documentStatus = String(entry?.documentStatus || '').trim().toUpperCase() || null;
   const base = {
     requestId: String(body?.requestID || ''),
     resultCode: Number.isFinite(resultCode) ? resultCode : null,
+    documentStatus,
     responsePayload: body,
   };
 
@@ -242,6 +244,23 @@ function interpretStatusResponse(body, documentNo) {
     return { ...base, agtStatus: 'invalid', errors };
   }
   return { ...base, agtStatus: 'submitted', retryLater: true, errors: [] };
+}
+
+/** Short line stored on a Pending transmission so the last obterEstado reply is visible. */
+function describeStatusProbe(remote) {
+  if (!remote) return 'Consulta de estado sem resposta';
+  if (remote.error) return String(remote.error).slice(0, 500);
+  const extra = (remote.errors || [])
+    .map((e) => `${e.code || ''} ${e.description || ''}`.trim())
+    .filter(Boolean)
+    .join('; ');
+  const doc = remote.documentStatus ? `, documento ${remote.documentStatus}` : '';
+  const code = remote.resultCode;
+  if (code === 8) return `AGT resultado 8 — ainda em processamento${doc}`;
+  if (code === 7) return `AGT resultado 7 — consulta demasiado cedo${doc}`;
+  if (extra) return `AGT resultado ${code == null ? '—' : code}${doc} — ${extra}`.slice(0, 500);
+  if (code == null) return `AGT respondeu sem código de resultado${doc}`.slice(0, 500);
+  return `AGT resultado ${code} — sem estado final${doc}`.slice(0, 500);
 }
 
 /**
@@ -308,6 +327,7 @@ module.exports = {
   transmitVoid,
   checkDocumentStatus,
   interpretStatusResponse,
+  describeStatusProbe,
   shouldSimulate,
   hasLiveCredentials,
   resolveApiUrl,

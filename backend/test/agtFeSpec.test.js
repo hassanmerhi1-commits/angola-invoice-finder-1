@@ -11,7 +11,7 @@ const {
   SCHEMA_VERSION,
 } = require('../src/agt/fePayload');
 const { decodeJwsPayload } = require('../src/agt/jwsSign');
-const { interpretStatusResponse } = require('../src/agt/connector');
+const { interpretStatusResponse, describeStatusProbe } = require('../src/agt/connector');
 const { loadSoftwarePrivateKey, clearSoftwareKeyCache } = require('../src/agt/softwareKey');
 
 function keyPair() {
@@ -213,6 +213,21 @@ test('obterEstado: V is validated, I is invalid with AGT errors', () => {
   }, 'FT FT-2');
   assert.equal(invalid.agtStatus, 'invalid');
   assert.deepEqual(invalid.errors, [{ code: 'E22', description: 'Total de impostos' }]);
+});
+
+test('obterEstado probe text keeps result 7 and 8 visible', () => {
+  const processing = interpretStatusResponse({ resultCode: 8, requestID: '2026' }, 'FT FT-1');
+  assert.equal(describeStatusProbe(processing), 'AGT resultado 8 — ainda em processamento');
+  const early = interpretStatusResponse({
+    resultCode: 7,
+    documentStatusList: [{ documentNo: 'FT FT-1', documentStatus: 'V' }],
+  }, 'FT FT-1');
+  assert.equal(early.agtStatus, 'submitted');
+  assert.equal(describeStatusProbe(early), 'AGT resultado 7 — consulta demasiado cedo, documento V');
+  assert.equal(
+    describeStatusProbe({ error: 'Chave privada do contribuinte em falta' }),
+    'Chave privada do contribuinte em falta',
+  );
 });
 
 test('obterEstado: processing / premature / cancelled', () => {

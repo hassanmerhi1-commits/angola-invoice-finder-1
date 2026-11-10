@@ -274,7 +274,15 @@ export function AgtTransmissionsCard() {
                   <TableCell>{typeLabel(row)}</TableCell>
                   <TableCell>{statusBadge(row.agt_status)}</TableCell>
                   <TableCell className="font-mono text-xs">{row.agt_code || '—'}</TableCell>
-                  <TableCell className="text-xs text-destructive max-w-[200px] truncate" title={row.error_message}>
+                  <TableCell
+                    className={`text-xs max-w-[280px] truncate ${
+                      (row.agt_status === 'pending' || row.agt_status === 'submitted')
+                        && /resultado [78]/.test(row.error_message || '')
+                        ? 'text-muted-foreground'
+                        : 'text-destructive'
+                    }`}
+                    title={row.error_message}
+                  >
                     {row.error_message || '—'}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">

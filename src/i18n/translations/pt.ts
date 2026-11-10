@@ -3679,7 +3679,7 @@ export const pt: TranslationKeys = {
     colType: "Tipo",
     colStatus: "Estado",
     colCode: "CUCE / código",
-    colError: "Erro",
+    colError: "Resposta AGT",
     colDate: "Enviado",
     statusValidated: "Validado",
     statusPending: "Pendente",

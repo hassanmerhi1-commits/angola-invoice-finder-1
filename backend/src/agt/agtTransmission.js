@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const { getAgtConfigWithSecrets } = require('./agtConfig');
 const { signFiscalEntity } = require('./fiscalSigning');
-const { transmitDocument, checkDocumentStatus, shouldSimulate } = require('./connector');
+const { transmitDocument, checkDocumentStatus, shouldSimulate, describeStatusProbe } = require('./connector');
 const { buildRegistarFacturaPayload, agtDocumentType, formatDocumentNo } = require('./fePayload');
 const { loadActiveSigningMaterial } = require('./certificateStore');
 const { resolveSoftwareSigningKey } = require('./softwareKey');
@@ -428,9 +428,15 @@ async function getEntityAgtStatus(entityKind, entityId, options = {}) {
         await applyRemoteStatus(meta, doc.id, remote);
         row.agt_status = remote.agtStatus;
         if (remote.validatedAt) row.agt_validated_at = remote.validatedAt;
+      } else {
+        await rememberStatusProbe(meta, doc.id, remote);
       }
     } catch (e) {
-      remote = { error: e.message };
+      remote = {
+        error: e.message,
+        errorCode: String(e.code || e.status || 'STATUS_CHECK'),
+      };
+      await rememberStatusProbe(meta, doc.id, remote);
     }
   }
 
@@ -454,6 +460,42 @@ async function latestRequestId(entityType, entityId) {
     return res.rows[0]?.request_id || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Keep the last obterEstado reply on the transmission row without changing agt_status.
+ * A status-check failure must not become "error"/"rejected": the reconcile worker would
+ * resend the same number and AGT refuses that (E46).
+ */
+async function rememberStatusProbe(meta, entityId, remote) {
+  const note = describeStatusProbe(remote);
+  const code = remote.errorCode
+    || remote.errors?.[0]?.code
+    || (remote.resultCode != null ? `R${remote.resultCode}` : null);
+  const payload = remote.responsePayload
+    ? JSON.stringify(remote.responsePayload).slice(0, 8000)
+    : null;
+  try {
+    const existing = await db.query(
+      `SELECT id, error_message FROM agt_transmissions
+       WHERE entity_type = $1 AND entity_id = $2 AND COALESCE(transmission_type, '') != 'void'
+       ORDER BY transmitted_at DESC LIMIT 1`,
+      [meta.entityType, entityId],
+    );
+    const row = existing.rows[0];
+    if (!row) return;
+    if (String(row.error_message || '') !== note) {
+      console.warn('[AGT] status', meta.entityType, entityId, note);
+    }
+    await db.query(
+      `UPDATE agt_transmissions
+       SET error_message = $1, error_code = $2, response_payload = COALESCE($3, response_payload)
+       WHERE id = $4`,
+      [note, code ? String(code).slice(0, 40) : null, payload, row.id],
+    );
+  } catch (e) {
+    console.warn('[AGT] could not store status probe:', e.message);
   }
 }
 
