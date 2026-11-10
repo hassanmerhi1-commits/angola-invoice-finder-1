@@ -278,6 +278,13 @@ export default function Payments() {
       .reduce((sum, oi) => sum + signedOpenItemBalance(oi), 0);
   }, [entityPayableItems, selectedOpenItems]);
 
+  const amountForItems = (ids: Set<string>) => {
+    const total = entityPayableItems
+      .filter((oi) => ids.has(oi.id))
+      .reduce((sum, oi) => sum + signedOpenItemBalance(oi), 0);
+    return ids.size ? String(Math.round(total * 100) / 100) : '';
+  };
+
   const formatSignedAmount = (oi: OpenItem) => {
     const signed = signedOpenItemBalance(oi);
     const formatted = Math.abs(signed).toLocaleString(locale);
@@ -446,10 +453,7 @@ export default function Payments() {
       return;
     }
     setSelectedOpenItems(new Set(entityPayableItems.map((oi) => oi.id)));
-    setAmount((prev) => {
-      if (prev && Number(prev) > 0) return prev;
-      return String(Math.round(payableTotal * 100) / 100);
-    });
+    setAmount(String(Math.round(payableTotal * 100) / 100));
   }, [entityId, payableItemsKey, entityPayableItems, payableTotal]);
 
   const handleCreate = async () => {
@@ -955,6 +959,7 @@ export default function Payments() {
                                 const next = new Set(selectedOpenItems);
                                 checked ? next.add(oi.id) : next.delete(oi.id);
                                 setSelectedOpenItems(next);
+                                setAmount(amountForItems(next));
                               }}
                             />
                           </td>

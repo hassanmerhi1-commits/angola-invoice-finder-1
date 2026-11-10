@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
-import { AlertCircle, Package, RotateCcw, Search } from 'lucide-react';
+import { AlertCircle, Package, RotateCcw, Search, Trash2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -379,6 +379,7 @@ export function CreditNoteCreateDialog({
                           <TableHead className="text-right">{fd.colSoldQty}</TableHead>
                           <TableHead className="text-right">{fd.colQty}</TableHead>
                           <TableHead className="text-right">{fd.colTotal}</TableHead>
+                          <TableHead className="w-10" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -415,6 +416,18 @@ export function CreditNoteCreateDialog({
                               </TableCell>
                               <TableCell className="text-right whitespace-nowrap">
                                 {(item.subtotal + item.taxAmount).toLocaleString(uiLocale)} Kz
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  title={t.common.delete}
+                                  onClick={() => setCreditItems((rows) => rows.filter((_, i) => i !== idx))}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
                               </TableCell>
                             </TableRow>
                           );
