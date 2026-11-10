@@ -18,7 +18,7 @@ import {
 import { toast } from 'sonner';
 import { ListLoadState } from '@/components/ListLoadState';
 import {
-  Plus, Search, Printer, RefreshCw, FileText, Receipt,
+  Plus, Search, Printer, RefreshCw, FileText, Receipt, Trash2,
   Banknote, CreditCard, ArrowRight, Download, XCircle, CheckCircle,
   Clock, ChevronDown, ArrowRightLeft, Send, Loader2,
 } from 'lucide-react';
@@ -35,6 +35,7 @@ import { PRODUCTS_CHANGED_EVENT } from '@/lib/storage';
 import {
   getDocuments,
   listSalesInvoiceDrafts,
+  deleteLocalDocument,
   convertDocument,
   getSalesInvoicesAsDocuments,
   getSaleInvoiceAsDocument,
@@ -320,6 +321,18 @@ export default function Invoices() {
     markCachedListsStaleByPrefix('invoicesDocs:');
     setRefreshKey((k) => k + 1);
   }, []);
+
+  const handleDeleteSalesDraft = useCallback(async (doc: ERPDocument) => {
+    if (doc.documentType !== 'fatura_venda' || doc.status !== 'draft') return;
+    const ok = window.confirm(
+      t.documentFormUi.deleteDraftConfirm.replace('{number}', doc.documentNumber),
+    );
+    if (!ok) return;
+    await deleteLocalDocument(doc.id);
+    if (selectedDocId === doc.id) setSelectedDocId(null);
+    toast.success(t.documentFormUi.deleteDraftDone);
+    refresh();
+  }, [refresh, selectedDocId, t.documentFormUi.deleteDraftConfirm, t.documentFormUi.deleteDraftDone]);
 
   // Load documents — seed instantly from cache so the tab renders without waiting on the network.
   const [documents, setDocuments] = useState<ERPDocument[]>(
@@ -1646,6 +1659,17 @@ export default function Invoices() {
                 {t.common.generate}: {selectedDoc.childDocuments.map(c => c.number).join(', ')}
               </span>
             )}
+            {selectedDoc.documentType === 'fatura_venda' && selectedDoc.status === 'draft' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto h-6 text-[10px] gap-1 px-2 text-destructive border-destructive/40 hover:text-destructive"
+                onClick={() => void handleDeleteSalesDraft(selectedDoc)}
+              >
+                <Trash2 className="w-3 h-3" />
+                {t.documentFormUi.deleteDraft}
+              </Button>
+            )}
             {selectedDoc.documentType === 'nota_credito' && (
               <Button
                 size="sm"
@@ -1746,6 +1770,10 @@ export default function Invoices() {
           documentType={formDocType}
           editDocument={editDoc}
           prefillFrom={prefillDoc}
+          onDraftDeleted={() => {
+            if (editDoc?.id) setSelectedDocId((current) => (current === editDoc.id ? null : current));
+            refresh();
+          }}
           onSaved={async (doc) => {
             refresh();
             const soId = pendingSalesOrderIdRef.current;

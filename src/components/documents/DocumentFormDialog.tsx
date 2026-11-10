@@ -76,9 +76,10 @@ interface DocumentFormDialogProps {
   editDocument?: ERPDocument | null;
   prefillFrom?: ERPDocument | null;  // for conversions
   onSaved?: (doc: ERPDocument) => void;
+  onDraftDeleted?: () => void;
 }
 
-export function DocumentFormDialog({ open, onOpenChange, documentType, editDocument, prefillFrom, onSaved }: DocumentFormDialogProps) {
+export function DocumentFormDialog({ open, onOpenChange, documentType, editDocument, prefillFrom, onSaved, onDraftDeleted }: DocumentFormDialogProps) {
   const { t, language } = useTranslation();
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { user } = useAuth();
@@ -865,6 +866,25 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     }
   };
 
+  const canDeleteSalesDraft = Boolean(
+    editDocument
+    && documentType === 'fatura_venda'
+    && editDocument.status === 'draft'
+    && !editDocument.fiscalLocked,
+  );
+
+  const handleDeleteDraft = async () => {
+    if (!editDocument || !canDeleteSalesDraft) return;
+    const ok = window.confirm(
+      t.documentFormUi.deleteDraftConfirm.replace('{number}', editDocument.documentNumber),
+    );
+    if (!ok) return;
+    await deleteLocalDocument(editDocument.id);
+    toast.success(t.documentFormUi.deleteDraftDone);
+    onDraftDeleted?.();
+    onOpenChange(false);
+  };
+
   const handleSave = async (status: 'draft' | 'confirmed') => {
     if (savingRef.current) return;
     savingRef.current = true;
@@ -1417,6 +1437,19 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
               >
                 <Send className={isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3'} />
                 {agtValidated ? t.agtUi.agtValidatedLabel : t.documentFormUi.sendToAgt}
+              </Button>
+            )}
+            {canDeleteSalesDraft && (
+              <Button
+                size="sm"
+                variant="outline"
+                className={cn(
+                  'gap-1 text-destructive border-destructive/40 hover:text-destructive',
+                  isSalesWorkspace ? 'h-8 px-3 text-sm' : 'h-7 text-xs',
+                )}
+                onClick={() => void handleDeleteDraft()}
+              >
+                <Trash2 className={isSalesWorkspace ? 'w-4 h-4' : 'w-3 h-3'} /> {t.documentFormUi.deleteDraft}
               </Button>
             )}
             {!fiscalLocked && !isPaymentDocument && (
