@@ -230,20 +230,22 @@ function interpretStatusResponse(body, documentNo) {
   };
 
   if (resultCode === 7 || resultCode === 8 || (!Number.isFinite(resultCode) && !entry)) {
-    return { ...base, agtStatus: 'submitted', retryLater: true, errors: [] };
+    return { ...base, agtStatus: 'submitted', retryLater: true, errors: errorEntries(body) };
   }
   if (resultCode === 9) {
     return { ...base, agtStatus: 'invalid', errors: [{ code: 'R09', description: 'Processamento cancelado pela AGT' }] };
   }
   const status = String(entry?.documentStatus || '').toUpperCase();
-  if (status === 'V') {
-    return { ...base, agtStatus: 'validated', validatedAt: new Date().toISOString(), errors: [] };
-  }
+  // 0 = processamento concluído, sem facturas inválidas. The per-document letter is
+  // required by the spec but homologation often returns an empty documentStatusList.
   if (status === 'I' || resultCode === 2) {
-    const errors = errorEntries({ errorList: entry?.errorList || [] });
+    const errors = errorEntries({ errorList: entry?.errorList || [], requestErrorList: body?.requestErrorList });
     return { ...base, agtStatus: 'invalid', errors };
   }
-  return { ...base, agtStatus: 'submitted', retryLater: true, errors: [] };
+  if (status === 'V' || resultCode === 0) {
+    return { ...base, agtStatus: 'validated', validatedAt: new Date().toISOString(), errors: [] };
+  }
+  return { ...base, agtStatus: 'submitted', retryLater: true, errors: errorEntries(body) };
 }
 
 /** Short line stored on a Pending transmission so the last obterEstado reply is visible. */
@@ -260,6 +262,9 @@ function describeStatusProbe(remote) {
   if (code === 7) return `AGT resultado 7 — consulta demasiado cedo${doc}`;
   if (extra) return `AGT resultado ${code == null ? '—' : code}${doc} — ${extra}`.slice(0, 500);
   if (code == null) return `AGT respondeu sem código de resultado${doc}`.slice(0, 500);
+  if (![0, 1, 2, 7, 8, 9].includes(code)) {
+    return `AGT resultado ${code} — código fora da especificação${doc}`.slice(0, 500);
+  }
   return `AGT resultado ${code} — sem estado final${doc}`.slice(0, 500);
 }
 

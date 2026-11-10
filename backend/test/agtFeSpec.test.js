@@ -215,6 +215,28 @@ test('obterEstado: V is validated, I is invalid with AGT errors', () => {
   assert.deepEqual(invalid.errors, [{ code: 'E22', description: 'Total de impostos' }]);
 });
 
+test('obterEstado result 0 with an empty document list is validated', () => {
+  const valid = interpretStatusResponse({
+    requestID: '202600003870001',
+    resultCode: 0,
+    documentStatusList: [],
+  }, 'FT FT-SY03-2026-00001');
+  assert.equal(valid.agtStatus, 'validated');
+  assert.ok(valid.validatedAt);
+
+  const unknown = interpretStatusResponse({
+    requestID: '202600003870849',
+    resultCode: 10,
+    documentStatusList: [],
+    requestErrorList: [{ idError: 'E95', descriptionError: 'NIF emissor diferente' }],
+  }, 'FR FS-SY03-2026-00001');
+  assert.equal(unknown.agtStatus, 'submitted');
+  assert.equal(
+    describeStatusProbe(unknown),
+    'AGT resultado 10 — E95 NIF emissor diferente',
+  );
+});
+
 test('obterEstado probe text keeps result 7 and 8 visible', () => {
   const processing = interpretStatusResponse({ resultCode: 8, requestID: '2026' }, 'FT FT-1');
   assert.equal(describeStatusProbe(processing), 'AGT resultado 8 — ainda em processamento');
