@@ -5,10 +5,15 @@ export function normalizeLookupNif(value: string): string {
   return String(value || '').replace(/[\s.-]/g, '').toUpperCase();
 }
 
-/** Angolan NIFs are 10 digits for most taxpayers; BI-based ones run up to 14 characters. */
+/** Company NIFs are 10 digits. A person's NIF can be longer, up to 14, and may include letters. */
+export function normalizeCustomerNifInput(value: string): string {
+  return normalizeLookupNif(value).replace(/[^0-9A-Z]/g, '').slice(0, 14);
+}
+
 export function isCompleteNif(value: string): boolean {
   const nif = normalizeLookupNif(value);
-  return /^\d{10}$/.test(nif) || /^\d{9}[A-Z]{2}\d{3}$/.test(nif);
+  if (nif === '999999999' || nif === '999999990') return false;
+  return /^[0-9A-Z]{9,14}$/.test(nif);
 }
 
 export function useNifLookup() {

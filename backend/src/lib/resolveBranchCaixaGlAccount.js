@@ -221,7 +221,8 @@ async function resolveByBranchName(client, branchName, branchCode) {
 async function resolveCaixaRegisterGl(client, caixaId) {
   const id = String(caixaId || '').trim();
   if (!id) return null;
-  try {
+
+  const lookup = async () => {
     const result = await queryClient(
       client,
       'SELECT gl_account_code FROM caixas WHERE id = $1 LIMIT 1',
@@ -229,16 +230,35 @@ async function resolveCaixaRegisterGl(client, caixaId) {
     );
     const code = String(result.rows[0]?.gl_account_code || '').trim();
     if (!code) return null;
+    // Postgres stores these flags as boolean. `= 1` / `= 0` aborts the cash sale.
+    const { isPostgresEngine } = require('./sqlDialect');
+    const postgres = client?.engine === 'postgres' || isPostgresEngine(getDb());
+    const activeLeaf = postgres
+      ? 'is_active IS TRUE AND is_header IS NOT TRUE'
+      : '(is_active = 1 OR is_active = true) AND (is_header = 0 OR is_header = false OR is_header IS NULL)';
     const account = await queryClient(
       client,
       `SELECT code FROM chart_of_accounts
        WHERE code = $1
-         AND (is_active = true OR is_active = 1)
-         AND (is_header = false OR is_header = 0 OR is_header IS NULL)
+         AND ${activeLeaf}
        LIMIT 1`,
       [code],
     );
     return account.rows[0]?.code || null;
+  };
+
+  // A failed probe inside the sale transaction must roll back only this probe.
+  // A plain catch leaves Postgres aborted, and Confirm then shows the first SQL error.
+  if (typeof client?.release === 'function' && (client?.engine === 'postgres' || getDb().engine === 'postgres')) {
+    const { runOptionalInSavepoint } = require('./pgSavepoint');
+    const found = await runOptionalInSavepoint(client, 'caixa_gl', lookup, (err) => {
+      console.warn('[branchCaixa] caixa gl:', err.message);
+    });
+    return found || null;
+  }
+
+  try {
+    return await lookup();
   } catch (err) {
     console.warn('[branchCaixa] caixa gl:', err.message);
     return null;

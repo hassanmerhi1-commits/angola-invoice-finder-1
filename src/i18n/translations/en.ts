@@ -1497,6 +1497,7 @@ export const en = {
     creditUseOnAccountPayment: "Choose “On account (A prazo)” to post this sale to the customer ledger. Cash/card treats the invoice as paid in full.",
     selectClientFromList: "Click the customer in the dropdown list to link them — typing the name alone does not register the client for credit sales.",
     customerRequired: "On-account sales need a saved customer. For a walk-in, use Quick sale (cash). Name and NIF are optional.",
+    customerSavedFromNif: "Customer saved from the NIF.",
     customerRequiredHint: "Search a saved customer, create one, or use Quick sale. An empty NIF is a final consumer and does not create a client file.",
     proformaCustomerHint: "Search or create a customer, or type a name for this quotation. NIF, address and phone fill automatically when you pick a saved client.",
     customerSearchPlaceholder: "Search customer or type a name…",
@@ -1505,9 +1506,9 @@ export const en = {
     quickSaleOptional: "Name and NIF optional",
     walkInBadge: "Walk-in — not registered",
     walkInNamePlaceholder: "Customer name",
-    walkInNifPlaceholder: "10-digit NIF",
+    walkInNifPlaceholder: "NIF, 9 to 14",
     walkInNameRequired: "Enter the customer name for this sale",
-    walkInNifRequired: "A NIF on the invoice must have 10 digits. Leave it empty for a final consumer.",
+    walkInNifRequired: "A NIF on the invoice must be 9 to 14 characters. Leave it empty for a final consumer.",
     walkInFieldsHint: "Name and NIF are optional and stay on the invoice only. An empty NIF is a final consumer. This does not create a client record.",
     invoiceCaixa: "Cash register",
     caixaRequired: "Select a cash register for cash sales",
@@ -6398,7 +6399,7 @@ export const en = {
 
     nameAndNifRequired: "Name and NIF are required",
     nifRequired: "NIF is required",
-    nifInvalid10Digits: "Invalid NIF. It must have 10 digits.",
+    nifInvalid10Digits: "Invalid NIF. It must be 9 to 14 characters.",
     invalidNif: "Invalid NIF",
     saveOrCreateFailed: "Could not save the client. Check your connection and try again.",
 

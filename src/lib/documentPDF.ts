@@ -25,6 +25,19 @@ function formatCurrency(value: number): string {
   return value.toLocaleString('pt-AO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** 5, 7, 14 — not 5,00. A fraction such as 2,5 keeps its decimals. */
+function formatTaxRate(value: number): string {
+  const n = Number(value) || 0;
+  if (Math.abs(n - Math.round(n)) < 0.001) return String(Math.round(n));
+  return n.toLocaleString('pt-AO', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function formatQty(value: number): string {
+  const n = Number(value) || 0;
+  if (Math.abs(n - Math.round(n)) < 0.001) return String(Math.round(n));
+  return n.toLocaleString('pt-AO', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+}
+
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
@@ -203,7 +216,7 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   .party-right { flex: 1; }
   .nota { margin-bottom: 14px; }
   .warehouse { font-weight: 700; margin-top: 8px; }
-  .exmo { text-align: center; font-weight: 700; margin-bottom: 2px; }
+  .exmo { text-align: left; font-weight: 700; margin-bottom: 2px; }
   .who { font-weight: 700; }
   .meta { width: 100%; border-collapse: collapse; margin-top: 10px; }
   .meta th, .meta td { border: none; border-bottom: 1px solid #111; text-align: left; padding: 2px 10px 3px 0; font-size: 11px; }
@@ -211,6 +224,7 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
   .items { width: 100%; border-collapse: collapse; margin-top: 8px; }
   .items th { border-bottom: 1px solid #111; font-size: 9px; text-align: left; padding: 3px 4px; }
   .items td { padding: 2px 4px; font-size: 10px; vertical-align: top; }
+  .items th.r, .items td.r, .grid th.r, .grid td.r { text-align: right; white-space: nowrap; }
   .r { text-align: right; }
   .foot { margin-top: 8px; }
   .soft-row { display: flex; justify-content: space-between; gap: 12px; font-size: 8px; margin: 6px 0 4px; }
@@ -296,6 +310,17 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
 
     <div class="grow">
       <table class="items">
+        <colgroup>
+          <col style="width:13%">
+          <col>
+          <col style="width:8%">
+          <col style="width:7%">
+          <col style="width:11%">
+          <col style="width:8%">
+          <col style="width:8%">
+          <col style="width:13%">
+          <col style="width:12%">
+        </colgroup>
         <thead>
           <tr>
             <th>REFERÊNCIA</th>
@@ -314,11 +339,11 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
           <tr>
             <td>${escapeHtml(line.productSku || '')}</td>
             <td>${escapeHtml(line.description || '')}</td>
-            <td class="r">${formatCurrency(line.quantity)}</td>
+            <td class="r">${formatQty(line.quantity)}</td>
             <td>${escapeHtml(line.unit || 'UN')}</td>
             <td class="r">${formatCurrency(line.unitPrice)}</td>
             <td class="r">${formatCurrency(line.discount || 0)}</td>
-            <td class="r">${formatCurrency(line.taxRate || 0)}</td>
+            <td class="r">${formatTaxRate(line.taxRate || 0)}</td>
             <td class="r">${formatCurrency(lineNet(line))}</td>
             <td class="r">${formatCurrency(line.taxAmount || 0)}</td>
           </tr>`).join('')}
@@ -347,7 +372,7 @@ export function generateDocumentHTML(doc: ERPDocument, options: PDFOptions = {})
               ${taxSummary.map((row) => `
               <tr>
                 <td>${escapeHtml(taxDesignation(row.rate))}</td>
-                <td class="r">${formatCurrency(row.rate)}</td>
+                <td class="r">${formatTaxRate(row.rate)}</td>
                 <td class="r">${formatCurrency(row.base)}</td>
                 <td class="r">${formatCurrency(row.total)}</td>
               </tr>`).join('')}
@@ -413,7 +438,8 @@ function printedSoftwareNumber(): string {
 }
 
 function softwareValidationFooter(number: string): string {
-  const version = String(getCompanySettings().softwareVersion || '').trim();
+  const stored = String(getCompanySettings().softwareVersion || '').trim();
+  const version = !stored || stored === '1.0.0' ? '1.3.8' : stored;
   const prefix = version ? `${version} - ` : '';
   const processed = number
     ? `Processado por programa validado n.º ${number}`

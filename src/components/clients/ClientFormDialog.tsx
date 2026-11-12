@@ -23,9 +23,8 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
-import { validateNIF } from '@/lib/companySettings';
 import { ENTITY_ACCOUNT_CODE_LENGTH, nextEntityAccountCode } from '@/lib/entityAccounts';
-import { useNifLookup, isCompleteNif } from '@/hooks/useNifLookup';
+import { useNifLookup, isCompleteNif, normalizeCustomerNifInput } from '@/hooks/useNifLookup';
 import { NifLookupHint } from '@/components/NifLookupHint';
 import { Plus } from 'lucide-react';
 
@@ -187,12 +186,13 @@ export function ClientFormDialog({
   }, [open, client, resetNifLookup]);
 
   const handleNifChange = (value: string) => {
-    setFormData((prev) => ({ ...prev, nif: value }));
-    if (!isCompleteNif(value)) {
+    const next = normalizeCustomerNifInput(value);
+    setFormData((prev) => ({ ...prev, nif: next }));
+    if (!isCompleteNif(next)) {
       nifLookup.reset();
       return;
     }
-    void nifLookup.lookup(value).then((res) => {
+    void nifLookup.lookup(next).then((res) => {
       if (!res || res.status !== 'found' || !res.name) return;
       if (res.source !== 'agt' && res.source !== 'cache') return;
       setFormData((prev) => ({
@@ -208,7 +208,7 @@ export function ClientFormDialog({
       ? null
       : nifLookup.result;
 
-  const canSave = formData.name.trim().length > 0 && validateNIF(normalizeClientNif(formData.nif));
+  const canSave = formData.name.trim().length > 0 && isCompleteNif(normalizeClientNif(formData.nif));
 
   const handleSave = async () => {
     const name = formData.name.trim();
@@ -232,7 +232,7 @@ export function ClientFormDialog({
       return;
     }
 
-    if (!validateNIF(nif)) {
+    if (!isCompleteNif(nif)) {
       toast({
         title: t.clientsUi.toastErrorTitle,
         description: t.clientsUi.nifInvalid10Digits,
@@ -330,7 +330,6 @@ export function ClientFormDialog({
                 onChange={(e) => handleNifChange(e.target.value)}
                 placeholder={t.clientsUi.nifPlaceholder}
                 required
-                inputMode="numeric"
                 maxLength={14}
               />
             </div>

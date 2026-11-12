@@ -589,7 +589,7 @@ export async function generateA4InvoiceHTML(
       <p>${company.footerText || 'Obrigado pela preferência!'}</p>
       <p>${company.website ? `www: ${company.website}` : ''} ${company.email ? `| email: ${company.email}` : ''}</p>
       <div class="software-info">
-        Documento emitido por ${company.tradeName || company.name || 'NEXOR ERP'} v${company.softwareVersion || '1.0.0'} - Software certificado AGT
+        Documento emitido por ${company.tradeName || company.name || 'NEXOR ERP'} v${company.softwareVersion && company.softwareVersion !== '1.0.0' ? company.softwareVersion : '1.3.8'} - Software certificado AGT
       </div>
     </div>
   </div>

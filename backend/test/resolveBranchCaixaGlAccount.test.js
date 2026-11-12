@@ -8,6 +8,32 @@ const {
   BRANCH_CAIXA_GL_MISSING,
 } = require('../src/lib/resolveBranchCaixaGlAccount');
 
+test('cash till account lookup does not compare a boolean to a number', async () => {
+  const client = {
+    engine: 'postgres',
+    query(sql, params) {
+      const normalized = String(sql).replace(/\s+/g, ' ');
+      if (normalized.includes('FROM caixas')) {
+        return { rows: [{ gl_account_code: '4521' }] };
+      }
+      if (normalized.includes('FROM chart_of_accounts') && normalized.includes('WHERE code = $1')) {
+        assert.equal(params[0], '4521');
+        assert.doesNotMatch(normalized, /= [01]/);
+        assert.match(normalized, /is_active IS TRUE/);
+        assert.match(normalized, /is_header IS NOT TRUE/);
+        return { rows: [{ code: '4521' }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const code = await resolveBranchCaixaGlAccountCode(client, {
+    caixaId: 'caixa-soyo',
+    branchId: 'branch-soyo',
+  });
+  assert.equal(code, '4521');
+});
+
 test('resolveBranchCaixaGlAccountCode prefers branch_id then sale journal', async (t) => {
   const queries = [];
   const client = {

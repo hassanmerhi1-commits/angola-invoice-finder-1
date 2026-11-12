@@ -35,14 +35,14 @@ import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useTranslation } from '@/i18n';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
 import { useAgtTransmit } from '@/hooks/useAgtTransmit';
-import { useNifLookup, isCompleteNif } from '@/hooks/useNifLookup';
+import { useNifLookup, isCompleteNif, normalizeLookupNif, normalizeCustomerNifInput } from '@/hooks/useNifLookup';
+import type { NifLookupResult } from '@/lib/api/client';
 import { NifLookupHint } from '@/components/NifLookupHint';
 import { usePermissions } from '@/hooks/usePermissions';
 import { OPEN_ITEMS_CHANGED_EVENT, SALES_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import { newClientRequestId } from '@/lib/sync/offlineSales';
 import { isFiscalInvoiceNumber, isOfflineSaleStub } from '@/lib/saleOfflineGuard';
 import { localISODate, isBeforeToday } from '@/lib/workingDayAccess';
-import { validateNIF } from '@/lib/companySettings';
 import { Badge } from '@/components/ui/badge';
 import {
   fiscalInvoiceTypeLabel,
@@ -95,7 +95,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   const { products } = useProducts(invoiceBranch?.id || currentBranch?.id, {
     light: documentType !== 'fatura_venda',
   });
-  const { clients, saveClient } = useClients();
+  const { clients, saveClient, createClient } = useClients();
   const { suppliers } = useSuppliers();
   const config = DOCUMENT_TYPE_CONFIG[documentType];
   const isPaymentDocument = documentType === 'recibo' || documentType === 'pagamento';
@@ -161,8 +161,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     [config.entityType, clients, entityId],
   );
 
+  const entityIdRef = useRef(entityId);
+  entityIdRef.current = entityId;
+
   const fillCustomerContact = (client: Client) => {
     setWalkInMode(false);
+    entityIdRef.current = String(client.id);
     setEntityId(String(client.id));
     setEntityName(client.name);
     setEntityNif(client.nif || '');
@@ -182,6 +186,60 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
       return;
     }
     setDueDate(dueDateForSalePayment(paymentMethod, client.paymentTermsDays));
+  };
+
+  const clientsRef = useRef(clients);
+  clientsRef.current = clients;
+  const creatingNifRef = useRef('');
+  const pendingCustomerRef = useRef<Promise<Client | null> | null>(null);
+
+  /** AGT already returned this taxpayer. Save the client file so on-account does not need the form. */
+  const saveCustomerFromNif = async (res: NifLookupResult | null | undefined): Promise<Client | null> => {
+    if (config.entityType !== 'customer' || !res || res.status !== 'found' || !res.name) return null;
+    if (res.source !== 'agt' && res.source !== 'cache') return null;
+    const nif = normalizeLookupNif(res.nif);
+    if (!isCompleteNif(nif)) return null;
+    const existing = clientsRef.current.find((c) => normalizeLookupNif(c.nif || '') === nif);
+    if (existing) {
+      fillCustomerContact(existing);
+      return existing;
+    }
+    if (creatingNifRef.current === nif && pendingCustomerRef.current) {
+      return pendingCustomerRef.current;
+    }
+    creatingNifRef.current = nif;
+    const job = (async (): Promise<Client | null> => {
+      try {
+        const saved = await createClient({
+          name: res.name.trim(),
+          nif,
+          address: res.address || '',
+          phone: res.phone || '',
+          country: 'Angola',
+          creditLimit: 0,
+          currentBalance: 0,
+          defaultPriceLevel: 1,
+          priceAdjustmentPct: 0,
+          paymentTermsDays: 0,
+          isActive: true,
+        });
+        clientsRef.current = [saved, ...clientsRef.current.filter((c) => c.id !== saved.id)];
+        fillCustomerContact(saved);
+        toast.success(t.documentFormUi.customerSavedFromNif);
+        return saved;
+      } catch (e) {
+        toast.error(e instanceof Error && e.message ? e.message : t.documentFormUi.saveError);
+        return null;
+      } finally {
+        if (creatingNifRef.current === nif) creatingNifRef.current = '';
+      }
+    })();
+    pendingCustomerRef.current = job;
+    try {
+      return await job;
+    } finally {
+      if (pendingCustomerRef.current === job) pendingCustomerRef.current = null;
+    }
   };
 
   const handleInvoiceBranchChange = (nextId: string) => {
@@ -350,13 +408,14 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   }, [open, nifLookup.reset]);
 
   const handleNifInput = (value: string) => {
-    setEntityNif(value);
+    const next = normalizeCustomerNifInput(value);
+    setEntityNif(next);
     setNifNameReplaced(false);
-    if (!isCompleteNif(value)) {
+    if (!isCompleteNif(next)) {
       nifLookup.reset();
       return;
     }
-    void nifLookup.lookup(value).then((res) => {
+    void nifLookup.lookup(next).then((res) => {
       if (!res || res.status !== 'found' || !res.name) return;
       if (config.entityType === 'customer' && res.source === 'client' && res.clientId) {
         const client = clients.find((c) => String(c.id) === res.clientId);
@@ -382,6 +441,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         setNifNameReplaced(true);
       }
       if (!entityAddressRef.current.trim() && res.address) setEntityAddress(res.address);
+      if (config.entityType === 'customer') void saveCustomerFromNif(res);
     });
   };
 
@@ -561,7 +621,21 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
 
   const handlePaymentMethodChange = (next: string) => {
     if (next === 'credit' && !entityId) {
-      toast.error(t.documentFormUi.customerRequired);
+      const lookedUp = nifLookup.result;
+      if (lookedUp?.status === 'found' && lookedUp.name && (lookedUp.source === 'agt' || lookedUp.source === 'cache')) {
+        void saveCustomerFromNif(lookedUp).then((client) => {
+          if (!client) {
+            toast.error(t.documentFormUi.customerRequired);
+            return;
+          }
+          setPaymentMethod('credit');
+          if (documentType !== 'fatura_venda' || formReadOnly) return;
+          setDueDate(dueDateForSalePayment('credit', client.paymentTermsDays));
+          setAmountPaid(0);
+        });
+        return;
+      }
+      toast.error(nifLookup.loading ? t.nifLookupUi.checking : t.documentFormUi.customerRequired);
       return;
     }
     setPaymentMethod(next);
@@ -585,7 +659,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     if (!isSalesInvoice || entityId) return true;
     // Empty NIF is a final consumer (same as the till). A partial NIF is not.
     const nif = entityNif.trim();
-    if (nif && !validateNIF(nif)) {
+    if (nif && !isCompleteNif(nif)) {
       toast.error(t.documentFormUi.walkInNifRequired);
       return false;
     }
@@ -890,8 +964,11 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
     savingRef.current = true;
     try {
     if (requireSavedCustomer && !entityId) {
-      toast.error(t.documentFormUi.customerRequired);
-      return;
+      const linked = await saveCustomerFromNif(nifLookup.result);
+      if (!linked) {
+        toast.error(t.documentFormUi.customerRequired);
+        return;
+      }
     }
     if (status === 'confirmed' && !assertWalkInIdentity()) return;
     if (
@@ -997,7 +1074,13 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
         // For confirmed fatura_venda, route through the backend transaction engine
         // so stock is decremented and journal entries (including branch Caixa) are created
         if (documentType === 'fatura_venda' && status === 'confirmed') {
-          if (isCreditInvoice && !entityId) {
+          const saleClientId = entityIdRef.current || entityId;
+          const saleClient = selectedEntityClient
+            ?? clientsRef.current.find((c) => c.id === saleClientId)
+            ?? null;
+          const saleCreditLimit = Number(saleClient?.creditLimit) || 0;
+          const saleCreditBalance = Number(saleClient?.currentBalance) || 0;
+          if (isCreditInvoice && !saleClientId) {
             toast.error(t.documentFormUi.customerRequired);
             return;
           }
@@ -1006,19 +1089,19 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             return;
           }
           if (isCreditInvoice) {
-            if (creditMissingClient) {
+            if (!saleClient) {
               toast.error(t.checkoutUi.creditRequiresClient);
               return;
             }
-            if (creditNoLimit) {
+            if (saleCreditLimit <= 0) {
               toast.error(t.checkoutUi.creditNoLimit);
               return;
             }
-            if (creditOverLimit) {
+            if (saleCreditBalance + totals.total > saleCreditLimit + 0.01) {
               toast.error(
                 t.checkoutUi.creditOverLimit
-                  .replace('{balance}', creditClientBalance.toLocaleString(locale))
-                  .replace('{limit}', creditClientLimit.toLocaleString(locale)),
+                  .replace('{balance}', saleCreditBalance.toLocaleString(locale))
+                  .replace('{limit}', saleCreditLimit.toLocaleString(locale)),
               );
               return;
             }
@@ -1096,7 +1179,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             change: config.requiresPayment && !isCreditInvoice ? Math.max(0, amountPaid - totals.total) : 0,
             customerNif: entityNif || undefined,
             customerName: (entityName || finalConsumerName) || undefined,
-            clientId: entityId || undefined,
+            clientId: (entityIdRef.current || entityId) || undefined,
             caixaId: paymentMethod === 'cash' ? invoiceCaixaId || undefined : undefined,
             dueDate: dueDate || undefined,
             parentProformaId: prefillFrom?.documentType === 'proforma' ? prefillFrom.id : undefined,
@@ -1148,7 +1231,7 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
             {
               id: saleId,
               documentNumber: saleInvoiceNumber,
-              entityId,
+              entityId: entityIdRef.current || entityId,
               entityName: entityName || finalConsumerName,
               entityNif,
               entityAddress,
@@ -1702,11 +1785,10 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
                       <Label className="text-xs">{t.documentFormUi.nif}</Label>
                       <Input
                         value={entityNif}
-                        onChange={(e) => handleNifInput(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        onChange={(e) => handleNifInput(e.target.value)}
                         placeholder={t.documentFormUi.walkInNifPlaceholder}
                         className="h-8 font-mono text-sm"
-                        inputMode="numeric"
-                        maxLength={10}
+                        maxLength={14}
                         autoComplete="off"
                       />
                     </div>

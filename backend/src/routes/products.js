@@ -1201,7 +1201,8 @@ async function listInventoryGridRows(branchId, consolidated, priceBySkuPreloaded
   if (!repair) {
     const branchKey = String(branchId || '').trim();
     if (!consolidated && !branchKey) return [];
-    if (!consolidated) scheduleFilialStockOwnershipHeal(branchKey);
+    // Do not repair stock on this read. The repair locks products while the grid
+    // query runs, so every branch change sat on Loading for 10–15s.
     const rows = await loadInventoryGridRowsShared(
       consolidated ? null : branchKey,
       consolidated,

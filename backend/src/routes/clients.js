@@ -17,13 +17,14 @@ function clientsActiveFirstOrderSql() {
 }
 
 function normalizeNif(nif) {
-  return String(nif || '').replace(/\s/g, '').trim();
+  return String(nif || '').replace(/[\s.-]/g, '').trim().toUpperCase();
 }
 
 function validateClientNif(nif) {
   const cleaned = normalizeNif(nif);
   if (!cleaned) return 'NIF is required';
-  if (!/^\d{10}$/.test(cleaned)) return 'NIF must have 10 digits';
+  if (cleaned === '999999999' || cleaned === '999999990') return 'NIF must be 9 to 14 characters';
+  if (!/^[0-9A-Z]{9,14}$/.test(cleaned)) return 'NIF must be 9 to 14 characters';
   return null;
 }
 

@@ -1499,6 +1499,7 @@ export const pt: TranslationKeys = {
     creditUseOnAccountPayment: "Escolha «A prazo» para lançar na conta do cliente. Dinheiro/cartão trata a factura como totalmente paga.",
     selectClientFromList: "Clique no cliente na lista — escrever o nome não liga o cliente para vendas a prazo.",
     customerRequired: "Venda a prazo precisa de cliente registado. Para venda rápida use dinheiro. Nome e NIF são opcionais.",
+    customerSavedFromNif: "Cliente gravado a partir do NIF.",
     customerRequiredHint: "Pesquise um cliente, crie um, ou use Venda rápida. NIF vazio é consumidor final e não cria ficha.",
     proformaCustomerHint: "Pesquise ou crie um cliente, ou escreva um nome para este orçamento. NIF, morada e telefone preenchem-se sozinhos quando escolhe um cliente guardado.",
     customerSearchPlaceholder: "Pesquisar cliente ou escrever um nome…",
@@ -1507,9 +1508,9 @@ export const pt: TranslationKeys = {
     quickSaleOptional: "Nome e NIF opcionais",
     walkInBadge: "Venda rápida — não registado",
     walkInNamePlaceholder: "Nome do cliente",
-    walkInNifPlaceholder: "NIF com 10 dígitos",
+    walkInNifPlaceholder: "NIF, 9 a 14",
     walkInNameRequired: "Indique o nome do cliente para esta venda",
-    walkInNifRequired: "O NIF na factura tem de ter 10 dígitos. Deixe vazio para consumidor final.",
+    walkInNifRequired: "O NIF na factura tem de ter 9 a 14 caracteres. Deixe vazio para consumidor final.",
     walkInFieldsHint: "Nome e NIF são opcionais e ficam só na factura. NIF vazio é consumidor final. Não cria ficha de cliente.",
     invoiceCaixa: "Caixa",
     caixaRequired: "Seleccione a caixa para vendas em dinheiro",
@@ -6400,7 +6401,7 @@ export const pt: TranslationKeys = {
 
     nameAndNifRequired: "Nome e NIF são obrigatórios",
     nifRequired: "NIF é obrigatório",
-    nifInvalid10Digits: "NIF inválido. Deve ter 10 dígitos.",
+    nifInvalid10Digits: "NIF inválido. Deve ter 9 a 14 caracteres.",
     invalidNif: "NIF inválido",
     saveOrCreateFailed: "Não foi possível guardar o cliente. Verifique a ligação e tente novamente.",
 

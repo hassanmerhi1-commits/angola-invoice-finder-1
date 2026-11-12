@@ -33,6 +33,8 @@ export function useInventoryGrid(opts: {
   const [error, setError] = useState<string | null>(null);
   const generationRef = useRef(0);
   const lastScopeRef = useRef('');
+  const filialKeyRef = useRef(filialKey);
+  filialKeyRef.current = filialKey;
   const [paintedScope, setPaintedScope] = useState(scopeKey);
 
   // Drop the previous branch's quantities before paint. Waiting for the effect left
@@ -47,7 +49,9 @@ export function useInventoryGrid(opts: {
 
   const loadLive = useCallback(
     async (gen: number, serverFresh = false) => {
-      const filialBranchIds = filialKey ? filialKey.split(',').filter(Boolean) : [];
+      const filialBranchIds = filialKeyRef.current
+        ? filialKeyRef.current.split(',').filter(Boolean)
+        : [];
       // The server drops its grid cache on every stock/product write, so a normal open can
       // use it; only the explicit refresh button forces a full recompute.
       const fresh = await fetchInventoryGrid({
@@ -65,7 +69,7 @@ export function useInventoryGrid(opts: {
       setRows(fresh);
       setError(null);
     },
-    [opts.branchId, opts.consolidated, filialKey],
+    [opts.branchId, opts.consolidated],
   );
 
   const refresh = useCallback(async (refreshOpts?: { force?: boolean }) => {
@@ -118,6 +122,7 @@ export function useInventoryGrid(opts: {
             if (gen !== generationRef.current) return;
             setRows(cached);
             setLoading(false);
+            return;
           }
         }
         await loadLive(gen);
@@ -139,7 +144,7 @@ export function useInventoryGrid(opts: {
       // Invalidate in-flight work for this scope only. Next effect run owns loading.
       generationRef.current++;
     };
-  }, [enabled, scopeKey, filialKey, opts.branchId, opts.consolidated, loadLive]);
+  }, [enabled, scopeKey, opts.branchId, opts.consolidated, loadLive]);
 
   const invalidate = useCallback(() => {
     invalidateInventoryGridSessionCache(opts.branchId, opts.consolidated);

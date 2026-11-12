@@ -288,6 +288,8 @@ function scheduleFilialStockOwnershipHeal(warehouseId) {
 function healAllFilialStockOwnershipInBackground() {
   if (allFilialHealStarted || db.engine !== 'postgres') return;
   allFilialHealStarted = true;
+  // After boot the till opens Inventory immediately. Wait so this repair
+  // does not lock the grid query the user is looking at.
   setTimeout(() => {
     void (async () => {
       try {
@@ -303,7 +305,7 @@ function healAllFilialStockOwnershipInBackground() {
         console.warn('[filialStockRepair] background all-filial heal:', err.message);
       }
     })();
-  }, 15_000);
+  }, 180_000);
 }
 
 module.exports = {

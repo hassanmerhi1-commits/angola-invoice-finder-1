@@ -37,7 +37,7 @@ import {
 import { useBranchContext } from '@/contexts/BranchContext';
 import { useBranchScope } from '@/hooks/useBranchScope';
 import { useTranslation } from '@/i18n';
-import { validateNIF } from '@/lib/companySettings';
+import { isCompleteNif, normalizeLookupNif } from '@/hooks/useNifLookup';
 import { timestampLocalDate } from '@/lib/workingDayAccess';
 
 // Helper: only use local demo storage in explicit demo mode.
@@ -1754,10 +1754,10 @@ export function useClients(deferInitialLoad = false) {
 
   const saveClient = useCallback(async (client: Client) => {
     const name = String(client.name || '').trim();
-    const nif = String(client.nif || '').replace(/\s/g, '').trim();
+    const nif = normalizeLookupNif(String(client.nif || ''));
     if (!name) throw new Error('Name is required');
     if (!nif) throw new Error('NIF is required');
-    if (!validateNIF(nif)) throw new Error('NIF must have 10 digits');
+    if (!isCompleteNif(nif)) throw new Error('NIF must be 9 to 14 characters');
 
     const payload = { ...client, name, nif };
     const result = await api.clients.update(client.id, payload);
@@ -1790,10 +1790,10 @@ export function useClients(deferInitialLoad = false) {
 
   const createClient = useCallback(async (data: Omit<Client, 'id' | 'createdAt' | 'updatedAt'>): Promise<Client> => {
     const name = String(data.name || '').trim();
-    const nif = String(data.nif || '').replace(/\s/g, '').trim();
+    const nif = normalizeLookupNif(String(data.nif || ''));
     if (!name) throw new Error('Name is required');
     if (!nif) throw new Error('NIF is required');
-    if (!validateNIF(nif)) throw new Error('NIF must have 10 digits');
+    if (!isCompleteNif(nif)) throw new Error('NIF must be 9 to 14 characters');
 
     const payload = { ...data, name, nif };
     const result = await api.clients.create(payload);
