@@ -36,7 +36,7 @@ export function readProductStock(row: Record<string, unknown> | Product): number
 }
 const CACHE_TTL_MS = 300_000;
 
-type CacheEntry = { at: number; rows: Product[] };
+type CacheEntry = { at: number; rows: Product[]; basis?: 'ledger' };
 
 export function cacheKey(branchId: string | undefined, consolidated: boolean): string {
   return consolidated ? 'hq' : String(branchId || '').trim() || 'none';
@@ -244,8 +244,8 @@ export function readInventoryGridCacheStale(
   return entry?.rows?.length ? entry.rows : null;
 }
 
-export function writeCache(key: string, rows: Product[]): void {
-  const entry: CacheEntry = { at: Date.now(), rows };
+export function writeCache(key: string, rows: Product[], basis: 'ledger' | 'unknown' = 'unknown'): void {
+  const entry: CacheEntry = { at: Date.now(), rows, basis: basis === 'ledger' ? 'ledger' : undefined };
   memoryGridCache.set(key, entry);
   scheduleStorageWrite(sessionStorage, CACHE_PREFIX + key, () => JSON.stringify(entry));
 }
@@ -320,6 +320,16 @@ export function mapInventoryGridRows(rows: any[]): Product[] {
     };
   }
   return out;
+}
+
+/** Session grid that came from the movement ledger, not products.stock or another branch. */
+export function readLedgerInventoryGridCache(
+  branchId: string | undefined,
+  consolidated: boolean,
+): Product[] | null {
+  const entry = readCacheEntryAnyAge(cacheKey(branchId, consolidated));
+  if (entry?.basis !== 'ledger' || !entry.rows?.length) return null;
+  return entry.rows;
 }
 
 /**
@@ -404,7 +414,7 @@ async function fetchInventoryGridOnce(opts: FetchInventoryGridOpts): Promise<Pro
   const key = cacheKey(opts.branchId, opts.consolidated);
   const forceLive = opts.consolidated || opts.bypassCache;
   if (!forceLive) {
-    const cached = readInventoryGridCache(opts.branchId, opts.consolidated);
+    const cached = readLedgerInventoryGridCache(opts.branchId, opts.consolidated);
     if (cached?.length) return cached;
   }
 
@@ -457,7 +467,7 @@ async function fetchInventoryGridOnce(opts: FetchInventoryGridOpts): Promise<Pro
       const mapped = mapInventoryGridRows(rawRows);
       const priceBySku = buildSellingPriceBySku(mapped, hints);
       const priced = mapped.map((row) => withSellingPriceFromMap(row, priceBySku));
-      writeCache(key, priced);
+      writeCache(key, priced, 'ledger');
       saveLanInventoryGrid(key, priced);
       if (!opts.consolidated && opts.branchId) {
         saveLanProducts(lanCatalogScopeKey(opts.branchId, false), priced);
@@ -480,7 +490,7 @@ async function fetchInventoryGridOnce(opts: FetchInventoryGridOpts): Promise<Pro
         console.warn(
           '[inventoryGrid] Consolidated fetch failed — rebuilt HQ view from all filial grids',
         );
-        writeCache(key, merged);
+        writeCache(key, merged, 'ledger');
         saveLanInventoryGrid(key, merged);
         return merged;
       }
@@ -524,7 +534,7 @@ export function isInventoryGridCacheFresh(
   maxAgeMs = 60_000,
 ): boolean {
   const entry = readCacheEntry(cacheKey(branchId, consolidated));
-  if (!entry?.rows?.length) return false;
+  if (entry?.basis !== 'ledger' || !entry.rows?.length) return false;
   return Date.now() - entry.at <= maxAgeMs;
 }
 
@@ -539,6 +549,6 @@ export async function loadInventoryGridWithCache(opts: {
     opts.onStale?.(stale);
   }
   const fresh = await fetchInventoryGrid(opts);
-  writeCache(key, fresh);
+  writeCache(key, fresh, 'ledger');
   return fresh;
 }

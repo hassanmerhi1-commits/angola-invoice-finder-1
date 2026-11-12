@@ -5,16 +5,18 @@ import {
   fetchInventoryGrid,
   invalidateInventoryGridSessionCache,
   isInventoryGridCacheFresh,
-  readInventoryGridCache,
-  readOfflineInventoryGridFallback,
+  readLedgerInventoryGridCache,
   writeCache,
 } from '@/lib/inventoryGrid';
 import { saveLanInventoryGrid } from '@/lib/lanCatalogCache';
 import { canonicalProductSku } from '@/lib/productDedupe';
 
-/** Last grid seen for this scope. Never the POS catalog — its qty/cost would paint 0s first. */
+/**
+ * Last ledger grid for this exact branch. products.stock and another branch's rows are
+ * not used — those painted Soyo's quantity on empty filiais for a few seconds.
+ */
 function readWarmStartRows(branchId: string | undefined, consolidated: boolean): Product[] | null {
-  return readOfflineInventoryGridFallback(branchId, consolidated, { includePosCatalog: false });
+  return readLedgerInventoryGridCache(branchId, consolidated);
 }
 
 export function useInventoryGrid(opts: {
@@ -31,6 +33,17 @@ export function useInventoryGrid(opts: {
   const [error, setError] = useState<string | null>(null);
   const generationRef = useRef(0);
   const lastScopeRef = useRef('');
+  const [paintedScope, setPaintedScope] = useState(scopeKey);
+
+  // Drop the previous branch's quantities before paint. Waiting for the effect left
+  // Soyo's stock on screen for the 2–3s the next filial's ledger took to arrive.
+  if (paintedScope !== scopeKey) {
+    setPaintedScope(scopeKey);
+    const warm = enabled ? readWarmStartRows(opts.branchId, opts.consolidated) : null;
+    setRows(warm ?? []);
+    setLoading(enabled && !warm?.length);
+    setError(null);
+  }
 
   const loadLive = useCallback(
     async (gen: number, serverFresh = false) => {
@@ -43,8 +56,9 @@ export function useInventoryGrid(opts: {
         bypassCache: true,
         serverFresh,
         filialBranchIds,
-        // Always allow stale/filial-merge fallback so Sede never sits on a blank spinner.
-        noFallback: false,
+        // Sede may rebuild from filial grids. A single branch must not fall back to
+        // products.stock — that number is copied from Soyo onto the other filiais.
+        noFallback: !opts.consolidated,
       });
       // fetchInventoryGrid caches live rows itself and deliberately not offline fallbacks.
       if (gen !== generationRef.current) return;
@@ -99,7 +113,7 @@ export function useInventoryGrid(opts: {
     void (async () => {
       try {
         if (!opts.consolidated && isInventoryGridCacheFresh(opts.branchId, false, 120_000)) {
-          const cached = readInventoryGridCache(opts.branchId, false);
+          const cached = readLedgerInventoryGridCache(opts.branchId, false);
           if (cached?.length) {
             if (gen !== generationRef.current) return;
             setRows(cached);
@@ -148,7 +162,7 @@ export function useInventoryGrid(opts: {
           idx >= 0
             ? prev.map((p, i) => (i === idx ? { ...p, ...product } : p))
             : [product, ...prev];
-        writeCache(key, next);
+        writeCache(key, next, 'ledger');
         saveLanInventoryGrid(key, next);
         return next;
       });

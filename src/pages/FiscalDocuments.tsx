@@ -930,7 +930,8 @@ export default function FiscalDocuments() {
                   <p>{fd.noDebitNotes}</p>
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[860px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>{fd.colDocNumber}</TableHead>
@@ -939,6 +940,7 @@ export default function FiscalDocuments() {
                       <TableHead>{fd.colReason}</TableHead>
                       <TableHead>{fd.colCustomer}</TableHead>
                       <TableHead className="text-right">{fd.colTotal}</TableHead>
+                      <TableHead>AGT</TableHead>
                       <TableHead>{fd.colStatus}</TableHead>
                       <TableHead>{fd.colActions}</TableHead>
                     </TableRow>
@@ -961,6 +963,11 @@ export default function FiscalDocuments() {
                         <TableCell>{note.customerName || t.fiscalDocumentsUi.finalConsumer}</TableCell>
                         <TableCell className="text-right font-bold">{note.total.toLocaleString(uiLocale)} Kz</TableCell>
                         <TableCell>
+                          <Badge variant={note.agtStatus === 'validated' ? 'default' : 'outline'}>
+                            {note.agtStatus === 'validated' ? t.agtUi.agtValidatedLabel : (note.agtStatus || '—')}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
                           <Badge variant={note.status === 'issued' ? 'default' : 'destructive'}>
                             {note.status === 'issued' ? t.fiscalDocumentsUi.statusIssued : t.fiscalDocumentsUi.statusCancelled}
                           </Badge>
@@ -974,6 +981,7 @@ export default function FiscalDocuments() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
             </CardContent>
           </Card>

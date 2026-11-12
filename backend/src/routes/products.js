@@ -1241,17 +1241,10 @@ async function loadInventoryGridBaseRows(branchId, consolidated, { repair = fals
     if (repair) {
       await ensureFilialForInventoryGrid(branchKey);
     }
-    try {
-      // Grid UNIONs already cover filial + catalog SKUs; skip a second full fast list.
-      rows = await listProductsForBranchInventoryGrid(branchKey);
-      rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
-    } catch (err) {
-      console.error('[PRODUCTS inventory-grid] filial query failed, fallback:', err.message);
-      // Fast list has products.stock only (0 for catalog rows) — never cache it as the grid.
-      cacheable = false;
-      rows = await listProductsForBranchFast(branchKey);
-      rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
-    }
+    // Never fall back to listProductsForBranchFast here. That list uses products.stock,
+    // which is copied onto every branch row, so an empty filial briefly shows Soyo's qty.
+    rows = await listProductsForBranchInventoryGrid(branchKey);
+    rows = dedupeProductsBySku(rows, branchKey, mainBranchIds);
   }
   const supplierBySku = await supplierPromise;
   if (supplierBySku) {
