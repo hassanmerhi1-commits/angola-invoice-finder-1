@@ -24,6 +24,20 @@ type TransmissionRow = {
 
 type StatusFilter = 'all' | 'failed' | 'pending';
 
+function isAlreadySent(message?: string) {
+  const text = message || '';
+  return /\bE04\b/i.test(text) || /já foi submetido/i.test(text) || /already been submitted/i.test(text);
+}
+
+function isFirstCheck(message?: string) {
+  return /resultado\s*(7|8|10)\b/i.test(message || '');
+}
+
+function isFinalValidated(status?: string) {
+  const s = String(status || '').toLowerCase();
+  return s === 'validated' || s === 'approved';
+}
+
 async function copyText(text: string) {
   try {
     if (navigator.clipboard?.writeText) {
@@ -175,13 +189,28 @@ export function AgtTransmissionsCard() {
     }
   };
 
-  const statusBadge = (status?: string) => {
-    const s = String(status || 'pending').toLowerCase();
+  const statusBadge = (row: TransmissionRow) => {
+    if (!isFinalValidated(row.agt_status) && isAlreadySent(row.error_message)) {
+      return <Badge variant="secondary">{ui.statusAlreadySent}</Badge>;
+    }
+    const s = String(row.agt_status || 'pending').toLowerCase();
     if (s === 'validated' || s === 'approved') return <Badge>{ui.statusValidated}</Badge>;
     if (s === 'error' || s === 'rejected') return <Badge variant="destructive">{ui.statusError}</Badge>;
     if (s === 'invalid') return <Badge variant="destructive">{ui.statusInvalid}</Badge>;
     if (s === 'voided') return <Badge variant="secondary">{ui.statusVoided}</Badge>;
     return <Badge variant="outline">{ui.statusPending}</Badge>;
+  };
+
+  const replyText = (row: TransmissionRow) => {
+    if (isFinalValidated(row.agt_status)) return '—';
+    if (isAlreadySent(row.error_message)) return ui.alreadySentHint;
+    if (
+      (row.agt_status === 'pending' || row.agt_status === 'submitted' || !row.agt_status)
+      && (!row.error_message || isFirstCheck(row.error_message))
+    ) {
+      return ui.waitingFinal;
+    }
+    return row.error_message || '—';
   };
 
   const typeLabel = (row: TransmissionRow) => {
@@ -196,7 +225,10 @@ export function AgtTransmissionsCard() {
     return map[key] || key || '—';
   };
 
-  const failedCount = rows.filter((r) => ['error', 'rejected', 'invalid'].includes(String(r.agt_status || '').toLowerCase())).length;
+  const failedCount = rows.filter((r) => {
+    const status = String(r.agt_status || '').toLowerCase();
+    return ['error', 'rejected'].includes(status) && !isAlreadySent(r.error_message);
+  }).length;
 
   return (
     <Card>
@@ -272,18 +304,17 @@ export function AgtTransmissionsCard() {
                     {row.document_number || row.invoice_number || '—'}
                   </TableCell>
                   <TableCell>{typeLabel(row)}</TableCell>
-                  <TableCell>{statusBadge(row.agt_status)}</TableCell>
+                  <TableCell>{statusBadge(row)}</TableCell>
                   <TableCell className="font-mono text-xs">{row.agt_code || '—'}</TableCell>
                   <TableCell
                     className={`text-xs max-w-[280px] truncate ${
-                      (row.agt_status === 'pending' || row.agt_status === 'submitted')
-                        && /resultado [78]/.test(row.error_message || '')
+                      isFinalValidated(row.agt_status) || isAlreadySent(row.error_message) || isFirstCheck(row.error_message)
                         ? 'text-muted-foreground'
                         : 'text-destructive'
                     }`}
-                    title={row.error_message}
+                    title={replyText(row)}
                   >
-                    {row.error_message || '—'}
+                    {replyText(row)}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {row.transmitted_at
@@ -307,7 +338,7 @@ export function AgtTransmissionsCard() {
                         )}
                         {ui.copyJson}
                       </Button>
-                      {(row.agt_status === 'error' || row.agt_status === 'rejected') && (
+                      {(row.agt_status === 'error' || row.agt_status === 'rejected') && !isAlreadySent(row.error_message) && (
                         <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
                           {ui.retryButton}
                         </Button>

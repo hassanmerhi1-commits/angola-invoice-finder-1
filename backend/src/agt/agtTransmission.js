@@ -363,25 +363,35 @@ async function transmitFiscalEntity(entityKind, entityId, options = {}) {
     await updateEntityAgtStatus(meta, resolvedEntityId, result);
     return { transmissionId, entityId: resolvedEntityId, ...result };
   } catch (err) {
+    const alreadySent = /E04|já foi submetido|already been submitted/i.test(String(err.message || ''));
     await db.query(
       `UPDATE agt_transmissions
-       SET agt_status = 'error', error_message = $1, error_code = $2,
+       SET agt_status = $1, error_message = $2, error_code = $3,
            retry_count = COALESCE(retry_count, 0) + 1
-       WHERE id = $3`,
-      [err.message, String(err.code || err.status || 'TRANSMIT_ERROR'), transmissionId],
+       WHERE id = $4`,
+      [
+        alreadySent ? 'submitted' : 'error',
+        err.message,
+        alreadySent ? 'E04' : String(err.code || err.status || 'TRANSMIT_ERROR'),
+        transmissionId,
+      ],
     );
-    await db.query(
-      `UPDATE ${meta.table} SET agt_status = 'rejected' WHERE id = $1`,
-      [resolvedEntityId],
-    );
-    try {
-      const { notifyAgtFailure } = require('../lib/notifications');
-      await notifyAgtFailure({
-        entityType: meta.entityType,
-        entityId: resolvedEntityId,
-        message: err.message || 'AGT transmission failed',
-      });
-    } catch (_) { /* non-fatal */ }
+    if (!alreadySent) {
+      await db.query(
+        `UPDATE ${meta.table} SET agt_status = 'rejected' WHERE id = $1`,
+        [resolvedEntityId],
+      );
+    }
+    if (!alreadySent) {
+      try {
+        const { notifyAgtFailure } = require('../lib/notifications');
+        await notifyAgtFailure({
+          entityType: meta.entityType,
+          entityId: resolvedEntityId,
+          message: err.message || 'AGT transmission failed',
+        });
+      } catch (_) { /* non-fatal */ }
+    }
     throw err;
   }
 }
@@ -478,13 +488,16 @@ async function rememberStatusProbe(meta, entityId, remote) {
     : null;
   try {
     const existing = await db.query(
-      `SELECT id, error_message FROM agt_transmissions
+      `SELECT id, error_message, agt_status FROM agt_transmissions
        WHERE entity_type = $1 AND entity_id = $2 AND COALESCE(transmission_type, '') != 'void'
        ORDER BY transmitted_at DESC LIMIT 1`,
       [meta.entityType, entityId],
     );
     const row = existing.rows[0];
     if (!row) return;
+    // Validated is the final answer. A later first-check (result 7, 8, or 10) must not
+    // paint an error back onto that row.
+    if (['validated', 'approved'].includes(String(row.agt_status || '').toLowerCase())) return;
     if (String(row.error_message || '') !== note) {
       console.warn('[AGT] status', meta.entityType, entityId, note);
     }

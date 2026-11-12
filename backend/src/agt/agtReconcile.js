@@ -32,8 +32,10 @@ async function reconcileFailedTransmissions(limit = 5) {
        AND transmission_type != 'void'
        AND entity_id IS NOT NULL
        AND COALESCE(retry_count, 0) < $2
-       AND COALESCE(error_code, '') != 'AGT_NOT_CONFIGURED'
+       AND COALESCE(error_code, '') NOT IN ('AGT_NOT_CONFIGURED', 'E04')
        AND COALESCE(error_message, '') NOT LIKE '%Credenciais AGT%'
+       AND COALESCE(error_message, '') NOT LIKE '%já foi submetido%'
+       AND COALESCE(error_message, '') NOT LIKE '%E04%'
      ORDER BY transmitted_at ASC
      LIMIT $1`,
     [limit, MAX_AUTO_RETRIES],

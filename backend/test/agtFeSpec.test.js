@@ -237,6 +237,20 @@ test('obterEstado result 0 with an empty document list is validated', () => {
   );
 });
 
+test('first check result 10 is not the final validated answer', () => {
+  const refused = interpretStatusResponse({
+    requestID: '202600003872205',
+    resultCode: 10,
+    documentStatusList: [],
+    requestErrorList: [{ idError: 'E06', descriptionError: 'não aderiu' }],
+  }, 'FR FR-SY03-2026-00012');
+  assert.equal(refused.agtStatus, 'submitted');
+  assert.equal(
+    interpretStatusResponse({ resultCode: 0, documentStatusList: [] }, 'FT 1').agtStatus,
+    'validated',
+  );
+});
+
 test('obterEstado probe text keeps result 7 and 8 visible', () => {
   const processing = interpretStatusResponse({ resultCode: 8, requestID: '2026' }, 'FT FT-1');
   assert.equal(describeStatusProbe(processing), 'AGT resultado 8 — ainda em processamento');
