@@ -151,9 +151,13 @@ module.exports = function(broadcastTable) {
   });
 
   // READ: Checklist due receipts / due payments (matches Pagamentos → Itens em aberto)
-  router.get('/checklist-dues', async (_req, res) => {
+  router.get('/checklist-dues', async (req, res) => {
     try {
-      const dues = await listChecklistDues();
+      const scopedBranchId = resolveListBranchId(req, req.query.branchId);
+      if (scopedBranchId === undefined) {
+        return res.json({ receivables: [], payables: [] });
+      }
+      const dues = await listChecklistDues({ branchId: scopedBranchId || '' });
       res.json(dues);
     } catch (error) {
       console.error('[PAYMENTS CHECKLIST DUES]', error);

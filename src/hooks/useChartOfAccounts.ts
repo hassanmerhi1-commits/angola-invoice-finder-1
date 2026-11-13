@@ -1,7 +1,7 @@
 import { generateId } from '@/lib/utils';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api/client';
-import { getCachedList, isCachedListFresh, markCachedListStale, setCachedList } from '@/lib/listCache';
+import { clearCachedList, getCachedList, isCachedListFresh, markCachedListStale, setCachedList } from '@/lib/listCache';
 import { Account, AccountFormData, TrialBalanceRow, BalanceSheetAccountRow, AccountType } from '@/types/accounting';
 import { ensureBranchCaixaAccounts } from '@/lib/chartOfAccountsEngine';
 import { compareAccountCodes } from '@/lib/coaTreeBalances';
@@ -12,8 +12,12 @@ import { allowsLocalLedgerWrites, cityLedgerOfflineError } from '@/lib/api/confi
 import { shiftLeafCodesAfterDelete } from '@/lib/entityAccounts';
 import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 
-const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts_v3';
-const LEGACY_COA_STORAGE_KEYS = ['kwanzaerp_chart_of_accounts', 'kwanzaerp_chart_of_accounts_v2'];
+const LOCAL_COA_STORAGE_KEY = 'kwanzaerp_chart_of_accounts_v4';
+const LEGACY_COA_STORAGE_KEYS = [
+  'kwanzaerp_chart_of_accounts',
+  'kwanzaerp_chart_of_accounts_v2',
+  'kwanzaerp_chart_of_accounts_v3',
+];
 
 const nowIso = () => new Date().toISOString();
 
@@ -66,23 +70,43 @@ const createSeedChartOfAccounts = (_t?: any): Account[] => {
   });
 };
 
+const chartHasBalance = (items: Account[]) =>
+  items.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
+
+/** The offline PGC seed uses local-coa- ids and must not be treated as the live chart. */
+const isSeedChart = (items: Account[]) =>
+  items.length > 0 && items.every((a) => String(a.id || '').startsWith('local-coa-'));
+
+const dropLegacyCoaCaches = () => {
+  let dropped = false;
+  for (const key of LEGACY_COA_STORAGE_KEYS) {
+    try {
+      if (localStorage.getItem(key) != null) dropped = true;
+      localStorage.removeItem(key);
+    } catch { /* ignore */ }
+  }
+  // v3 saved the old All-tab picture. Drop that session copy too.
+  if (dropped) clearCachedList('chartOfAccounts');
+};
+
+/** A saved live chart is usable even when every amount is 0. A zeroed seed is not. */
+const usableStoredChart = (parsed: unknown): Account[] | null => {
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const active = (parsed as Account[]).filter((a) => a.is_active !== false);
+  if (active.length === 0) return null;
+  if (!chartHasBalance(active) && isSeedChart(active)) return null;
+  return sortAccountsByCode(active);
+};
+
 const loadLocalAccounts = (t: any): Account[] => {
   if (typeof window === 'undefined') return [];
 
   try {
-    for (const key of LEGACY_COA_STORAGE_KEYS) {
-      try { localStorage.removeItem(key); } catch { /* ignore */ }
-    }
+    dropLegacyCoaCaches();
     const raw = localStorage.getItem(LOCAL_COA_STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Account[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        // Ignore caches that look like the zeroed PGC seed (no real balances).
-        const hasAnyBalance = parsed.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
-        if (hasAnyBalance) {
-          return sortAccountsByCode(parsed.filter(a => a.is_active !== false));
-        }
-      }
+      const stored = usableStoredChart(JSON.parse(raw));
+      if (stored) return stored;
     }
   } catch (error) {
     console.error('[useChartOfAccounts] Failed to read local chart of accounts:', error);
@@ -106,21 +130,17 @@ const createLocalId = () =>
 const COA_CACHE_FRESH_MS = 45_000;
 
 function readInitialAccounts(): Account[] {
+  if (typeof window !== 'undefined') dropLegacyCoaCaches();
   const mem = getCachedList<Account[]>('chartOfAccounts');
-  if (mem && mem.length > 0) {
-    const hasBal = mem.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
-    if (hasBal) return mem;
-  }
+  const storedMem = usableStoredChart(mem);
+  if (storedMem) return storedMem;
   try {
     const raw = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_COA_STORAGE_KEY) : null;
     if (raw) {
-      const parsed = JSON.parse(raw) as Account[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const hasAnyBalance = parsed.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
-        if (!hasAnyBalance) return [];
-        const sorted = sortAccountsByCode(parsed.filter((a) => a.is_active !== false));
-        setCachedList('chartOfAccounts', sorted);
-        return sorted;
+      const stored = usableStoredChart(JSON.parse(raw));
+      if (stored) {
+        setCachedList('chartOfAccounts', stored);
+        return stored;
       }
     }
   } catch { /* ignore */ }
@@ -139,31 +159,16 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
 
   const applyAccounts = useCallback((remoteAccounts: Account[]) => {
     const sorted = sortAccountsByCode(remoteAccounts);
-    const incomingHasBal = sorted.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
-    setAccounts((prev) => {
-      const prevHasBal = prev.some((a) => Math.abs(Number(a.current_balance) || 0) > 0.0001);
-      // A mid-recompute snapshot is all zeros — keep last balances, but still
-      // merge newly created leaves (e.g. Basel Angola) from the incoming list.
-      if (prevHasBal && !incomingHasBal && sorted.length > 0) {
-        const prevByCode = new Map(prev.map((a) => [a.code, a]));
-        const merged = sortAccountsByCode(sorted.map((a) => {
-          const old = prevByCode.get(a.code);
-          if (!old) return a;
-          return { ...a, current_balance: old.current_balance, opening_balance: old.opening_balance };
-        }));
-        setCachedList('chartOfAccounts', merged);
-        hasRowsRef.current = true;
-        saveLocalAccounts(merged);
-        return merged;
-      }
+    // Server amounts are the books, including an all-zero chart after a data reset.
+    // Copying the previous picture back made the All tab keep amounts that were
+    // already gone from the journals, and a later save could write them back.
+    setAccounts(() => {
       setCachedList('chartOfAccounts', sorted);
       hasRowsRef.current = sorted.length > 0;
-      saveLocalAccounts(sorted);
+      if (sorted.length > 0 && !isSeedChart(sorted)) saveLocalAccounts(sorted);
       return sorted;
     });
-    if (incomingHasBal || sorted.length > 0) {
-      hasRowsRef.current = true;
-    }
+    if (sorted.length > 0) hasRowsRef.current = true;
   }, []);
 
   const fetchAccounts = useCallback(async (opts?: { force?: boolean; liveBalances?: boolean }) => {

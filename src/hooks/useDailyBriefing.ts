@@ -128,21 +128,28 @@ export function useDailyBriefing(branchId?: string, enabled = true) {
       let receivableRows: any[] = [];
       let payableRows: any[] = [];
 
-      const duesRes = await api.payments.checklistDues();
+      const duesRes = await api.payments.checklistDues(branchId);
       if (duesRes.data) {
         receivableRows = Array.isArray(duesRes.data.receivables) ? duesRes.data.receivables : [];
         payableRows = Array.isArray(duesRes.data.payables) ? duesRes.data.payables : [];
       } else if (duesRes.error) {
-        const openRes = await api.transactions.openItems();
+        const openRes = await api.transactions.openItems(
+          branchId ? { branchId } : undefined,
+        );
         if (openRes.error) {
           throw new Error(duesRes.error);
         }
         const all = Array.isArray(openRes.data) ? openRes.data : [];
+        const onBranch = (row: any) => {
+          if (!branchId) return true;
+          const rowBranch = String(row.branch_id ?? row.branchId ?? '').trim();
+          return rowBranch === branchId;
+        };
         receivableRows = all.filter(
-          (r) => String(r.entity_type ?? r.entityType) === 'customer',
+          (r) => String(r.entity_type ?? r.entityType) === 'customer' && onBranch(r),
         );
         payableRows = all.filter(
-          (r) => String(r.entity_type ?? r.entityType) === 'supplier',
+          (r) => String(r.entity_type ?? r.entityType) === 'supplier' && onBranch(r),
         );
         warnings.push(duesRes.error);
       }

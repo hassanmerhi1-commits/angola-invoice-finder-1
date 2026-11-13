@@ -2343,8 +2343,10 @@ export const api = {
       const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
       return apiFetch<any[]>(`/payments/payables-aging${qs}`);
     },
-    checklistDues: () =>
-      apiFetch<{ receivables: any[]; payables: any[] }>('/payments/checklist-dues'),
+    checklistDues: (branchId?: string) => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+      return apiFetch<{ receivables: any[]; payables: any[] }>(`/payments/checklist-dues${qs}`);
+    },
     backfillMissingPayables: () =>
       apiFetch<{ created: number; skipped: number }>(
         '/payments/backfill-missing-payables',
