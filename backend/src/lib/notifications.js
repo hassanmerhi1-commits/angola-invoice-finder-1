@@ -1,11 +1,40 @@
 const db = require('../db');
 const crypto = require('crypto');
 const { selectExpenseApprovers } = require('./expenseApprovers');
+const { broadcastTable } = require('./tableBroadcast');
+const {
+  overdueDocKey,
+  overdueDedupeKey,
+  overdueIdentityFromDedupe,
+  periodDedupeKey,
+  agtDedupeKey,
+} = require('./notificationDedupe');
 
-/** Postgres gets the table from migration 062; SQLite (tests, Electron local) needs it here. */
-async function ensureNotificationsTable() {
-  if (db.engine === 'postgres') return;
-  try {
+const AGT_DOC = {
+  sale: { table: 'sales', numberCol: 'invoice_number' },
+  credit_note: { table: 'credit_notes', numberCol: 'document_number' },
+  debit_note: { table: 'debit_notes', numberCol: 'document_number' },
+};
+
+let storeReady = null;
+
+/** Postgres gets the tables from migration 062/085; SQLite still needs them here. */
+async function ensureNotificationStore() {
+  if (storeReady) return storeReady;
+  storeReady = (async () => {
+    if (db.engine === 'postgres') {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS notification_user_state (
+          user_id TEXT NOT NULL,
+          notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+          is_read BOOLEAN NOT NULL DEFAULT false,
+          dismissed BOOLEAN NOT NULL DEFAULT false,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (user_id, notification_id)
+        )
+      `);
+      return;
+    }
     db.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS notifications (
         id TEXT PRIMARY KEY,
@@ -21,8 +50,25 @@ async function ensureNotificationsTable() {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+      CREATE TABLE IF NOT EXISTS notification_user_state (
+        user_id TEXT NOT NULL,
+        notification_id TEXT NOT NULL,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        dismissed INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, notification_id)
+      );
     `);
-  } catch (_) {}
+  })().catch((err) => {
+    storeReady = null;
+    throw err;
+  });
+  return storeReady;
+}
+
+function sqlFlag(on) {
+  if (db.engine === 'postgres') return on ? true : false;
+  return on ? 1 : 0;
 }
 
 /**
@@ -37,16 +83,38 @@ async function createNotification({
   userId = null,
   branchId = null,
   dedupeKey = null,
+  bump = false,
 }) {
   const id = crypto.randomUUID();
   try {
-    await ensureNotificationsTable();
+    await ensureNotificationStore();
     if (dedupeKey) {
       const existing = await db.query(
         'SELECT id, link FROM notifications WHERE dedupe_key = $1 LIMIT 1',
         [dedupeKey],
       );
-      if (existing.rows[0]) return existing.rows[0];
+      const row = existing.rows[0];
+      if (row) {
+        await db.query(
+          `UPDATE notifications
+           SET title = $1, message = $2, severity = $3, link = $4, branch_id = $5
+           WHERE id = $6`,
+          [title, message, severity, link, branchId, row.id],
+        );
+        if (bump) {
+          await db.query(
+            `UPDATE notifications
+             SET created_at = CURRENT_TIMESTAMP, is_read = $1
+             WHERE id = $2`,
+            [sqlFlag(false), row.id],
+          );
+          await db.query(
+            'DELETE FROM notification_user_state WHERE notification_id = $1',
+            [row.id],
+          );
+        }
+        return { ...row, link, inserted: false };
+      }
     }
     const r = await db.query(
       `INSERT INTO notifications (
@@ -55,7 +123,7 @@ async function createNotification({
        RETURNING *`,
       [id, userId, branchId, type, title, message, severity, link, dedupeKey],
     );
-    return r.rows[0];
+    return { ...(r.rows[0] || { id }), inserted: true };
   } catch (err) {
     // Unique violation on dedupe
     if (err.code === '23505') return null;
@@ -70,23 +138,57 @@ async function createNotification({
  */
 async function purgeRetiredNotifications() {
   try {
-    await ensureNotificationsTable();
+    await ensureNotificationStore();
     await db.query("DELETE FROM notifications WHERE type = 'low_stock'");
   } catch (err) {
     console.warn('[NOTIFICATIONS] purge:', err.message);
   }
 }
 
+async function loadAgtDocument(entityType, entityId) {
+  const meta = AGT_DOC[entityType];
+  if (!meta || !entityId) return null;
+  try {
+    const r = await db.query(
+      `SELECT branch_id, ${meta.numberCol} AS document_number
+       FROM ${meta.table}
+       WHERE id = $1`,
+      [entityId],
+    );
+    return r.rows[0] || null;
+  } catch (err) {
+    console.warn('[NOTIFICATIONS] AGT document lookup skipped:', err.message);
+    return null;
+  }
+}
+
+function agtDocumentLink(entityId, documentNumber) {
+  const params = new URLSearchParams();
+  if (entityId) params.set('invoiceId', String(entityId));
+  const number = String(documentNumber || '').trim();
+  if (number) params.set('q', number);
+  const qs = params.toString();
+  return qs ? `/invoices?${qs}` : '/invoices';
+}
+
 async function notifyAgtFailure({ entityType, entityId, message }) {
-  const day = new Date().toISOString().slice(0, 10);
-  return createNotification({
+  const doc = await loadAgtDocument(entityType, entityId);
+  const number = String(doc?.document_number || '').trim();
+  const detail = String(message || '').trim() || 'O documento não foi aceite';
+  const row = await createNotification({
     type: 'agt_failure',
-    title: 'AGT transmission failed',
-    message: message || `${entityType || 'document'} ${entityId || ''}`.trim(),
+    title: 'Falha no envio à AGT',
+    message: number ? `${number}: ${detail}` : detail,
     severity: 'critical',
-    link: '/settings',
-    dedupeKey: `agt_fail:${entityType || 'x'}:${entityId || 'x'}:${day}`,
+    link: agtDocumentLink(entityId, number),
+    branchId: doc?.branch_id || null,
+    dedupeKey: agtDedupeKey(entityType, entityId),
+    bump: true,
   });
+  if (row && row.id) {
+    try { broadcastTable('notifications'); } catch (_) { /* non-fatal */ }
+  }
+  return row;
 }
 
 function overdueReceivableLink(entityId, entityName) {
@@ -98,17 +200,26 @@ function overdueReceivableLink(entityId, entityName) {
   return `/payments?${params.toString()}`;
 }
 
-function overdueDocKey(entityId, documentNumber) {
-  const entity = String(entityId || '').trim();
-  const doc = String(documentNumber || '').trim() || entity;
-  return `${entity}:${doc}`;
+async function deleteNotificationIds(queryable, ids) {
+  if (!ids.length) return 0;
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  await queryable.query(
+    `DELETE FROM notification_user_state WHERE notification_id IN (${placeholders})`,
+    ids,
+  ).catch(() => undefined);
+  await queryable.query(
+    `DELETE FROM notifications WHERE id IN (${placeholders})`,
+    ids,
+  );
+  return ids.length;
 }
 
-/** Drop warnings for invoices that are paid or no longer overdue. */
+/** Drop paid invoices, and the extra daily copies of one that is still overdue. */
 async function pruneSettledOverdueNotifications(queryable = db) {
   const today = new Date().toISOString().slice(0, 10);
   let open;
   try {
+    await ensureNotificationStore();
     open = await queryable.query(
       `SELECT entity_id, document_number
        FROM open_items
@@ -131,19 +242,11 @@ async function pruneSettledOverdueNotifications(queryable = db) {
   );
   const stale = [];
   for (const row of existing.rows || []) {
-    const parts = String(row.dedupe_key || '').split(':');
-    if (parts[0] !== 'overdue_ar' || parts.length < 4) continue;
-    const entityId = parts[1];
-    const doc = parts.slice(2, -1).join(':');
-    if (!live.has(`${entityId}:${doc}`)) stale.push(row.id);
+    const identity = overdueIdentityFromDedupe(row.dedupe_key);
+    const stable = identity ? `overdue_ar:${identity}` : '';
+    if (!identity || !live.has(identity) || row.dedupe_key !== stable) stale.push(row.id);
   }
-  if (!stale.length) return 0;
-  const placeholders = stale.map((_, i) => `$${i + 1}`).join(', ');
-  await queryable.query(
-    `DELETE FROM notifications WHERE id IN (${placeholders})`,
-    stale,
-  );
-  return stale.length;
+  return deleteNotificationIds(queryable, stale);
 }
 
 /** Overdue customer receivables (open_items). */
@@ -152,9 +255,11 @@ async function scanOverdueReceivables() {
     const today = new Date().toISOString().slice(0, 10);
     const r = await db.query(
       `SELECT oi.entity_id, oi.document_number, oi.remaining_amount, oi.due_date,
-              c.name AS entity_name
+              c.name AS entity_name,
+              COALESCE(oi.branch_id, s.branch_id) AS branch_id
        FROM open_items oi
        LEFT JOIN clients c ON c.id = oi.entity_id
+       LEFT JOIN sales s ON s.id = oi.document_id
        WHERE oi.entity_type = 'customer'
          AND oi.status != 'cleared'
          AND oi.due_date IS NOT NULL
@@ -165,38 +270,55 @@ async function scanOverdueReceivables() {
       [today],
     );
     let created = 0;
-    const day = today;
     for (const row of r.rows || []) {
       const due = Number(row.remaining_amount || 0);
       const link = overdueReceivableLink(row.entity_id, row.entity_name);
+      const dueDay = String(row.due_date || '').slice(0, 10);
       const n = await createNotification({
         type: 'overdue_ar',
-        title: 'Overdue receivable',
-        message: `${row.document_number || row.entity_id}: ${due.toFixed(2)} overdue (due ${String(row.due_date).slice(0, 10)})`,
+        title: 'Factura em atraso',
+        message: `${row.document_number || 'Documento'}: ${formatAoa(due)} em atraso (venceu em ${dueDay})`,
         severity: 'warning',
         link,
-        dedupeKey: `overdue_ar:${row.entity_id}:${row.document_number || row.entity_id}:${day}`,
+        branchId: row.branch_id || null,
+        dedupeKey: overdueDedupeKey(row.entity_id, row.document_number || row.entity_id),
       });
-      if (n && n.id && n.link !== link) {
-        await db.query('UPDATE notifications SET link = $1 WHERE id = $2', [link, n.id]);
-      }
-      if (n && n.id) created += 1;
+      if (n?.inserted) created += 1;
     }
-    await pruneSettledOverdueNotifications();
-    return created;
+    const pruned = await pruneSettledOverdueNotifications();
+    return { created, pruned };
   } catch (err) {
     console.warn('[NOTIFICATIONS] overdue AR scan:', err.message);
-    return 0;
+    return { created: 0, pruned: 0 };
   }
+}
+
+async function prunePeriodCloseNotifications(liveIds) {
+  const existing = await db.query(
+    `SELECT id, dedupe_key FROM notifications WHERE type = 'period_close'`,
+  );
+  const live = new Set(liveIds || []);
+  const stale = [];
+  for (const row of existing.rows || []) {
+    const key = String(row.dedupe_key || '');
+    const periodId = key.startsWith('period_close:') ? key.slice('period_close:'.length).split(':')[0] : '';
+    const stable = periodId ? periodDedupeKey(periodId) : '';
+    if (!periodId || !live.has(periodId) || key !== stable) stale.push(row.id);
+  }
+  return deleteNotificationIds(db, stale);
 }
 
 /** Remind when current month period is still open near month end / after. */
 async function scanPeriodCloseReminders() {
   try {
+    await ensureNotificationStore();
     const now = new Date();
     const day = now.getDate();
-    // From day 25 onward, nudge open periods for current month.
-    if (day < 25) return 0;
+    // Before the 25th the reminder is noise. From the 25th, one line per open period.
+    if (day < 25) {
+      const pruned = await prunePeriodCloseNotifications([]);
+      return { created: 0, pruned };
+    }
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const periodKey = `${y}-${m}`;
@@ -212,22 +334,24 @@ async function scanPeriodCloseReminders() {
       [`${periodKey}%`, `%${periodKey}%`],
     ).catch(() => ({ rows: [] }));
     let created = 0;
-    const today = now.toISOString().slice(0, 10);
+    const liveIds = [];
     for (const p of r.rows || []) {
+      liveIds.push(String(p.id));
       const n = await createNotification({
         type: 'period_close',
-        title: 'Period close reminder',
-        message: `Accounting period still open: ${p.name || p.id}`,
+        title: 'Fecho do período',
+        message: `O período ainda está aberto: ${p.name || p.id}`,
         severity: 'info',
         link: '/accounting-periods',
-        dedupeKey: `period_close:${p.id}:${today}`,
+        dedupeKey: periodDedupeKey(p.id),
       });
-      if (n && n.id) created += 1;
+      if (n?.inserted) created += 1;
     }
-    return created;
+    const pruned = await prunePeriodCloseNotifications(liveIds);
+    return { created, pruned };
   } catch (err) {
     console.warn('[NOTIFICATIONS] period close scan:', err.message);
-    return 0;
+    return { created: 0, pruned: 0 };
   }
 }
 
@@ -295,6 +419,7 @@ async function notifyExpensePendingApproval(expense) {
       userId: String(approver.id),
       branchId: expense.branchId || null,
       dedupeKey: `expense_approval:${expense.id}:${approver.id}`,
+      bump: true,
     });
     if (row && row.id) created += 1;
   }
@@ -324,6 +449,7 @@ async function notifyExpenseDecision(expense, decision, actorName) {
     userId: requesterId,
     branchId: expense.branchId || null,
     dedupeKey: `expense_decision:${expense.id}:${approved ? 'approved' : 'rejected'}`,
+    bump: true,
   });
   return row && row.id ? 1 : 0;
 }
@@ -355,12 +481,18 @@ async function notifyExpenseApprovalChange(expense, priorStatus, actor) {
 async function runNotificationScans() {
   const ar = await scanOverdueReceivables();
   const periods = await scanPeriodCloseReminders();
-  return { ar, periods, total: ar + periods };
+  const created = Number(ar.created) + Number(periods.created);
+  const pruned = Number(ar.pruned) + Number(periods.pruned);
+  if (created > 0 || pruned > 0) {
+    try { broadcastTable('notifications'); } catch (_) { /* non-fatal */ }
+  }
+  return { ar: ar.created, periods: periods.created, pruned, total: created };
 }
 
 module.exports = {
   createNotification,
-  ensureNotificationsTable,
+  ensureNotificationStore,
+  ensureNotificationsTable: ensureNotificationStore,
   notifyExpenseApprovalChange,
   resolveExpenseApprovers,
   purgeRetiredNotifications,

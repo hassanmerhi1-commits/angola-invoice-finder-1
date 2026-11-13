@@ -2289,7 +2289,8 @@ export const pt: TranslationKeys = {
     markAllRead: "Marcar lidas",
     clear: "Limpar",
     empty: "Sem notificações",
-    scanTitle: "Scan low stock / overdue AR / period close",
+    scan: "Procurar",
+    scanTitle: "Procurar facturas em atraso e um mês contabilístico aberto",
   },
 
   transactionHistoryUi: {
@@ -6317,6 +6318,7 @@ export const pt: TranslationKeys = {
     newEquityAccount: "Nova conta de capital",
 
     salesInvoice: "Fatura de Venda",
+    purchaseInvoice: "Fatura de Compra",
     receipt: "Recibo",
     payment: "Pagamento",
     creditNote: "Nota de Crédito",

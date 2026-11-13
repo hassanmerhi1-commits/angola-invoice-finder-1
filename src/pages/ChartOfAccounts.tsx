@@ -29,7 +29,7 @@ import { isCityLedgerOfflineError } from '@/lib/api/config';
 import { CLIENTS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import {
   Search, Edit2, Trash2, RefreshCw,
-  FileText, Receipt, CreditCard, Banknote,
+  FileText, Receipt, CreditCard, Banknote, ShoppingCart,
   ChevronRight, ChevronDown, Printer, Download, Upload, Eye, Plus, X, FolderPlus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -1077,6 +1077,10 @@ export default function ChartOfAccounts() {
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => { navigate('/invoices'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexor:invoices-new', { detail: { tab: 'fatura_venda' } })), 150); }}>
           <FileText className="w-3 h-3" /> {t.chartOfAccountsUi.salesInvoice}
+        </Button>
+        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM}
+          onClick={() => navigate('/purchase-orders')}>
+          <ShoppingCart className="w-3 h-3" /> {t.chartOfAccountsUi.purchaseInvoice}
         </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} disabled={!selectedAccount}
           onClick={() => {

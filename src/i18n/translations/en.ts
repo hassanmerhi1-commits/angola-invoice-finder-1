@@ -2287,7 +2287,8 @@ export const en = {
     markAllRead: "Mark as read",
     clear: "Clear",
     empty: "No notifications",
-    scanTitle: "Scan low stock / overdue AR / period close",
+    scan: "Scan",
+    scanTitle: "Look for overdue invoices and an open accounting month",
   },
 
   transactionHistoryUi: {
@@ -6315,6 +6316,7 @@ export const en = {
     newEquityAccount: "New equity account",
 
     salesInvoice: "Sales invoice",
+    purchaseInvoice: "Purchase invoice",
     receipt: "Receipt",
     payment: "Payment",
     creditNote: "Credit note",

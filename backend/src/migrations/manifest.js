@@ -88,6 +88,7 @@ const MIGRATION_FILES = [
   '081_branches_is_active.sql',
   '083_coa_account_75_detail.sql',
   '084_agt_nif_lookup.sql',
+  '085_notification_user_state.sql',
 ];
 
 /** PostgreSQL errors that mean "already applied" — safe to skip. */

@@ -15,6 +15,7 @@ import { pt, enUS } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/hooks/useERP';
+import { useBranchScope } from '@/hooks/useBranchScope';
 
 const iconMap: Record<string, React.ReactNode> = {
   low_stock: <Package className="w-4 h-4 text-orange-500" />,
@@ -37,7 +38,8 @@ const severityDot: Record<Notification['severity'], string> = {
 export function NotificationBell() {
   const { t, language } = useTranslation();
   const dfLocale = language === 'pt' ? pt : enUS;
-  const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll, scanAll, refreshFromServer } = useNotifications();
+  const { apiBranchId } = useBranchScope();
+  const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll, scanAll, refreshFromServer } = useNotifications(apiBranchId);
   const navigate = useNavigate();
   const { user } = useAuth();
   const [scanning, setScanning] = useState(false);
@@ -93,7 +95,7 @@ export function NotificationBell() {
                 onClick={() => void handleScan()}
                 title={t.notificationsUi.scanTitle}
               >
-                {scanning ? '…' : 'Scan'}
+                {scanning ? '…' : t.notificationsUi.scan}
               </Button>
             )}
             {unreadCount > 0 && (

@@ -62,7 +62,7 @@ function mergeById(primary: Notification[], secondary: Notification[]): Notifica
     .slice(0, MAX_NOTIFICATIONS);
 }
 
-export function useNotifications() {
+export function useNotifications(branchId?: string) {
   const [notifications, setNotifications] = useState<Notification[]>(loadLocalNotifications);
 
   useEffect(() => {
@@ -82,7 +82,7 @@ export function useNotifications() {
     const token = localStorage.getItem('kwanza_auth_token');
     if (!token) return;
     try {
-      const res = await api.notifications.list(50);
+      const res = await api.notifications.list(50, branchId);
       if (res.error || !Array.isArray(res.data)) return;
       const serverRows = res.data.map((r) => mapServerRow(r as Record<string, unknown>));
       setNotifications((prev) => {
@@ -96,7 +96,7 @@ export function useNotifications() {
     } catch {
       // Keep local cache when API unreachable
     }
-  }, []);
+  }, [branchId]);
 
   useEffect(() => {
     void refreshFromServer();
@@ -123,9 +123,9 @@ export function useNotifications() {
       return updated;
     });
     if (!isDemoMode() && /^[0-9a-f-]{36}$/i.test(id)) {
-      void api.notifications.markRead([id]);
+      void api.notifications.markRead([id], false, branchId);
     }
-  }, []);
+  }, [branchId]);
 
   const markAllAsRead = useCallback(() => {
     setNotifications((prev) => {
@@ -134,18 +134,18 @@ export function useNotifications() {
       return updated;
     });
     if (!isDemoMode()) {
-      void api.notifications.markRead(undefined, true);
+      void api.notifications.markRead(undefined, true, branchId);
     }
-  }, []);
+  }, [branchId]);
 
   // Clearing only the local cache made everything reappear on the next server refresh.
   const clearAll = useCallback(() => {
     setNotifications([]);
     saveLocalNotifications([]);
     if (!isDemoMode()) {
-      void api.notifications.dismiss(undefined, true);
+      void api.notifications.dismiss(undefined, true, branchId);
     }
-  }, []);
+  }, [branchId]);
 
   const addNotification = useCallback((notif: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
     const newNotif: Notification = {

@@ -968,6 +968,20 @@ async function ensureAttachmentsNotificationsTables(db) {
         CREATE INDEX IF NOT EXISTS idx_notifications_unread
           ON notifications (is_read, created_at DESC)
       `);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS notification_user_state (
+          user_id TEXT NOT NULL,
+          notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+          is_read BOOLEAN NOT NULL DEFAULT false,
+          dismissed BOOLEAN NOT NULL DEFAULT false,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (user_id, notification_id)
+        )
+      `);
+      await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_notification_user_state_user
+          ON notification_user_state (user_id)
+      `);
     } catch (err) {
       console.warn('[SCHEMA] attachments/notifications:', err.message);
     }
@@ -1009,6 +1023,16 @@ async function ensureAttachmentsNotificationsTables(db) {
           WHERE dedupe_key IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_notifications_created
           ON notifications (created_at DESC);
+        CREATE TABLE IF NOT EXISTS notification_user_state (
+          user_id TEXT NOT NULL,
+          notification_id TEXT NOT NULL,
+          is_read INTEGER NOT NULL DEFAULT 0,
+          dismissed INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (user_id, notification_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_notification_user_state_user
+          ON notification_user_state (user_id);
       `);
     } catch (err) {
       console.warn('[SCHEMA] attachments/notifications (sqlite):', err.message);

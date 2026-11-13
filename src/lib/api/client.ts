@@ -3523,17 +3523,20 @@ export const api = {
   },
 
   notifications: {
-    list: (limit = 50) =>
-      apiFetch<any[]>(`/notifications?limit=${encodeURIComponent(String(limit))}`),
-    markRead: (ids?: string[], all = false) =>
+    list: (limit = 50, branchId?: string) => {
+      const qs = new URLSearchParams({ limit: String(limit) });
+      if (branchId) qs.set('branchId', branchId);
+      return apiFetch<any[]>(`/notifications?${qs.toString()}`);
+    },
+    markRead: (ids?: string[], all = false, branchId?: string) =>
       apiFetch<{ success: boolean }>('/notifications/mark-read', {
         method: 'POST',
-        body: JSON.stringify(all ? { all: true } : { ids: ids || [] }),
+        body: JSON.stringify(all ? { all: true, branchId } : { ids: ids || [], branchId }),
       }),
-    dismiss: (ids?: string[], all = false) =>
+    dismiss: (ids?: string[], all = false, branchId?: string) =>
       apiFetch<{ success: boolean }>('/notifications/dismiss', {
         method: 'POST',
-        body: JSON.stringify(all ? { all: true } : { ids: ids || [] }),
+        body: JSON.stringify(all ? { all: true, branchId } : { ids: ids || [], branchId }),
       }),
     scanAll: () =>
       apiFetch<{ success: boolean; ar: number; periods: number; total: number }>(
