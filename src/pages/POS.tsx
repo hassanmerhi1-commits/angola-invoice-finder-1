@@ -1162,12 +1162,13 @@ export default function POS() {
         branch={currentBranch}
         caixaName={caixa?.name}
         session={caixaSession}
-        onCloseCaixa={async (countedCash, notes) => {
+        onCloseCaixa={async (countedCash, notes, expectedCash) => {
           if (!user) return;
           await closeCaixaSessionForBranch(
             countedCash,
             user.name || user.username || 'POS',
             notes,
+            expectedCash,
           );
         }}
       />

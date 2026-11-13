@@ -24,6 +24,8 @@ type TransmissionRow = {
 
 type StatusFilter = 'all' | 'failed' | 'pending';
 
+const PAGE_SIZE = 50;
+
 function isAlreadySent(message?: string) {
   const text = message || '';
   return /\bE04\b/i.test(text) || /já foi submetido/i.test(text) || /already been submitted/i.test(text);
@@ -66,6 +68,8 @@ export function AgtTransmissionsCard() {
   const { toast } = useToast();
   const [rows, setRows] = useState<TransmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [hasEarlier, setHasEarlier] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [bulkWorking, setBulkWorking] = useState(false);
@@ -76,10 +80,12 @@ export function AgtTransmissionsCard() {
     try {
       const res = await api.agt.listTransmissions({
         status: statusFilter === 'all' ? undefined : statusFilter,
-        limit: 50,
+        limit: PAGE_SIZE,
       });
       if (res.error) throw new Error(res.error);
-      setRows(res.data || []);
+      const next = res.data || [];
+      setRows(next);
+      setHasEarlier(next.length >= PAGE_SIZE);
       setListError(null);
     } catch (err) {
       setRows([]);
@@ -92,6 +98,32 @@ export function AgtTransmissionsCard() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const loadEarlier = async () => {
+    setLoadingEarlier(true);
+    try {
+      const res = await api.agt.listTransmissions({
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        limit: PAGE_SIZE,
+        offset: rows.length,
+      });
+      if (res.error) throw new Error(res.error);
+      const more = res.data || [];
+      setRows((prev) => {
+        const seen = new Set(prev.map((row) => row.id));
+        return [...prev, ...more.filter((row) => !seen.has(row.id))];
+      });
+      setHasEarlier(more.length >= PAGE_SIZE);
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: t.common.error,
+        description: err instanceof Error ? err.message : t.common.loadFailed,
+      });
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
 
   const handleCopyJson = async (id: string) => {
     setCopyingId(id);
@@ -349,6 +381,18 @@ export function AgtTransmissionsCard() {
               ))}
             </TableBody>
           </Table>
+        )}
+        {hasEarlier && !loading && !listError && (
+          <div className="flex justify-center">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loadingEarlier}
+              onClick={() => void loadEarlier()}
+            >
+              {loadingEarlier ? t.common.loading : ui.loadEarlier}
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>

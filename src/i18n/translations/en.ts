@@ -3691,6 +3691,7 @@ export const en = {
     filterAll: "All",
     filterFailed: "Failed",
     filterPending: "Pending",
+    loadEarlier: "Show earlier",
     typeSale: "Invoice",
     typeCreditNote: "Credit note",
     typeDebitNote: "Debit note",

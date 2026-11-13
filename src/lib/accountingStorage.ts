@@ -1066,7 +1066,8 @@ export async function closeCaixaSession(
   sessionId: string,
   closingBalance: number,
   closedBy: string,
-  notes?: string
+  notes?: string,
+  expectedCash?: number,
 ): Promise<void> {
   const markClosed = (session: CaixaSession) => {
     session.closingBalance = closingBalance;
@@ -1105,7 +1106,10 @@ export async function closeCaixaSession(
         try {
           const { enqueueCaixaCloseSync } = await import('@/lib/sync/clientOutbox');
           await enqueueCaixaCloseSync({
-            sessionData: { ...session },
+            sessionData: {
+              ...session,
+              ...(Number.isFinite(expectedCash) ? { expectedCash } : {}),
+            },
             ...(caixa ? { caixaData: { ...caixa } } : {}),
           });
         } catch {

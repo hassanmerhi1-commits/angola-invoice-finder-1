@@ -65,7 +65,7 @@ interface PosEndOfDayReportDialogProps {
   branch: Branch | null;
   caixaName?: string;
   session?: CaixaSession | null;
-  onCloseCaixa?: (countedCash: number, notes?: string) => void | Promise<void>;
+  onCloseCaixa?: (countedCash: number, notes?: string, expectedCash?: number) => void | Promise<void>;
 }
 
 export function PosEndOfDayReportDialog({
@@ -323,7 +323,7 @@ export function PosEndOfDayReportDialog({
     if (!session || !onCloseCaixa) return;
     setClosing(true);
     try {
-      await onCloseCaixa(countedValue, closeNotes.trim() || undefined);
+      await onCloseCaixa(countedValue, closeNotes.trim() || undefined, expectedCash);
       onOpenChange(false);
     } catch (err) {
       console.error('[PosEndOfDay] close caixa failed:', err);

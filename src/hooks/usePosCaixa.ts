@@ -675,7 +675,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
   );
 
   const closeSession = useCallback(
-    async (countedCash: number, closedBy: string, notes?: string) => {
+    async (countedCash: number, closedBy: string, notes?: string, expectedCash?: number) => {
       if (!session) return;
       const snapshot = { ...session };
       const caixaSnap = caixa;
@@ -729,6 +729,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
           closedBy,
           openedAt: snapshot.openedAt,
           notes,
+          expectedCash,
           caixa: caixaSnap
             ? {
                 id: caixaSnap.id,

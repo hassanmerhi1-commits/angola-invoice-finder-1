@@ -60,6 +60,7 @@ async function postCaixaGlMovement(params) {
     referenceType,
     referenceId,
     createdBy,
+    createdByName,
     entryDate,
     caixaId,
   } = params || {};
@@ -113,6 +114,7 @@ async function postCaixaGlMovement(params) {
       referenceId: refId,
       branchId,
       createdBy: createdBy || null,
+      createdByName: createdByName || null,
       entryDate: entryDate || undefined,
       lines,
     });

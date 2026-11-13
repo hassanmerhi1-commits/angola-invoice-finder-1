@@ -2,6 +2,7 @@
  * Phase B3+ — shop client caixa.close → city server mirror.
  */
 const db = require('../db');
+const { postCaixaCloseVariance } = require('../lib/caixaCloseVariance');
 
 function pick(obj, ...keys) {
   for (const k of keys) {
@@ -37,7 +38,8 @@ async function applyCaixaClose(payload) {
   if (dup.rows.length > 0 && dup.rows[0]) {
     const existing = await db.query(`SELECT status FROM caixa_sessions WHERE id = $1`, [sessionId]);
     if (existing.rows[0]?.status === 'closed') {
-      return { skipped: true, reason: 'duplicate', id: sessionId };
+      const variance = await postCaixaCloseVariance(session);
+      return { skipped: true, reason: 'duplicate', id: sessionId, variance };
     }
   }
 
@@ -118,7 +120,8 @@ async function applyCaixaClose(payload) {
     ]
   );
 
-  return { ok: true, sessionId, caixaId, branchId };
+  const variance = await postCaixaCloseVariance(session);
+  return { ok: true, sessionId, caixaId, branchId, variance };
 }
 
 module.exports = { applyCaixaClose };

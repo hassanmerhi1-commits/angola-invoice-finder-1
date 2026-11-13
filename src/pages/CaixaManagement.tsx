@@ -443,15 +443,15 @@ export default function CaixaManagement() {
   const handleCloseSession = () => {
     if (!selectedSession) return;
     
+    const expectedBalance = selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut;
     closeCaixaSession(
       selectedSession.id,
       closingBalance,
       user?.name || t.caixaUi.systemUser,
-      closingNotes
+      closingNotes,
+      expectedBalance,
     );
 
-    // Check for discrepancy
-    const expectedBalance = selectedSession.openingBalance + selectedSession.totalIn - selectedSession.totalOut;
     const difference = closingBalance - expectedBalance;
     
     if (Math.abs(difference) > 0) {

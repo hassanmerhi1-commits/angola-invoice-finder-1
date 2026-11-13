@@ -518,7 +518,7 @@ module.exports = function(broadcastTable) {
    */
   router.get('/transmissions', async (req, res) => {
     try {
-      const { status, limit = 50, branchId } = req.query;
+      const { status, limit = 50, offset = 0, branchId } = req.query;
       const params = [];
       const where = ['latest.rn = 1'];
 
@@ -540,7 +540,8 @@ module.exports = function(broadcastTable) {
         )`);
       }
 
-      params.push(Math.min(parseInt(limit, 10) || 50, 200));
+      params.push(Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100));
+      params.push(Math.max(parseInt(offset, 10) || 0, 0));
 
       const query = `
         SELECT latest.id, latest.invoice_id, latest.invoice_number, latest.transmission_type,
@@ -568,7 +569,8 @@ module.exports = function(broadcastTable) {
         LEFT JOIN debit_notes dn ON latest.entity_type = 'debit_note' AND latest.entity_id = dn.id
         WHERE ${where.join(' AND ')}
         ORDER BY latest.transmitted_at DESC NULLS LAST
-        LIMIT $${params.length}
+        LIMIT $${params.length - 1}
+        OFFSET $${params.length}
       `;
 
       const result = await db.query(query, params);

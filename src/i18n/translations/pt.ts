@@ -3694,6 +3694,7 @@ export const pt: TranslationKeys = {
     filterAll: "Todas",
     filterFailed: "Falhadas",
     filterPending: "Pendentes",
+    loadEarlier: "Ver mais antigas",
     typeSale: "Factura",
     typeCreditNote: "Nota de crédito",
     typeDebitNote: "Nota de débito",

@@ -913,6 +913,7 @@ function caixaRouter(broadcastTable) {
           openedAt: body.openedAt,
           closedAt,
           notes: body.notes,
+          expectedCash: body.expectedCash,
         },
         caixa: body.caixa,
       });
