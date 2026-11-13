@@ -1673,14 +1673,15 @@ export async function createCashTransaction(
   referenceType?: CashTransaction['referenceType'],
   referenceId?: string,
   referenceNumber?: string,
-  notes?: string
+  notes?: string,
+  id?: string,
 ): Promise<CashTransaction> {
   const caixa = await getCaixaById(caixaId);
   const direction: 'in' | 'out' = ['sale', 'deposit', 'transfer_in', 'opening'].includes(type) ? 'in' : 'out';
   const balanceAfter = caixa ? (direction === 'in' ? caixa.currentBalance + amount : caixa.currentBalance - amount) : 0;
   
   const transaction: CashTransaction = {
-    id: `ct_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    id: id || `ct_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     caixaId,
     branchId,
     type,

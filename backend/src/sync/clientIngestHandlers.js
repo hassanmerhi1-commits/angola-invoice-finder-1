@@ -184,6 +184,7 @@ async function handleStockMovement(poolClient, idempotencyKey, payload) {
     notes: body.notes || `client-sync:${idempotencyKey}`,
     createdBy: body.createdBy || body.created_by,
     });
+    await require('../lib/standaloneStockJournal').postStandaloneStockJournal(poolClient, movement, body);
     await poolClient.query('COMMIT');
   } catch (e) {
     await poolClient.query('ROLLBACK').catch(() => {});

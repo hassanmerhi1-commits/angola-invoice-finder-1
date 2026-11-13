@@ -322,6 +322,10 @@ module.exports = function(broadcastTable) {
         movementType,
         referenceType: req.body.referenceType ?? req.body.reference_type ?? 'adjustment',
       });
+      await require('../lib/standaloneStockJournal').postStandaloneStockJournal(client, movement, {
+        ...req.body,
+        referenceType: req.body.referenceType ?? req.body.reference_type ?? 'adjustment',
+      });
       await client.query('COMMIT');
       await broadcastTable('products');
       res.status(201).json(movement);

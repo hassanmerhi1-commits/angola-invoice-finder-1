@@ -37,6 +37,10 @@ const { randomUUID } = require('crypto');
 const { normalizeSqlDate } = require('./lib/dateSql');
 const { requireBranchCaixaGlAccountCode } = require('./lib/resolveBranchCaixaGlAccount');
 const {
+  buildStockAdjustmentJournalLines,
+  buildPaymentJournalLines,
+} = require('./lib/postingContract');
+const {
   resolveBranchSalesAccountCode,
   resolveBranchPurchaseAccountCode,
 } = require('./lib/branchPostingAccounts');
@@ -320,7 +324,6 @@ async function resolveCustomerReceivableAccount(client, clientId) {
   return { accountCode, client: row };
 }
 
-const INVENTORY_MERCHANDISE_ACCOUNT = ACC.PURCHASES_MERCHANDISE;
 const INVENTORY_STOCK_ACCOUNT = ACC.INVENTORY_STOCK;
 
 async function ensureFreightExpenseAccount(client) {
@@ -517,131 +520,6 @@ function normalizeStockAdjustmentReferenceType(direction, referenceType) {
     return ref === 'expired' || ref === 'damaged' || ref === 'loss' ? 'damage' : ref;
   }
   return 'adjustment';
-}
-
-function buildStockAdjustmentJournalLines(direction, referenceType, totalValue, docLabel, freightOpts = {}) {
-  const amount = Math.round((parseFloat(totalValue) || 0) * 100) / 100;
-  if (amount <= 0) return [];
-
-  const ref = String(referenceType || '').toLowerCase();
-  const landingCosts = Math.round((parseFloat(freightOpts.landingCosts) || 0) * 100) / 100;
-  const freightSourceAccount = String(freightOpts.freightSourceAccount || '').trim();
-  const freightSourceName = String(freightOpts.freightSourceName || '').trim() || 'Pagamento frete';
-  const supplierAccountCode = String(freightOpts.supplierAccountCode || '').trim();
-  const splitFreight = landingCosts > 0 && freightSourceAccount.length > 0;
-  const merchandiseValue = splitFreight
-    ? Math.max(Math.round((amount - landingCosts) * 100) / 100, 0)
-    : amount;
-
-  if (direction === 'IN') {
-    let creditAccount = ACC.OTHER_INCOME;
-    let creditDesc = 'Contrapartida entrada inventário';
-
-    if (ref === 'initial') {
-      creditAccount = ACC.REVALUATION_RESERVE;
-      creditDesc = 'Existências iniciais';
-    } else if (ref === 'purchase') {
-      if (!/^321\d+$/i.test(supplierAccountCode)) {
-        throw new Error('Stock purchase journal requires a supplier leaf account (321xxxxx)');
-      }
-      creditAccount = supplierAccountCode;
-      creditDesc = 'Fornecedores (entrada directa — preferir FC)';
-    } else if (ref === 'transfer' || ref === 'transfer_in') {
-      return [
-        {
-          accountCode: INVENTORY_STOCK_ACCOUNT,
-          description: `Entrada ${docLabel}`,
-          debit: amount,
-          credit: 0,
-        },
-        {
-          accountCode: INVENTORY_STOCK_ACCOUNT,
-          description: `Saída interna ${docLabel}`,
-          debit: 0,
-          credit: amount,
-        },
-      ];
-    } else if (ref === 'correction') {
-      creditDesc = 'Correção inventário';
-    }
-
-    const lines = [];
-    if (merchandiseValue > 0) {
-      lines.push(
-        {
-          accountCode: INVENTORY_MERCHANDISE_ACCOUNT,
-          description: `Entrada mercadorias ${docLabel}`,
-          debit: merchandiseValue,
-          credit: 0,
-        },
-        {
-          accountCode: creditAccount,
-          description: creditDesc,
-          debit: 0,
-          credit: merchandiseValue,
-        },
-      );
-    }
-    if (splitFreight) {
-      lines.push(
-        {
-          accountCode: ACC.FREIGHT_ON_PURCHASES,
-          description: `Frete / transporte ${docLabel}`,
-          debit: landingCosts,
-          credit: 0,
-        },
-        {
-          accountCode: freightSourceAccount,
-          description: `${freightSourceName} — frete ${docLabel}`,
-          debit: 0,
-          credit: landingCosts,
-        },
-      );
-    }
-    if (lines.length > 0) return lines;
-
-    return [
-      {
-        accountCode: INVENTORY_MERCHANDISE_ACCOUNT,
-        description: `Entrada mercadorias ${docLabel}`,
-        debit: amount,
-        credit: 0,
-      },
-      {
-        accountCode: creditAccount,
-        description: creditDesc,
-        debit: 0,
-        credit: amount,
-      },
-    ];
-  }
-
-  const shrinkageAccount = ACC.INVENTORY_SHRINKAGE;
-  let expenseDesc = 'Saída inventário';
-  if (ref === 'damage' || ref === 'expired' || ref === 'loss') {
-    expenseDesc = 'Perdas / avarias inventário';
-  } else if (ref === 'internal_use') {
-    expenseDesc = 'Uso interno';
-  } else if (ref === 'sample') {
-    expenseDesc = 'Amostras';
-  } else if (ref === 'donation') {
-    expenseDesc = 'Donativos';
-  }
-
-  return [
-    {
-      accountCode: shrinkageAccount,
-      description: `${expenseDesc} ${docLabel}`,
-      debit: amount,
-      credit: 0,
-    },
-    {
-      accountCode: INVENTORY_MERCHANDISE_ACCOUNT,
-      description: `Saída mercadorias ${docLabel}`,
-      debit: 0,
-      credit: amount,
-    },
-  ];
 }
 
 /**
@@ -3526,15 +3404,14 @@ async function processPayment(client, paymentData) {
   }
   const entityAccountCode = await getEntityAccountCode(client, entityType, entityId, resolvedEntityName);
 
-  const lines = paymentType === 'receipt'
-    ? [
-        { accountCode: cashAccountCode, description: `Recebimento ${paymentNumber}`, debit: paymentAmount, credit: 0 },
-        { accountCode: entityAccountCode, description: resolvedEntityName, debit: 0, credit: paymentAmount },
-      ]
-    : [
-        { accountCode: entityAccountCode, description: resolvedEntityName, debit: paymentAmount, credit: 0 },
-        { accountCode: cashAccountCode, description: `Pagamento ${paymentNumber}`, debit: 0, credit: paymentAmount },
-      ];
+  const lines = buildPaymentJournalLines({
+    paymentType,
+    amount: paymentAmount,
+    cashAccountCode,
+    entityAccountCode,
+    paymentNumber,
+    entityName: resolvedEntityName,
+  });
 
   await createJournalEntry(client, {
     description: `${paymentType === 'receipt' ? 'Recebimento' : 'Pagamento'} ${paymentNumber} - ${resolvedEntityName}`,

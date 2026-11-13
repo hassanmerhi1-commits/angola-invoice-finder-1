@@ -493,7 +493,29 @@ export default function CaixaManagement() {
     }
 
     const branchId = currentBranch?.id || 'default';
-    const manualTxn = await createCashTransaction(
+    const txnId = `ct_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const glResult = await postCaixaGlEntry({
+      branchId,
+      amount: transactionData.amount,
+      direction: transactionData.type === 'withdrawal' ? 'out' : 'in',
+      counterAccountCode: '452',
+      description: transactionData.description || `Manual movement: ${transactionData.type}`,
+      referenceType: 'manual',
+      referenceId: txnId,
+      createdBy: user?.id || undefined,
+    });
+    if (!glResult.ok) {
+      toast({
+        title: t.caixaUi.toastErrorTitle,
+        description: isBranchCaixaGlMissingError(glResult.error)
+          ? branchCaixaGlMissingText(t, selectedCaixa.branchName)
+          : glResult.error,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    await createCashTransaction(
       selectedCaixa.id,
       branchId,
       transactionData.type,
@@ -505,47 +527,22 @@ export default function CaixaManagement() {
       'manual',
       undefined,
       undefined,
-      undefined
+      undefined,
+      txnId,
     );
 
-    // Update caixa balance
     updateCaixaBalance(
-      selectedCaixa.id, 
-      transactionData.amount, 
+      selectedCaixa.id,
+      transactionData.amount,
       transactionData.type === 'withdrawal' ? 'out' : 'in'
     );
 
-    // Reflect the manual movement in the open session so it affects the end-of-day close.
     const openSession = await getOpenCaixaSession(selectedCaixa.id);
     if (openSession) {
       await updateCaixaSessionTotals(openSession.id, transactionData.amount, transactionData.type);
     }
 
-    // GL: mirror the manual movement on the branch cash account. Withdrawals credit the caixa
-    // (cash out), deposits/adjustments debit it (cash in); the counterpart is 452 "Valores para
-    // depositar". Best-effort so it never blocks the manual entry.
-    const glResult = await postCaixaGlEntry({
-      branchId,
-      amount: transactionData.amount,
-      direction: transactionData.type === 'withdrawal' ? 'out' : 'in',
-      counterAccountCode: '452',
-      description: transactionData.description || `Manual movement: ${transactionData.type}`,
-      referenceType: 'manual',
-      referenceId: manualTxn.id,
-      createdBy: user?.name || t.caixaUi.systemUser,
-    });
-
-    if (!glResult.ok) {
-      toast({
-        title: t.caixaUi.toastErrorTitle,
-        description: isBranchCaixaGlMissingError(glResult.error)
-          ? branchCaixaGlMissingText(t, selectedCaixa.branchName)
-          : glResult.error,
-        variant: 'destructive',
-      });
-    } else {
-      toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.transactionRecorded });
-    }
+    toast({ title: t.caixaUi.toastSuccessTitle, description: t.caixaUi.transactionRecorded });
     setIsTransactionDialogOpen(false);
     setTransactionData(initialTransactionData);
     loadData();

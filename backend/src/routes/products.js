@@ -2742,22 +2742,9 @@ module.exports = function(broadcastTableRaw) {
 
   // Update stock
   router.patch('/:id/stock', requirePermission('inventory_adjust'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { quantityChange } = req.body;
-      
-      const result = await db.query(
-        'UPDATE products SET stock = stock + $1 WHERE id = $2 RETURNING *',
-        [quantityChange, id]
-      );
-
-      invalidateInventoryGridResultCache();
-      await broadcastTable('products');
-      res.json(result.rows[0]);
-    } catch (error) {
-      console.error('[PRODUCTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to update stock' });
-    }
+    res.status(400).json({
+      error: 'Stock só muda com um movimento e o diário. Use o ajuste de stock.',
+    });
   });
 
   // Batch import products (SQLite + PostgreSQL)
