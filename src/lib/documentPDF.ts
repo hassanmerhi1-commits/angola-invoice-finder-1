@@ -437,6 +437,14 @@ function printedSoftwareNumber(): string {
   return match ? `${match[1]}/AGT/${match[2]}` : '';
 }
 
+export function currentSoftwareValidationFooter(): string {
+  return softwareValidationFooter(printedSoftwareNumber());
+}
+
+export async function loadSoftwareValidationFooter(): Promise<string> {
+  return softwareValidationFooter(await resolveSoftwareNumber());
+}
+
 function softwareValidationFooter(number: string): string {
   const stored = String(getCompanySettings().softwareVersion || '').trim();
   const version = !stored || stored === '1.0.0' ? '1.3.8' : stored;

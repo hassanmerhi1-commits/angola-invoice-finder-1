@@ -2150,10 +2150,6 @@ export const api = {
       if (isElectronMode() && shouldTryIpcAfterApiFailure(apiResult)) return ipcDelete('chart_of_accounts', id);
       return apiResult;
     },
-    reseed: () => apiFetch<{ success: boolean; active: number; seeded: number }>(
-      '/chart-of-accounts/reseed',
-      { method: 'POST' },
-    ),
     exportTemplate: () => apiFetch<{
       schema: number;
       kind: string;

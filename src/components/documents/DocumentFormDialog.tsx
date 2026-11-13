@@ -28,6 +28,7 @@ import { formatBranchDisplayName } from '@/lib/branchDisplay';
 import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
 import { digitProductCodeForMatch } from '@/components/inventory/productLineSearch';
 import { getCaixas } from '@/lib/accountingStorage';
+import { caixaChoiceLabel } from '@/lib/freightTreasury';
 import type { Caixa } from '@/types/accounting';
 import { api } from '@/lib/api/client';
 import { isAgtValidated } from '@/lib/agtStatus';
@@ -259,10 +260,12 @@ export function DocumentFormDialog({ open, onOpenChange, documentType, editDocum
   };
 
   const caixaOptionLabel = (caixa: Caixa) => {
-    if (!canPickBranch) return caixa.name;
     const branch = branchOptions.find((b) => b.id === caixa.branchId);
     const branchLabel = caixa.branchName || (branch ? formatBranchDisplayName(branch) : '');
-    return branchLabel ? `${branchLabel} — ${caixa.name}` : caixa.name;
+    return caixaChoiceLabel(
+      { ...caixa, branchName: branchLabel },
+      { branch: canPickBranch && !!branchLabel },
+    );
   };
 
   // Reset form when opening

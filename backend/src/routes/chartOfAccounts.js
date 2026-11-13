@@ -390,18 +390,6 @@ module.exports = function(broadcastTable) {
     }
   });
 
-  // Reset the chart of accounts to the Angola PGC (novo com IVA) — admin only (destructive).
-  router.post('/reseed', requirePermission('admin_settings'), async (req, res) => {
-    try {
-      const result = await db.resetChartOfAccountsToPgc();
-      await broadcastTable('chart_of_accounts');
-      res.json({ success: true, ...result });
-    } catch (error) {
-      console.error('[CHART OF ACCOUNTS ERROR]', error);
-      res.status(500).json({ error: 'Failed to reset chart of accounts' });
-    }
-  });
-
   // Find-or-create one supplier leaf (321xxxxx) — used by purchase Save.
   // Never download the full chart for a single ensure (Tailscale).
   router.post('/ensure-supplier', requirePermission('purchase_create', 'accounting_create', 'admin_settings'), async (req, res) => {

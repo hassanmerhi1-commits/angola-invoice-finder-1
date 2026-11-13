@@ -30,7 +30,7 @@ import { CLIENTS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage';
 import {
   Search, Edit2, Trash2, RefreshCw,
   FileText, Receipt, CreditCard, Banknote,
-  ChevronRight, ChevronDown, Printer, Download, Upload, Eye, RotateCcw, Plus, X, FolderPlus
+  ChevronRight, ChevronDown, Printer, Download, Upload, Eye, Plus, X, FolderPlus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { readFocusId, readNexorSearchFocus, readAppSearchParams, scrollToNexorRow } from '@/lib/searchFocus';
@@ -919,23 +919,8 @@ export default function ChartOfAccounts() {
     }
   };
 
-  const [isReseeding, setIsReseeding] = useState(false);
   const [templateBusy, setTemplateBusy] = useState(false);
   const templateInputRef = useRef<HTMLInputElement>(null);
-  const handleResetToPgc = async () => {
-    if (!window.confirm(t.chartOfAccountsUi.resetPgcConfirm)) return;
-    setIsReseeding(true);
-    try {
-      const response = await api.chartOfAccounts.reseed();
-      if (response.error) throw new Error(response.error);
-      await refetch();
-      toast.success(t.chartOfAccountsUi.resetPgcSuccess);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t.chartOfAccountsUi.resetPgcError);
-    } finally {
-      setIsReseeding(false);
-    }
-  };
 
   const handleExportTemplate = async () => {
     setTemplateBusy(true);
@@ -1119,9 +1104,6 @@ export default function ChartOfAccounts() {
         <div className="w-px h-5 bg-border mx-1" />
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={expandAll}>{t.chartOfAccountsUi.expand}</Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={collapseAll}>{t.chartOfAccountsUi.collapse}</Button>
-        <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={handleResetToPgc} disabled={isReseeding} title={t.chartOfAccountsUi.resetPgcTooltip}>
-          <RotateCcw className={cn('w-3 h-3', isReseeding && 'animate-spin')} /> {t.chartOfAccountsUi.resetPgc}
-        </Button>
         <Button variant="outline" size="sm" className={NEXOR_TOOLBAR_BTN_SM} onClick={() => void handleExportTemplate()} disabled={templateBusy} title={t.chartOfAccountsUi.templateExportTooltip}>
           <Download className="w-3 h-3" /> {t.chartOfAccountsUi.templateExport}
         </Button>

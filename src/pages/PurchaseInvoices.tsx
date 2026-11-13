@@ -20,6 +20,7 @@ import { useTableRefreshListener } from '@/hooks/useRealtimeSyncBridge';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList, isCachedListFresh } from '@/lib/listCache';
 import { recordPurchaseInvoicePrint } from '@/lib/recordPrintAudit';
+import { currentSoftwareValidationFooter, loadSoftwareValidationFooter } from '@/lib/documentPDF';
 import { DEFAULT_VAT_RATE } from '@/lib/taxUtils';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -809,6 +810,17 @@ function InvoiceViewPage({
   const { t, language } = useTranslation();
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const [previewQrCodeUrl, setPreviewQrCodeUrl] = useState<string | null>(null);
+  const [softwareLine, setSoftwareLine] = useState(currentSoftwareValidationFooter);
+
+  useEffect(() => {
+    let active = true;
+    void loadSoftwareValidationFooter().then((line) => {
+      if (active) setSoftwareLine(line);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!invoice || isPurchaseInvoiceUnposted(invoice.status)) {
@@ -1048,7 +1060,7 @@ function InvoiceViewPage({
         </table>
 
         <div class="bottom">
-          <div style="font-size:8px;margin-bottom:2mm">D/IM. Processado por programa validado 396/AGT/2023 - ${escapeHtml(companyName)}</div>
+          <div style="font-size:8px;margin-bottom:2mm">${escapeHtml(await loadSoftwareValidationFooter())}</div>
           <div class="tax-and-total">
             <div>
               <div class="tax-title">RESUMO DE IMPOSTOS</div>
@@ -1288,7 +1300,7 @@ function InvoiceViewPage({
             </table>
 
             <div className="mt-[96mm]">
-              <div className="text-[8px] mb-1">D/IM. Processado por programa validado 396/AGT/2023 - {companyName}</div>
+              <div className="text-[8px] mb-1">{softwareLine}</div>
               <div className="grid grid-cols-[1fr_66mm] gap-16">
                 <div>
                   <div className="font-bold border-b border-black mb-1">RESUMO DE IMPOSTOS</div>

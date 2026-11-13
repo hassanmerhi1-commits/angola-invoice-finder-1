@@ -129,7 +129,11 @@ export function GlobalContextMenu() {
       setMenu({ x, y, items });
     };
 
-    const onPointerDown = () => close();
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-nexor-context-menu]')) return;
+      close();
+    };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
@@ -150,6 +154,7 @@ export function GlobalContextMenu() {
 
   return createPortal(
     <div
+      data-nexor-context-menu=""
       className="fixed z-[200] min-w-[200px] max-w-[280px] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95"
       style={{ left: menu.x, top: menu.y }}
       role="menu"

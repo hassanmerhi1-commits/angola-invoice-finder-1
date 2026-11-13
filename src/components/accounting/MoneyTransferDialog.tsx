@@ -29,6 +29,7 @@ import {
   getBankAccounts,
   executeMoneyTransfer,
 } from '@/lib/accountingStorage';
+import { caixaChoiceLabel } from '@/lib/freightTreasury';
 import type { Caixa, BankAccount } from '@/types/accounting';
 
 interface MoneyTransferDialogProps {
@@ -86,7 +87,7 @@ export function MoneyTransferDialog({
         .map(c => ({
           id: c.id,
           type: 'caixa' as AccountType,
-          name: c.name,
+          name: caixaChoiceLabel(c),
           balance: c.currentBalance,
           status: c.status,
         }));
@@ -110,7 +111,7 @@ export function MoneyTransferDialog({
           options.push({
             id: c.id,
             type: 'caixa',
-            name: c.name,
+            name: caixaChoiceLabel(c),
             balance: c.currentBalance,
             status: c.status,
           });

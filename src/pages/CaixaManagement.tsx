@@ -23,6 +23,7 @@ import {
   postCaixaGlEntry
 } from '@/lib/accountingStorage';
 import { Caixa, CaixaSession, CashTransaction } from '@/types/accounting';
+import { caixaChoiceLabel } from '@/lib/freightTreasury';
 import { MoneyTransferDialog } from '@/components/accounting/MoneyTransferDialog';
 import { format } from 'date-fns';
 import { pt, enUS } from 'date-fns/locale';
@@ -732,7 +733,7 @@ export default function CaixaManagement() {
                   <SelectContent>
                     {caixas.map((caixa) => (
                       <SelectItem key={caixa.id} value={caixa.id}>
-                        {caixa.name}
+                        {caixaChoiceLabel(caixa)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -845,9 +846,9 @@ export default function CaixaManagement() {
                         <Wallet className={`w-5 h-5 ${isOpen ? 'text-primary' : 'text-muted-foreground'}`} />
                       </div>
                       <div>
-                        <CardTitle className="text-base">{caixa.name}</CardTitle>
+                        <CardTitle className="text-base">{caixaChoiceLabel(caixa)}</CardTitle>
                         <CardDescription className="text-xs">
-                          {caixa.branchName}{caixa.glAccountCode ? ` · ${caixa.glAccountCode}` : ''}
+                          {caixa.branchName}
                         </CardDescription>
                       </div>
                     </div>

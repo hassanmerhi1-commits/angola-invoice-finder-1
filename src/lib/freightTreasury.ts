@@ -13,11 +13,22 @@ export type ResolvedFreightTreasury = {
 
 const BANK_GL = '431';
 
+/** Account number first, so two drawers with the same name are not mixed up. */
+export function caixaChoiceLabel(
+  caixa: { name?: string; branchName?: string; glAccountCode?: string },
+  options?: { branch?: boolean; balance?: string },
+): string {
+  const code = String(caixa.glAccountCode || '').trim();
+  const name = String(caixa.name || '').trim();
+  const branch = options?.branch ? String(caixa.branchName || '').trim() : '';
+  const who = branch ? `${branch} — ${name}` : name;
+  const head = code ? `${code} · ${who}` : who;
+  return options?.balance ? `${head} (${options.balance} Kz)` : head;
+}
+
 export function formatFreightCaixaLabel(c: Caixa, locale: string, withBranch = false): string {
   const balance = Number(c.currentBalance || 0).toLocaleString(locale);
-  const branch = String(c.branchName || '').trim();
-  if (withBranch && branch) return `${branch} — ${c.name} (${balance} Kz)`;
-  return `${c.name} (${balance} Kz)`;
+  return caixaChoiceLabel(c, { branch: withBranch, balance });
 }
 
 export function formatFreightBankLabel(a: BankAccount, withBranch = false): string {

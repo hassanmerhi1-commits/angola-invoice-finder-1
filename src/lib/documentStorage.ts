@@ -22,26 +22,71 @@ import {
 import { isPurchaseInvoiceUnposted } from '@/lib/purchaseInvoiceDraft';
 import type { CreditNote, DebitNote, TransportDocument } from '@/types/erp';
 import { isFiscallyImmutable, allowsDueDateOnlyEdit } from '@/lib/fiscalImmutability';
-import { timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
+import { BUSINESS_TIME_ZONE, timestampLocalDate, timestampLocalTime } from '@/lib/workingDayAccess';
 
 const STORAGE_KEY = 'kwanzaerp_documents';
 
+/** Africa/Luanda wall clock → epoch ms. The list clock is this zone, not the PC zone. */
+function luandaWallClockMs(day: string, time: string): number {
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  const clock = /^(\d{2}):(\d{2})(?::(\d{2}))?/.exec(time);
+  if (!date || !clock) return NaN;
+  const utcGuess = Date.UTC(
+    Number(date[1]),
+    Number(date[2]) - 1,
+    Number(date[3]),
+    Number(clock[1]),
+    Number(clock[2]),
+    Number(clock[3] || 0),
+  );
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIME_ZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(utcGuess));
+  const pick = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+  let hour = pick('hour');
+  if (hour === 24) hour = 0;
+  const asZone = Date.UTC(pick('year'), pick('month') - 1, pick('day'), hour, pick('minute'), pick('second'));
+  return utcGuess - (asZone - utcGuess);
+}
+
+/** Clock printed on the row. 00:00 is a missing time, same as the list hiding it. */
+function displayedIssueClock(doc: ERPDocument): { day: string; time: string } {
+  const day = timestampLocalDate(doc.issueDate) || String(doc.issueDate || '').slice(0, 10);
+  const stored = String(doc.issueTime || '').trim();
+  const normalize = (raw: string) => (raw.length >= 8 ? raw.slice(0, 8) : `${raw.slice(0, 5)}:00`);
+  if (/^\d{2}:\d{2}/.test(stored) && stored.slice(0, 5) !== '00:00') {
+    return { day, time: normalize(stored) };
+  }
+  const fromCreated = timestampLocalTime(doc.createdAt);
+  if (/^\d{2}:\d{2}/.test(fromCreated) && fromCreated.slice(0, 5) !== '00:00') {
+    return { day: /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : timestampLocalDate(doc.createdAt), time: fromCreated };
+  }
+  return { day, time: '' };
+}
+
 function documentIssueMs(doc: ERPDocument): number {
+  const { day, time } = displayedIssueClock(doc);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day) && time) {
+    const ms = luandaWallClockMs(day, time);
+    if (Number.isFinite(ms)) return ms;
+  }
   const created = Date.parse(String(doc.createdAt || ''));
   if (Number.isFinite(created) && created > 0) return created;
-  const day = timestampLocalDate(doc.issueDate) || String(doc.issueDate || '').slice(0, 10);
-  const timeRaw = String(doc.issueTime || '').trim();
-  const time = /^\d{2}:\d{2}/.test(timeRaw)
-    ? (timeRaw.length >= 8 ? timeRaw.slice(0, 8) : `${timeRaw.slice(0, 5)}:00`)
-    : '00:00:00';
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-    const ms = Date.parse(`${day}T${time}`);
+    const ms = luandaWallClockMs(day, '00:00:00');
     if (Number.isFinite(ms)) return ms;
   }
   return 0;
 }
 
-/** Newest issued first; invoice number is the tie-breaker so FT/FR stay in sequence. */
+/** Newest clock on the row first. Invoice number breaks a tie so FT/FR stay in sequence. */
 export function compareDocumentsByIssueDesc(a: ERPDocument, b: ERPDocument): number {
   const dt = documentIssueMs(b) - documentIssueMs(a);
   if (dt !== 0) return dt;

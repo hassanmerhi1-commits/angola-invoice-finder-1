@@ -36,6 +36,7 @@ import { OPEN_ITEMS_CHANGED_EVENT, SUPPLIERS_CHANGED_EVENT } from '@/lib/storage
 import { isOpenItemDebit, signedOpenItemBalance } from '@/lib/openItems';
 import { userHasPermission } from '@/lib/permissions';
 import { getCaixas, getBankAccounts, invalidateCaixaListCache } from '@/lib/accountingStorage';
+import { caixaChoiceLabel } from '@/lib/freightTreasury';
 import { ensureBackendAuthToken, isJwtAuthToken } from '@/lib/api/client';
 import type { Caixa, BankAccount } from '@/types/accounting';
 
@@ -1036,14 +1037,10 @@ export default function Payments() {
                       <SelectItem value="__none__" disabled>{t.paymentsUi.noCaixas}</SelectItem>
                     ) : (
                       caixas.map((c) => {
-                        const balance = Number(c.currentBalance || 0).toLocaleString(locale);
-                        const branch = String(c.branchName || '').trim();
-                        const label = branch && treasuryAllBranches
-                          ? t.paymentsUi.treasuryCaixaOption
-                            .replace('{branch}', branch)
-                            .replace('{name}', c.name)
-                            .replace('{balance}', balance)
-                          : `${c.name} (${balance} Kz)`;
+                        const label = caixaChoiceLabel(c, {
+                          branch: treasuryAllBranches && !!String(c.branchName || '').trim(),
+                          balance: Number(c.currentBalance || 0).toLocaleString(locale),
+                        });
                         return (
                           <SelectItem key={c.id} value={c.id}>
                             {label}

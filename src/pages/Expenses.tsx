@@ -20,7 +20,7 @@ import {
   invalidateBankListCache,
   createCaixa,
 } from '@/lib/accountingStorage';
-import { Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
+import { Account, Expense, ExpenseCategory, EXPENSE_CATEGORIES, Caixa, BankAccount } from '@/types/accounting';
 import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { resolveAccountDisplayName } from '@/lib/chartOfAccountsDisplay';
 import {
@@ -29,6 +29,7 @@ import {
   defaultExpenseAccountCode,
   expensePostingAccounts,
 } from '@/lib/expenseAccountPick';
+import { caixaChoiceLabel } from '@/lib/freightTreasury';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { enUS } from 'date-fns/locale';
@@ -65,6 +66,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -85,7 +87,7 @@ import {
   Wallet,
   Building,
   Search,
-  Filter
+  Filter,
 } from 'lucide-react';
 
 const STATUS_CONFIG: Record<Expense['status'], { labelKey: 'statusDraft' | 'statusPendingApproval' | 'statusApproved' | 'statusPaid' | 'statusRejected'; variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: React.ElementType }> = {
@@ -128,6 +130,151 @@ interface ExpenseFormData {
   invoiceNumber: string;
   notes: string;
   glAccountCode: string;
+}
+
+function accountSearchText(value: string): string {
+  return value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+}
+
+function ExpenseAccountField({
+  accounts,
+  value,
+  loading,
+  onChange,
+}: {
+  accounts: Account[];
+  value: string;
+  loading: boolean;
+  onChange: (code: string) => void;
+}) {
+  const { t, language } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const selected = accounts.find((account) => account.code === value);
+  const selectedLabel = selected
+    ? `${selected.code} ${resolveAccountDisplayName(selected, language, t)}`
+    : '';
+  const placeholder = loading && accounts.length === 0
+    ? t.expensesUi.chartAccountLoading
+    : t.expensesUi.chartAccountPlaceholder;
+  const filtered = useMemo(() => {
+    const q = accountSearchText(query.trim());
+    if (!q) return accounts;
+    return accounts.filter((account) => {
+      const name = resolveAccountDisplayName(account, language, t);
+      return accountSearchText(`${account.code} ${name}`).includes(q);
+    });
+  }, [accounts, query, language, t]);
+
+  useEffect(() => {
+    setHighlight(0);
+  }, [query]);
+
+  useEffect(() => {
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-account-index="${highlight}"]`);
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [highlight, open]);
+
+  const pick = (code: string) => {
+    onChange(code);
+    setQuery('');
+    setEditing(false);
+    setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <Input
+          value={editing ? query : selectedLabel}
+          disabled={loading && accounts.length === 0}
+          placeholder={placeholder}
+          className="h-10"
+          autoComplete="off"
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
+          onFocus={(event) => {
+            setQuery('');
+            setEditing(false);
+            setOpen(true);
+            event.currentTarget.select();
+          }}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setEditing(true);
+            setOpen(true);
+          }}
+          onBlur={() => {
+            window.setTimeout(() => {
+              setOpen(false);
+              setEditing(false);
+              setQuery('');
+            }, 120);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setOpen(true);
+              setHighlight((index) => Math.min(index + 1, Math.max(filtered.length - 1, 0)));
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setHighlight((index) => Math.max(index - 1, 0));
+            } else if (e.key === 'Enter' && open && filtered[highlight]) {
+              e.preventDefault();
+              pick(filtered[highlight].code);
+            } else if (e.key === 'Escape') {
+              setOpen(false);
+              setQuery('');
+            }
+          }}
+        />
+      </PopoverAnchor>
+      <PopoverContent
+        align="start"
+        data-expense-account-list=""
+        className="w-[var(--radix-popover-trigger-width)] p-0"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onInteractOutside={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest('input')) event.preventDefault();
+        }}
+      >
+        <div ref={listRef} className="max-h-60 overflow-y-auto p-1">
+          {filtered.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground">{t.common.noResults}</p>
+          ) : (
+            filtered.map((account, index) => {
+              const name = resolveAccountDisplayName(account, language, t);
+              return (
+                <button
+                  key={account.id}
+                  type="button"
+                  data-account-index={index}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
+                    index === highlight ? 'bg-accent' : 'hover:bg-accent/50',
+                  )}
+                  onMouseEnter={() => setHighlight(index)}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    pick(account.code);
+                  }}
+                >
+                  <span className="w-16 shrink-0 font-mono">{account.code}</span>
+                  <span className="min-w-0 flex-1 truncate">{name}</span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 const initialFormData: ExpenseFormData = {
@@ -1045,7 +1192,13 @@ export default function Expenses() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="flex max-h-[90vh] w-[min(42rem,96vw)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl">
+        <DialogContent
+          className="flex max-h-[90vh] w-[min(42rem,96vw)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:rounded-xl"
+          onInteractOutside={(event) => {
+            const target = event.target as HTMLElement | null;
+            if (target?.closest('[data-expense-account-list]')) event.preventDefault();
+          }}
+        >
           <DialogHeader className="shrink-0 space-y-0 border-b px-6 py-4 text-left">
             <div className="flex items-start justify-between gap-4 pr-8">
               <div className="min-w-0 space-y-1">
@@ -1175,28 +1328,12 @@ export default function Expenses() {
 
               <div className="space-y-1.5">
                 <Label>{t.expensesUi.chartAccount} *</Label>
-                <Select
-                  value={formData.glAccountCode || undefined}
-                  onValueChange={(code) => setFormData({ ...formData, glAccountCode: code })}
-                  disabled={chartLoading && postingAccounts.length === 0}
-                >
-                  <SelectTrigger className="h-10">
-                    <SelectValue placeholder={chartLoading ? t.expensesUi.chartAccountLoading : t.expensesUi.chartAccountPlaceholder} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {postingAccounts.length === 0 ? (
-                      <SelectItem value="__none__" disabled>
-                        {chartLoading ? t.expensesUi.chartAccountLoading : t.expensesUi.chartAccountPlaceholder}
-                      </SelectItem>
-                    ) : (
-                      postingAccounts.map((account) => (
-                        <SelectItem key={account.id} value={account.code}>
-                          {account.code} {resolveAccountDisplayName(account, language, t)}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
+                <ExpenseAccountField
+                  accounts={postingAccounts}
+                  value={formData.glAccountCode}
+                  loading={chartLoading}
+                  onChange={(code) => setFormData({ ...formData, glAccountCode: code })}
+                />
                 <p className="text-xs text-muted-foreground">{moneyLeavesLabel}</p>
               </div>
 
@@ -1242,16 +1379,10 @@ export default function Expenses() {
                         </SelectItem>
                       ) : (
                         caixas.map(c => {
-                          const balance = c.currentBalance.toLocaleString(uiLocale);
-                          const branch = String(c.branchName || '').trim();
-                          const label = branch && treasuryAllBranches
-                            ? t.expensesUi.treasuryCaixaOption
-                              .replace('{branch}', branch)
-                              .replace('{name}', c.name)
-                              .replace('{balance}', balance)
-                            : t.expensesUi.cashWithBalance
-                              .replace('{name}', c.name)
-                              .replace('{balance}', balance);
+                          const label = caixaChoiceLabel(c, {
+                            branch: treasuryAllBranches && !!String(c.branchName || '').trim(),
+                            balance: c.currentBalance.toLocaleString(uiLocale),
+                          });
                           return (
                             <SelectItem key={c.id} value={c.id}>
                               {label}
