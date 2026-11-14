@@ -2336,8 +2336,16 @@ export function useCategories() {
 
   const saveCategory = useCallback(async (category: Category) => {
     const result = await api.categories.update(category.id, category);
-    if (!result.data) await storage.saveCategory(category);
+    if (result.data) {
+      await refreshCategories();
+      return mapCategory(result.data);
+    }
+    if (!isDemoMode()) {
+      throw new Error(result.error || 'Failed to update category');
+    }
+    await storage.saveCategory(category);
     await refreshCategories();
+    return category;
   }, [refreshCategories]);
 
   const deleteCategory = useCallback(async (categoryId: string) => {

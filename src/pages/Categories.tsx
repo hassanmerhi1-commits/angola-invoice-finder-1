@@ -191,16 +191,28 @@ export default function Categories() {
     };
 
     if (selectedCategory) {
-      saveCategory({
+      void saveCategory({
         ...selectedCategory,
         ...categoryData,
         updatedAt: new Date().toISOString(),
-      });
-      toast({
-        title: t.categoriesUi.updatedTitle,
-        description: t.categoriesUi.updatedDesc.replace('{name}', formData.name),
-      });
-      setDialogOpen(false);
+      })
+        .then(() => {
+          toast({
+            title: t.categoriesUi.updatedTitle,
+            description: t.categoriesUi.updatedDesc.replace('{name}', formData.name),
+          });
+          setDialogOpen(false);
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : '';
+          toast({
+            title: t.categoriesUi.toastErrorTitle,
+            description: message === 'duplicate_name'
+              ? t.categoriesUi.duplicateName
+              : (message || t.productFormUi.categoryCreateFailed),
+            variant: 'destructive',
+          });
+        });
       return;
     }
 

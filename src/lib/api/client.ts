@@ -1471,6 +1471,15 @@ export const api = {
       }
       return ipcDelete('categories', id);
     },
+    apply: (body: {
+      action: 'rename' | 'delete' | 'assign';
+      name: string;
+      nextName?: string;
+      skus?: string[];
+    }) => apiFetch<{ ok: boolean; name?: string; updated?: number; skus?: number; productCount?: number }>(
+      '/categories/apply',
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
   },
 
   // Suppliers

@@ -46,6 +46,7 @@ import {
   ClipboardList,
   Table2,
   BadgePercent,
+  Tags,
 } from 'lucide-react';
 import { AdvancedDataGrid } from '@/components/inventory/AdvancedDataGrid';
 import { digitProductCodeForMatch, pickBestProductSearchHit, sortProductSearchResults } from '@/components/inventory/productLineSearch';
@@ -53,6 +54,7 @@ import { ShelfLabelPrintDialog } from '@/components/inventory/ShelfLabelPrintDia
 import { BulkTierPricingDialog } from '@/components/inventory/BulkTierPricingDialog';
 import { BulkPriceCostDialog } from '@/components/inventory/BulkPriceCostDialog';
 import { BulkIvaDialog } from '@/components/inventory/BulkIvaDialog';
+import { InventoryCategoryDialog } from '@/components/inventory/InventoryCategoryDialog';
 import { ProductDetailDialog } from '@/components/inventory/ProductDetailDialog';
 import { BranchStockDetail, prefetchStockBySku } from '@/components/inventory/BranchStockDetail';
 import {
@@ -508,6 +510,7 @@ export default function Inventory() {
   const [bulkTierDialogOpen, setBulkTierDialogOpen] = useState(false);
   const [bulkPriceCostOpen, setBulkPriceCostOpen] = useState(false);
   const [bulkIvaOpen, setBulkIvaOpen] = useState(false);
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [adjustmentHistoryOpen, setAdjustmentHistoryOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('lista');
   const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => new Set(['lista']));
@@ -1640,6 +1643,16 @@ export default function Inventory() {
           variant="outline"
           size="sm"
           className={NEXOR_TOOLBAR_BTN_SM}
+          onClick={() => setCategoryManagerOpen(true)}
+          title={t.inventoryPageUi.categoryManager.title}
+        >
+          <Tags className="w-3 h-3" />
+          {t.inventoryPageUi.categoryManager.button}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={NEXOR_TOOLBAR_BTN_SM}
           onClick={() => setBulkPriceCostOpen(true)}
           title={t.inventoryPageUi.massPrice.title}
         >
@@ -2197,6 +2210,17 @@ export default function Inventory() {
       <BulkTierPricingDialog
         open={bulkTierDialogOpen}
         onOpenChange={setBulkTierDialogOpen}
+        onApplied={() => {
+          window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: {} }));
+          void reloadInventoryList();
+          if (canSwitchBranch) void loadPerBranchBreakdown();
+        }}
+      />
+
+      <InventoryCategoryDialog
+        open={categoryManagerOpen}
+        onOpenChange={setCategoryManagerOpen}
+        products={displayProducts}
         onApplied={() => {
           window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: {} }));
           void reloadInventoryList();
