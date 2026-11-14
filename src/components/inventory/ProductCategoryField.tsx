@@ -1,24 +1,22 @@
-import { useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useCategories } from '@/hooks/useERP';
 import { useTranslation } from '@/i18n';
 import {
+  inventoryFoodCategoryLabel,
   mergeInventoryFoodCategorySelectOptions,
   resolveProductCategoryName,
+  type CategorySelectOption,
 } from '@/lib/inventoryFoodCategories';
 import { cn } from '@/lib/utils';
 
-const NEW_VALUE = '__nexor_new_category__';
+function optionMatches(opt: CategorySelectOption, text: string): boolean {
+  const k = text.trim().toLowerCase();
+  if (!k) return false;
+  return opt.name.toLowerCase() === k || opt.label.toLowerCase() === k;
+}
 
 export function ProductCategoryField({
   value,
@@ -33,10 +31,14 @@ export function ProductCategoryField({
 }) {
   const { t, language } = useTranslation();
   const { toast } = useToast();
-  const { categories, createCategory } = useCategories();
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
+  const { categories, createCategory, refreshCategories } = useCategories();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
+  const focusedRef = useRef(false);
+  const skipBlurRef = useRef(false);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   const activeCategories = useMemo(() => categories.filter((c) => c.isActive), [categories]);
   const options = useMemo(
@@ -44,23 +46,47 @@ export function ProductCategoryField({
     [activeCategories, language],
   );
   const selected = resolveProductCategoryName(value, activeCategories, language);
+  const selectedLabel = selected ? inventoryFoodCategoryLabel(selected, language) : '';
 
-  const startCreate = () => {
-    setNewName('');
-    setCreating(true);
+  useEffect(() => {
+    void refreshCategories();
+  }, [refreshCategories]);
+
+  useEffect(() => {
+    if (focusedRef.current || saving) return;
+    setDraft(selectedLabel);
+  }, [selectedLabel, saving]);
+
+  const filtered = useMemo(() => {
+    const q = draft.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((opt) =>
+      opt.label.toLowerCase().includes(q) || opt.name.toLowerCase().includes(q),
+    );
+  }, [draft, options]);
+
+  const exact = options.find((opt) => optionMatches(opt, draft));
+  const showCreate = draft.trim().length > 0 && !exact;
+
+  const pick = (opt: CategorySelectOption) => {
+    onChange(opt.name);
+    setDraft(opt.label);
+    setOpen(false);
   };
 
-  const saveNew = async () => {
-    const name = newName.replace(/\s+/g, ' ').trim();
-    if (!name) {
-      toast({ title: t.categoriesUi.toastErrorTitle, description: t.categoriesUi.nameRequired, variant: 'destructive' });
+  const saveNew = async (raw: string) => {
+    const name = raw.replace(/\s+/g, ' ').trim();
+    if (!name || saving) return;
+    const match = options.find((opt) => optionMatches(opt, name));
+    if (match) {
+      pick(match);
       return;
     }
-    const duplicate = categories.some((c) => c.name.toLowerCase() === name.toLowerCase());
-    if (duplicate) {
-      toast({ title: t.categoriesUi.toastErrorTitle, description: t.categoriesUi.duplicateName, variant: 'destructive' });
-      onChange(name);
-      setCreating(false);
+    const already = categories.find((c) => c.name.toLowerCase() === name.toLowerCase() && c.isActive);
+    if (already) {
+      onChange(already.name);
+      setDraft(inventoryFoodCategoryLabel(already.name, language));
+      setOpen(false);
       return;
     }
     setSaving(true);
@@ -74,8 +100,8 @@ export function ProductCategoryField({
       });
       const savedName = String(created?.name || name).replace(/\s+/g, ' ').trim();
       onChange(savedName);
-      setCreating(false);
-      setNewName('');
+      setDraft(inventoryFoodCategoryLabel(savedName, language));
+      setOpen(false);
       toast({
         title: t.categoriesUi.createdTitle,
         description: t.categoriesUi.createdDesc.replace('{name}', savedName),
@@ -91,82 +117,108 @@ export function ProductCategoryField({
     }
   };
 
+  const commit = (raw: string) => {
+    const name = raw.replace(/\s+/g, ' ').trim();
+    if (!name) {
+      setDraft(selectedLabel);
+      setOpen(false);
+      return;
+    }
+    const match = options.find((opt) => optionMatches(opt, name));
+    if (match) {
+      pick(match);
+      return;
+    }
+    void saveNew(name);
+  };
+
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-1.5">
-        <Select
-          value={selected}
-          onValueChange={(next) => {
-            if (next === NEW_VALUE) {
-              startCreate();
-              return;
-            }
-            onChange(next);
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <Input
+          value={draft}
+          disabled={saving}
+          placeholder={t.productFormUi.categoryPlaceholder}
+          className={cn('w-full text-foreground caret-foreground', triggerClassName)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setOpen(true);
           }}
-        >
-          <SelectTrigger className={cn('min-w-0 flex-1', triggerClassName)}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className={cn('max-h-[min(60vh,320px)]', contentClassName)}>
-            <SelectItem value={NEW_VALUE}>
-              <span className="flex items-center gap-1.5 text-primary">
-                <Plus className="h-3.5 w-3.5" />
-                {t.productFormUi.newCategory}
-              </span>
-            </SelectItem>
-            {options.map((opt) => {
-              const cat = activeCategories.find((c) => c.id === opt.key);
-              return (
-                <SelectItem key={opt.key} value={opt.name}>
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-3 w-3 shrink-0 rounded-full"
-                      style={{ backgroundColor: cat?.color || '#6b7280' }}
-                    />
-                    {opt.label}
-                  </div>
-                </SelectItem>
-              );
-            })}
-          </SelectContent>
-        </Select>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className={cn('shrink-0', triggerClassName?.includes('h-8') ? 'h-8 w-8' : 'h-10 w-10')}
-          title={t.productFormUi.newCategory}
-          onClick={startCreate}
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
-      </div>
-      {creating ? (
-        <div className="space-y-1.5">
-          <Input
-            autoFocus
-            value={newName}
-            placeholder={t.productFormUi.newCategoryPlaceholder}
-            className="h-9 w-full min-w-0 px-3 text-sm text-foreground bg-background caret-foreground"
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void saveNew();
+          onFocus={() => {
+            focusedRef.current = true;
+            setOpen(true);
+          }}
+          onBlur={() => {
+            focusedRef.current = false;
+            window.setTimeout(() => {
+              if (skipBlurRef.current) {
+                skipBlurRef.current = false;
+                return;
               }
-              if (e.key === 'Escape') setCreating(false);
-            }}
-          />
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button type="button" size="sm" className="h-8 shrink-0" disabled={saving} onClick={() => void saveNew()}>
-              {t.productFormUi.createCategory}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" className="h-8 shrink-0" disabled={saving} onClick={() => setCreating(false)}>
-              {t.common.cancel}
-            </Button>
-          </div>
+              if (focusedRef.current) return;
+              const raw = draftRef.current.replace(/\s+/g, ' ').trim();
+              if (!raw || raw.toLowerCase() === selectedLabel.toLowerCase() || raw.toLowerCase() === selected.toLowerCase()) {
+                setDraft(selectedLabel);
+                return;
+              }
+              commit(draftRef.current);
+            }, 120);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit(draft);
+            }
+            if (e.key === 'Escape') {
+              setDraft(selectedLabel);
+              setOpen(false);
+            }
+          }}
+        />
+      </PopoverAnchor>
+      <PopoverContent
+        align="start"
+        className={cn('z-[80] w-[var(--radix-popover-trigger-width)] p-0', contentClassName)}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <div className="max-h-[min(60vh,240px)] overflow-y-auto py-1">
+          {filtered.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                skipBlurRef.current = true;
+                pick(opt);
+              }}
+            >
+              <span
+                className="h-3 w-3 shrink-0 rounded-full"
+                style={{ backgroundColor: activeCategories.find((c) => c.id === opt.key)?.color || '#6b7280' }}
+              />
+              {opt.label}
+            </button>
+          ))}
+          {showCreate ? (
+            <button
+              type="button"
+              className="w-full px-2 py-1.5 text-left text-sm text-primary hover:bg-accent"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                skipBlurRef.current = true;
+                void saveNew(draft);
+              }}
+            >
+              {t.productFormUi.createCategory}: {draft.trim()}
+            </button>
+          ) : null}
+          {!filtered.length && !showCreate ? (
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">{t.productFormUi.categoryPlaceholder}</p>
+          ) : null}
         </div>
-      ) : null}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }

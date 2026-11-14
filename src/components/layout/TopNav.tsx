@@ -429,7 +429,7 @@ export function TopNav({ user, branches, currentBranch, onBranchChange, onLogout
           handleToolbarNew();
           return;
         case 'purchaseInvoice':
-          navigate('/purchase-orders');
+          navigate('/purchase-invoices');
           return;
         case 'journalEntry':
           navigate('/journals', { state: { openJournalCreate: true } });

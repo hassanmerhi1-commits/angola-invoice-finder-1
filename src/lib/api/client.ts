@@ -1438,21 +1438,38 @@ export const api = {
 
   // Categories
   categories: {
-    list: () => {
-      if (isElectronMode()) return ipcGetAll('categories');
-      return apiFetch<any[]>('/categories');
+    list: async () => {
+      const apiResult = await apiFetch<any[]>('/categories');
+      if (apiResult.data !== undefined || !isElectronMode() || !shouldTryIpcAfterApiFailure(apiResult)) {
+        return apiResult;
+      }
+      return ipcGetAll('categories');
     },
-    create: (data: any) => {
-      if (isElectronMode()) return ipcInsert('categories', { id: generateId(), ...data, created_at: new Date().toISOString() });
-      return apiFetch<any>('/categories', { method: 'POST', body: JSON.stringify(data) });
+    create: async (data: any) => {
+      const apiResult = await apiFetch<any>('/categories', { method: 'POST', body: JSON.stringify(data) });
+      if (apiResult.data !== undefined || !isElectronMode() || !shouldTryIpcAfterApiFailure(apiResult)) {
+        return apiResult;
+      }
+      return ipcInsert('categories', {
+        id: generateId(),
+        ...data,
+        is_active: data.isActive !== false,
+        created_at: new Date().toISOString(),
+      });
     },
-    update: (id: string, data: any) => {
-      if (isElectronMode()) return ipcUpdate('categories', id, data);
-      return apiFetch<any>(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    update: async (id: string, data: any) => {
+      const apiResult = await apiFetch<any>(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      if (apiResult.data !== undefined || !isElectronMode() || !shouldTryIpcAfterApiFailure(apiResult)) {
+        return apiResult;
+      }
+      return ipcUpdate('categories', id, data);
     },
-    delete: (id: string) => {
-      if (isElectronMode()) return ipcDelete('categories', id);
-      return apiFetch<any>(`/categories/${id}`, { method: 'DELETE' });
+    delete: async (id: string) => {
+      const apiResult = await apiFetch<any>(`/categories/${id}`, { method: 'DELETE' });
+      if (apiResult.data !== undefined || !isElectronMode() || !shouldTryIpcAfterApiFailure(apiResult)) {
+        return apiResult;
+      }
+      return ipcDelete('categories', id);
     },
   },
 

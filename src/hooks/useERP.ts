@@ -2349,8 +2349,18 @@ export function useCategories() {
   const createCategory = useCallback(async (data: Omit<Category, 'id' | 'createdAt' | 'updatedAt'>): Promise<Category> => {
     const result = await api.categories.create(data);
     if (result.data) {
+      const mapped = mapCategory(result.data);
       await refreshCategories();
-      return result.data;
+      setCategories((prev) => {
+        if (prev.some((c) => c.name.toLowerCase() === mapped.name.toLowerCase() && c.isActive)) return prev;
+        const next = dedupeCategoriesByName([...prev, mapped]);
+        setCachedList('categories', next);
+        return next;
+      });
+      return mapped;
+    }
+    if (!isDemoMode()) {
+      throw new Error(result.error || 'Failed to create category');
     }
     const category: Category = {
       ...data,

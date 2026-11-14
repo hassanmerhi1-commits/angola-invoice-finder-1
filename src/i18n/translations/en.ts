@@ -815,6 +815,7 @@ export const en = {
     maxStock: "Maximum stock",
     newCategory: "New category",
     newCategoryPlaceholder: "e.g. Soft drinks",
+    categoryPlaceholder: "Type or choose a category",
     createCategory: "Create",
     categoryCreateFailed: "Could not create the category. Check your connection or try again.",
   },

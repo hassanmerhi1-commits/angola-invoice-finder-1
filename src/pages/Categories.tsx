@@ -200,15 +200,25 @@ export default function Categories() {
         title: t.categoriesUi.updatedTitle,
         description: t.categoriesUi.updatedDesc.replace('{name}', formData.name),
       });
-    } else {
-      createCategory(categoryData);
-      toast({
-        title: t.categoriesUi.createdTitle,
-        description: t.categoriesUi.createdDesc.replace('{name}', formData.name),
-      });
+      setDialogOpen(false);
+      return;
     }
 
-    setDialogOpen(false);
+    void createCategory(categoryData)
+      .then(() => {
+        toast({
+          title: t.categoriesUi.createdTitle,
+          description: t.categoriesUi.createdDesc.replace('{name}', formData.name),
+        });
+        setDialogOpen(false);
+      })
+      .catch((error: unknown) => {
+        toast({
+          title: t.categoriesUi.toastErrorTitle,
+          description: error instanceof Error ? error.message : t.productFormUi.categoryCreateFailed,
+          variant: 'destructive',
+        });
+      });
   };
 
   const handleDelete = () => {

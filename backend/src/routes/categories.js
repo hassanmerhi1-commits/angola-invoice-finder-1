@@ -20,9 +20,30 @@ module.exports = function(broadcastTable) {
   router.post('/', requirePermission('inventory_create', 'admin_settings'), async (req, res) => {
     try {
       const { name, description, color } = req.body;
+      const cleaned = String(name || '').replace(/\s+/g, ' ').trim();
+      if (!cleaned) {
+        return res.status(400).json({ error: 'Category name is required' });
+      }
+      const existing = await db.query(
+        'SELECT * FROM categories WHERE lower(name) = lower($1) ORDER BY is_active DESC LIMIT 1',
+        [cleaned],
+      );
+      if (existing.rows[0]) {
+        const row = existing.rows[0];
+        const inactive = row.is_active === false || row.is_active === 0;
+        if (!inactive) {
+          return res.status(200).json(row);
+        }
+        const revived = await db.query(
+          'UPDATE categories SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *',
+          [row.id],
+        );
+        await broadcastTable('categories');
+        return res.status(200).json(revived.rows[0] || row);
+      }
       const result = await db.query(
-        'INSERT INTO categories (name, description, color) VALUES ($1, $2, $3) RETURNING *',
-        [name, description, color]
+        'INSERT INTO categories (name, description, color, is_active) VALUES ($1, $2, $3, $4) RETURNING *',
+        [cleaned, description || '', color || '#3b82f6', true]
       );
       await broadcastTable('categories');
       const created = result.rows[0];

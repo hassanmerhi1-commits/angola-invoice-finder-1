@@ -817,6 +817,7 @@ export const pt: TranslationKeys = {
     maxStock: "Stock Máximo",
     newCategory: "Nova categoria",
     newCategoryPlaceholder: "Ex: Refrigerantes",
+    categoryPlaceholder: "Escreva ou escolha a categoria",
     createCategory: "Criar",
     categoryCreateFailed: "Não foi possível criar a categoria. Verifique a ligação ou tente novamente.",
   },

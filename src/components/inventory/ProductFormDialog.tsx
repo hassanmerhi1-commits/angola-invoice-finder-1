@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Product } from '@/types/erp';
 import { useBranches, useCategories, useSuppliers } from '@/hooks/useERP';
 import {
@@ -60,6 +60,8 @@ export function ProductFormDialog({
   const { t, language } = useTranslation();
   
   const activeCategories = useMemo(() => categories.filter(c => c.isActive), [categories]);
+  const activeCategoriesRef = useRef(activeCategories);
+  activeCategoriesRef.current = activeCategories;
 
   const [formData, setFormData] = useState({
     name: '',
@@ -88,7 +90,7 @@ export function ProductFormDialog({
         name: product.name,
         sku: product.sku,
         barcode: product.barcode || '',
-        category: resolveProductCategoryName(product.category, activeCategories, language),
+        category: resolveProductCategoryName(product.category, activeCategoriesRef.current, language),
         price: product.price,
         cost: product.cost,
         stock: product.stock,
@@ -105,7 +107,7 @@ export function ProductFormDialog({
         name: '',
         sku: '',
         barcode: '',
-        category: defaultProductCategoryName(activeCategories, language),
+        category: defaultProductCategoryName(activeCategoriesRef.current, language),
         price: 0,
         cost: 0,
         stock: 0,
@@ -118,7 +120,7 @@ export function ProductFormDialog({
         isActive: true,
       });
     }
-  }, [product, open, activeCategories, language]);
+  }, [product, open, language]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
