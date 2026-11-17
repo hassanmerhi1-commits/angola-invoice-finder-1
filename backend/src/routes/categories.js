@@ -4,7 +4,7 @@ const db = require('../db');
 const { requirePermission } = require('../middleware/requirePermission');
 const { auditErpSafe } = require('../lib/erpAudit');
 const { cleanCategoryName, categoryNameKey } = require('../lib/categoryNames');
-const { canonicalSkuString, sqlMovementSkuKey } = require('../lib/productSkuResolve');
+const { canonicalSkuString } = require('../lib/productSkuResolve');
 
 const MANAGE_PERMISSION = requirePermission('inventory_edit', 'inventory_create', 'admin_settings');
 
@@ -105,27 +105,30 @@ async function deactivateCategoryName(q, name) {
 }
 
 async function assignSkus(q, name, skus) {
-  const keys = [];
+  const values = [];
   const seen = new Set();
   for (const raw of skus) {
-    const key = canonicalSkuString(raw).toLowerCase();
+    const sku = canonicalSkuString(raw);
+    const key = sku.toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    keys.push(key);
+    values.push(sku);
   }
   let updated = 0;
-  for (let i = 0; i < keys.length; i += 200) {
-    const chunk = keys.slice(i, i + 200);
+  // Match the stored sku so the sku index is used. A function on the column
+  // made every move scan the whole catalog.
+  for (let i = 0; i < values.length; i += 500) {
+    const chunk = values.slice(i, i + 500);
     const placeholders = chunk.map((_, idx) => `$${idx + 2}`).join(', ');
     const result = await q.query(
       `UPDATE products
        SET category = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE ${sqlMovementSkuKey('products')} IN (${placeholders})`,
+       WHERE sku IN (${placeholders})`,
       [name, ...chunk],
     );
     updated += result.rowCount || 0;
   }
-  return { updated, skus: keys.length };
+  return { updated, skus: values.length };
 }
 
 module.exports = function(broadcastTable) {

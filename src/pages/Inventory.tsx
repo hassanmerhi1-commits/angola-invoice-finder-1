@@ -2222,9 +2222,10 @@ export default function Inventory() {
         onOpenChange={setCategoryManagerOpen}
         products={displayProducts}
         onApplied={() => {
-          window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, { detail: {} }));
-          void reloadInventoryList();
-          if (canSwitchBranch) void loadPerBranchBreakdown();
+          invalidateInventoryGridCache();
+          window.dispatchEvent(new CustomEvent(PRODUCTS_CHANGED_EVENT, {
+            detail: { lightweight: true },
+          }));
         }}
       />
 
