@@ -6,6 +6,7 @@ const { requirePermission } = require('../middleware/requirePermission');
 const { attachUserBranchScope, resolveListBranchId, resolveWriteBranchId } = require('../middleware/branchScope');
 const { logFiscalEventFromReq } = require('../lib/fiscalAudit');
 const { dateRangeSql } = require('../lib/dateRangeFilter');
+const { buildRecordBranchFilter } = require('../lib/branchIdMatch');
 const {
   processCreditNote,
   processDebitNote,
@@ -162,8 +163,11 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       let query = 'SELECT * FROM credit_notes WHERE 1=1';
       const params = [];
       if (scopedBranchId) {
-        params.push(scopedBranchId);
-        query += ` AND branch_id = $${params.length}`;
+        const branchFilter = await buildRecordBranchFilter(db, scopedBranchId, params.length + 1);
+        if (branchFilter.sql) {
+          query += branchFilter.sql;
+          params.push(...branchFilter.params);
+        }
       }
       query += dateRangeSql(db, 'created_at', params, dateFrom, dateTo);
       query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
@@ -292,8 +296,11 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       let query = 'SELECT * FROM debit_notes WHERE 1=1';
       const params = [];
       if (scopedBranchId) {
-        params.push(scopedBranchId);
-        query += ` AND branch_id = $${params.length}`;
+        const branchFilter = await buildRecordBranchFilter(db, scopedBranchId, params.length + 1);
+        if (branchFilter.sql) {
+          query += branchFilter.sql;
+          params.push(...branchFilter.params);
+        }
       }
       query += dateRangeSql(db, 'created_at', params, dateFrom, dateTo);
       query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
@@ -387,8 +394,11 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       let query = 'SELECT * FROM transport_documents WHERE 1=1';
       const params = [];
       if (scopedBranchId) {
-        params.push(scopedBranchId);
-        query += ` AND branch_id = $${params.length}`;
+        const branchFilter = await buildRecordBranchFilter(db, scopedBranchId, params.length + 1);
+        if (branchFilter.sql) {
+          query += branchFilter.sql;
+          params.push(...branchFilter.params);
+        }
       }
       query += dateRangeSql(db, 'created_at', params, from, to);
       query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;

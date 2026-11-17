@@ -317,10 +317,10 @@ export default function FiscalDocuments() {
   const receivedOrders = orders.filter(o => o.status === 'received' || o.status === 'partial');
 
   const resolveSaleBranch = (sale: Sale) => {
-    const saleBranchId = sale.branchId || currentBranch?.id;
-    const saleBranch = branches.find((b) => b.id === saleBranchId) || currentBranch;
-    if (!saleBranchId || !saleBranch) return null;
-    return { id: saleBranchId, code: saleBranch.code, name: saleBranch.name };
+    const matched = branches.find((b) => b.id === sale.branchId);
+    const saleBranch = matched || currentBranch;
+    if (!saleBranch?.id) return null;
+    return { id: saleBranch.id, code: saleBranch.code, name: saleBranch.name };
   };
 
   const handleCreateCreditNote = async (payload: {

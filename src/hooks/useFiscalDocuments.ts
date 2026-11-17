@@ -14,6 +14,7 @@ import {
 import * as fiscalStorage from '@/lib/fiscalDocuments';
 import { api } from '@/lib/api/client';
 import { getCachedList, setCachedList } from '@/lib/listCache';
+import { branchIdsEquivalent } from '@/lib/branchAccess';
 import { CREDIT_NOTES_CHANGED_EVENT, DEBIT_NOTES_CHANGED_EVENT } from '@/lib/storage';
 import { getCompanySettings, hydrateCompanySettingsFromServer, saveCompanySettingsToServer } from '@/lib/companySettings';
 import { exportSAFTToXML } from '@/lib/saftAO';
@@ -23,10 +24,22 @@ async function resolveBranchName(branchId: string, cachedName?: string) {
   try {
     const response = await api.branches.list();
     const branches = response.data || [];
-    return branches.find((b: { id: string }) => b.id === branchId)?.name || '';
+    return branches.find((b: { id: string }) => branchIdsEquivalent(b.id, branchId))?.name || '';
   } catch {
     return '';
   }
+}
+
+export function belongsToBranch(
+  note: { branchId?: string; branchName?: string },
+  branchId?: string,
+  branchName?: string,
+) {
+  if (!branchId) return true;
+  if (note.branchId && branchIdsEquivalent(note.branchId, branchId)) return true;
+  const wanted = String(branchName || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const named = String(note.branchName || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return !!wanted && !!named && named === wanted;
 }
 
 // ==================== CREDIT NOTES ====================
@@ -42,13 +55,12 @@ export function useCreditNotes(branchId?: string, deferInitialLoad = false) {
     const filterBranch = listBranchId !== undefined ? listBranchId : branchId;
     const cacheKey = `creditNotes:${filterBranch || branchId || 'all'}`;
     try {
-      let result = await api.fiscalDocuments.listCreditNotes(filterBranch || undefined);
+      const result = await api.fiscalDocuments.listCreditNotes(filterBranch || undefined);
       if (result.error) throw new Error(result.error);
-      let notes = (result.data || []) as CreditNote[];
-      if (notes.length === 0 && filterBranch) {
-        const allRes = await api.fiscalDocuments.listCreditNotes();
-        if (allRes.data?.length) notes = allRes.data as CreditNote[];
-      }
+      const branchName = filterBranch ? await resolveBranchName(filterBranch) : '';
+      const notes = ((result.data || []) as CreditNote[]).filter((note) =>
+        belongsToBranch(note, filterBranch, branchName),
+      );
       setCreditNotes(notes);
       setCachedList(cacheKey, notes);
     } catch (err) {
@@ -159,7 +171,10 @@ export function useDebitNotes(branchId?: string, deferInitialLoad = false) {
     try {
       const result = await api.fiscalDocuments.listDebitNotes(branchId);
       if (result.error) throw new Error(result.error);
-      const notes = (result.data || []) as DebitNote[];
+      const branchName = branchId ? await resolveBranchName(branchId) : '';
+      const notes = ((result.data || []) as DebitNote[]).filter((note) =>
+        belongsToBranch(note, branchId, branchName),
+      );
       setDebitNotes(notes);
       setCachedList(cacheKey, notes);
     } catch (err) {

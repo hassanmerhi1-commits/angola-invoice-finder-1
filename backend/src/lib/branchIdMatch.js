@@ -152,6 +152,54 @@ function castText(columnExpr) {
 }
 
 /**
+ * Match a document row to a filial the same way journals do:
+ * canonical id, dashless id, and the branch name (e.g. "Soyo 05").
+ * Optional saleIdColumn also keeps a note whose own branch id is stale
+ * when the original invoice belongs to that filial.
+ */
+function recordBranchMatchSql(db, resolved, branchName, startParamIdx, options = {}) {
+  const idColumn = options.idColumn || 'branch_id';
+  const nameColumn = options.nameColumn || 'branch_name';
+  const saleIdColumn = options.saleIdColumn || '';
+  const idText = castText(idColumn)(db);
+  const idNorm = branchIdSqlNorm(idColumn, db);
+  const params = [resolved];
+  let idx = startParamIdx;
+  const resolvedParam = `$${idx++}`;
+  const clauses = [`${idText} = ${resolvedParam}`];
+  const key = normalizeBranchIdKey(resolved);
+  let keyParam = '';
+  if (key) {
+    params.push(key);
+    keyParam = `$${idx++}`;
+    clauses.push(`${idNorm} = ${keyParam}`);
+  }
+  const nameKey = normalizeBranchNameKey(branchName);
+  if (nameKey) {
+    params.push(nameKey);
+    clauses.push(`LOWER(TRIM(COALESCE(${nameColumn}, ''))) = $${idx++}`);
+  }
+  if (saleIdColumn && keyParam) {
+    const saleText = castText('s.branch_id')(db);
+    const saleNorm = branchIdSqlNorm('s.branch_id', db);
+    clauses.push(
+      `EXISTS (SELECT 1 FROM sales s WHERE s.id = ${saleIdColumn} AND (${saleText} = ${resolvedParam} OR ${saleNorm} = ${keyParam}))`,
+    );
+  }
+  return {
+    sql: ` AND (${clauses.join(' OR ')})`,
+    params,
+  };
+}
+
+async function buildRecordBranchFilter(db, branchId, startParamIdx, options = {}) {
+  const resolved = await resolveBranchFilterId(db, branchId);
+  if (!resolved) return { sql: '', params: [] };
+  const row = await resolveBranchRow(db, resolved);
+  return recordBranchMatchSql(db, row?.id || resolved, row?.name || '', startParamIdx, options);
+}
+
+/**
  * For purchase_invoices: match branch_id, warehouse_id, names, and dashless UUID keys.
  */
 async function buildPurchaseInvoiceBranchFilter(db, branchId, startParamIdx) {
@@ -248,9 +296,12 @@ async function buildJournalBranchFilter(db, branchId, startParamIdx) {
 module.exports = {
   normalizeBranchIdKey,
   normalizeBranchNameKey,
+  branchIdSqlNorm,
   branchKeysEqual,
   resolveBranchFilterId,
   resolveBranchRow,
   buildPurchaseInvoiceBranchFilter,
   buildJournalBranchFilter,
+  recordBranchMatchSql,
+  buildRecordBranchFilter,
 };

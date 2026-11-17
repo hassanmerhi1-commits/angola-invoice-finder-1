@@ -17,7 +17,7 @@ const {
   syncClientBalanceFromOpenItems,
 } = require('./transactionEngine');
 const { ensureCreditNoteRestoreStockColumn } = require('./lib/ensurePhaseSchema');
-const { resolveBranchFilterId } = require('./lib/branchIdMatch');
+const { resolveBranchRow } = require('./lib/branchIdMatch');
 const { isCashPaymentMethod, recordCashRefundOnOpenSession } = require('./lib/caixaCashRefund');
 const { requireBranchCaixaGlAccountCode, linkOrphanBranchCaixaAccounts } = require('./lib/resolveBranchCaixaGlAccount');
 const {
@@ -35,6 +35,17 @@ function requireParam(value, name) {
     throw new Error(`Parâmetro obrigatório em falta: ${name}`);
   }
   return value;
+}
+
+/** First candidate that is a real filial (id, code, or name such as "Soyo 05"). */
+async function knownBranchRow(...candidates) {
+  for (const raw of candidates) {
+    const text = String(raw || '').trim();
+    if (!text) continue;
+    const row = await resolveBranchRow(db, text);
+    if (row?.id) return row;
+  }
+  return null;
 }
 
 async function reduceCustomerInvoiceOpenItem(client, invoiceDocumentId, amount) {
@@ -104,12 +115,11 @@ async function processCreditNote(client, data) {
     throw new Error('Fatura original está cancelada');
   }
 
-  const branchIdRaw = branchIdInput || sale.branch_id;
-  const resolvedBranchId = await resolveBranchFilterId(db, String(branchIdRaw || '').trim());
-  const branchId = resolvedBranchId || branchIdRaw;
+  const branchRow = await knownBranchRow(branchIdInput, sale.branch_id, branchNameInput, sale.branch_name);
+  const branchId = branchRow?.id || null;
   requireParam(branchId, 'branchId');
-  const branchCode = branchCodeInput || sale.branch_code || 'SEDE';
-  const branchName = branchNameInput || sale.branch_name || '';
+  const branchCode = branchCodeInput || branchRow?.code || sale.branch_code || 'SEDE';
+  const branchName = branchRow?.name || branchNameInput || sale.branch_name || '';
 
   const today = new Date().toISOString().split('T')[0];
   await validatePeriod(client, today);
@@ -364,9 +374,9 @@ async function processCreditNote(client, data) {
 
 async function processDebitNote(client, data) {
   const {
-    branchId,
-    branchCode,
-    branchName,
+    branchId: branchIdInput,
+    branchCode: branchCodeInput,
+    branchName: branchNameInput,
     originalInvoiceId,
     reason,
     reasonDescription,
@@ -377,19 +387,29 @@ async function processDebitNote(client, data) {
     customerName,
   } = data;
 
-  requireParam(branchId, 'branchId');
   requireParam(reason, 'reason');
   if (!items || items.length === 0) throw new Error('Nota de débito deve ter pelo menos um item');
 
   let originalInvoiceNumber = null;
+  let saleBranchId = '';
   if (originalInvoiceId) {
-    const saleRes = await client.query('SELECT invoice_number, fiscal_status FROM sales WHERE id = $1', [originalInvoiceId]);
+    const saleRes = await client.query(
+      'SELECT invoice_number, fiscal_status, branch_id FROM sales WHERE id = $1',
+      [originalInvoiceId],
+    );
     if (!saleRes.rows.length) throw new Error('Fatura original não encontrada');
     if (String(saleRes.rows[0].fiscal_status || 'issued') === 'cancelled') {
       throw new Error('Fatura original está cancelada');
     }
     originalInvoiceNumber = saleRes.rows[0].invoice_number;
+    saleBranchId = saleRes.rows[0].branch_id;
   }
+
+  const branchRow = await knownBranchRow(branchIdInput, saleBranchId, branchNameInput);
+  const branchId = branchRow?.id || null;
+  requireParam(branchId, 'branchId');
+  const branchCode = branchCodeInput || branchRow?.code || 'SEDE';
+  const branchName = branchRow?.name || branchNameInput || '';
 
   const today = new Date().toISOString().split('T')[0];
   await validatePeriod(client, today);

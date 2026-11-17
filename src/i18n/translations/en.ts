@@ -3720,6 +3720,7 @@ export const en = {
     statusAlreadySent: "Already at AGT",
     alreadySentHint: "Already sent. Do not create another one.",
     waitingFinal: "Waiting for the final answer",
+    notSentYet: "Not sent yet",
     statusInvalid: "Invalid at AGT — issue a correction with a new number",
     statusVoided: "Voided",
     filterAll: "All",

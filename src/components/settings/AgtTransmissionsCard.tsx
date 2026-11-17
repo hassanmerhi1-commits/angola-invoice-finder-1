@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 import { api } from '@/lib/api/client';
+import { useBranchScope } from '@/hooks/useBranchScope';
 
 type TransmissionRow = {
   id: string;
@@ -20,6 +21,7 @@ type TransmissionRow = {
   error_message?: string;
   retry_count?: number;
   transmitted_at?: string;
+  pending_send?: boolean;
 };
 
 type StatusFilter = 'all' | 'failed' | 'pending';
@@ -66,6 +68,7 @@ export function AgtTransmissionsCard() {
   const ui = t.agtTransmitUi;
   const locale = language === 'pt' ? 'pt-AO' : 'en-GB';
   const { toast } = useToast();
+  const { listBranchId } = useBranchScope();
   const [rows, setRows] = useState<TransmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -81,6 +84,7 @@ export function AgtTransmissionsCard() {
       const res = await api.agt.listTransmissions({
         status: statusFilter === 'all' ? undefined : statusFilter,
         limit: PAGE_SIZE,
+        branchId: listBranchId,
       });
       if (res.error) throw new Error(res.error);
       const next = res.data || [];
@@ -93,7 +97,7 @@ export function AgtTransmissionsCard() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, t.common.loadFailed]);
+  }, [statusFilter, listBranchId, t.common.loadFailed]);
 
   useEffect(() => {
     void refresh();
@@ -106,6 +110,7 @@ export function AgtTransmissionsCard() {
         status: statusFilter === 'all' ? undefined : statusFilter,
         limit: PAGE_SIZE,
         offset: rows.length,
+        branchId: listBranchId,
       });
       if (res.error) throw new Error(res.error);
       const more = res.data || [];
@@ -234,6 +239,7 @@ export function AgtTransmissionsCard() {
   };
 
   const replyText = (row: TransmissionRow) => {
+    if (row.pending_send) return ui.notSentYet;
     if (isFinalValidated(row.agt_status)) return '—';
     if (isAlreadySent(row.error_message)) return ui.alreadySentHint;
     if (
@@ -355,6 +361,7 @@ export function AgtTransmissionsCard() {
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
                     <div className="flex justify-end gap-1">
+                      {!row.pending_send && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -370,6 +377,7 @@ export function AgtTransmissionsCard() {
                         )}
                         {ui.copyJson}
                       </Button>
+                      )}
                       {(row.agt_status === 'error' || row.agt_status === 'rejected') && !isAlreadySent(row.error_message) && (
                         <Button size="sm" variant="outline" onClick={() => void handleRetry(row.id)}>
                           {ui.retryButton}

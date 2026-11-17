@@ -63,7 +63,7 @@ import { ProFormaCreateDialog } from '@/components/proforma/ProFormaCreateDialog
 import { TransportDocumentPrintDialog } from '@/components/fiscal/TransportDocumentPrintDialog';
 import { CreditNoteCreateDialog } from '@/components/fiscal/CreditNoteCreateDialog';
 import { DebitNoteCreateDialog } from '@/components/fiscal/DebitNoteCreateDialog';
-import { useCreditNotes, useDebitNotes } from '@/hooks/useFiscalDocuments';
+import { belongsToBranch, useCreditNotes, useDebitNotes } from '@/hooks/useFiscalDocuments';
 import { getProFormas } from '@/lib/proforma';
 import { proformaToErpDocumentPrefill } from '@/lib/proformaToDocument';
 import { isFiscallyImmutable } from '@/lib/fiscalImmutability';
@@ -471,9 +471,12 @@ export default function Invoices() {
     const load = async () => {
       try {
         setListLoadError(null);
+        const cityName = branches.find((b) => b.id === listBranchId)?.name || currentBranch?.name || '';
+        const onThisCity = (note: { branchId?: string; branchName?: string }) =>
+          belongsToBranch(note, listBranchId, cityName);
         if (type === 'nota_credito') {
           const cnRes = await api.fiscalDocuments.listCreditNotes(listBranchId, listOpts);
-          const mapped = (cnRes.data || []).map((cn: CreditNote) =>
+          const mapped = (cnRes.data || []).filter(onThisCity).map((cn: CreditNote) =>
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
           );
           paintDocs(mapped);
@@ -482,7 +485,7 @@ export default function Invoices() {
 
         if (type === 'nota_debito') {
           const dnRes = await api.fiscalDocuments.listDebitNotes(listBranchId, listOpts);
-          const mapped = (dnRes.data || []).map((dn: DebitNote) =>
+          const mapped = (dnRes.data || []).filter(onThisCity).map((dn: DebitNote) =>
             mapDebitNoteToDocument(dn, dn.branchName || branchNames[dn.branchId] || '', t.pos.finalConsumer),
           );
           paintDocs(mapped);
@@ -609,10 +612,10 @@ export default function Invoices() {
             api.fiscalDocuments.listDebitNotes(listBranchId, listOpts),
             api.fiscalDocuments.listTransportDocuments(listBranchId, listOpts),
           ]);
-          const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
+          const fiscalCreditDocs = (cnRes.data || []).filter(onThisCity).map((cn: CreditNote) =>
             mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
           );
-          const fiscalDebitDocs = (dnRes.data || []).map((dn: DebitNote) =>
+          const fiscalDebitDocs = (dnRes.data || []).filter(onThisCity).map((dn: DebitNote) =>
             mapDebitNoteToDocument(dn, dn.branchName || branchNames[dn.branchId] || '', t.pos.finalConsumer),
           );
           const gtRows = (gtRes.data || []) as TransportDocument[];
@@ -643,10 +646,10 @@ export default function Invoices() {
           salesDraftsPromise,
         ]);
 
-        const fiscalCreditDocs = (cnRes.data || []).map((cn: CreditNote) =>
+        const fiscalCreditDocs = (cnRes.data || []).filter(onThisCity).map((cn: CreditNote) =>
           mapCreditNoteToDocument(cn, cn.branchName || branchNames[cn.branchId] || '', t.pos.finalConsumer),
         );
-        const fiscalDebitDocs = (dnRes.data || []).map((dn: DebitNote) =>
+        const fiscalDebitDocs = (dnRes.data || []).filter(onThisCity).map((dn: DebitNote) =>
           mapDebitNoteToDocument(dn, dn.branchName || branchNames[dn.branchId] || '', t.pos.finalConsumer),
         );
         const gtRows = (gtRes.data || []) as TransportDocument[];
@@ -716,10 +719,10 @@ export default function Invoices() {
   }, [location.state, location.pathname, navigate, clients]);
 
   const resolveSaleBranch = useCallback((sale: Sale) => {
-    const saleBranchId = sale.branchId || currentBranch?.id;
-    const saleBranch = branches.find((b) => b.id === saleBranchId) || currentBranch;
-    if (!saleBranchId || !saleBranch) return null;
-    return { id: saleBranchId, code: saleBranch.code, name: saleBranch.name };
+    const matched = branches.find((b) => b.id === sale.branchId);
+    const saleBranch = matched || currentBranch;
+    if (!saleBranch?.id) return null;
+    return { id: saleBranch.id, code: saleBranch.code, name: saleBranch.name };
   }, [branches, currentBranch]);
 
   const openCreditNoteCreate = useCallback((saleId?: string) => {

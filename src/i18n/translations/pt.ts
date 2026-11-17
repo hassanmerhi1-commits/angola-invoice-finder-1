@@ -3723,6 +3723,7 @@ export const pt: TranslationKeys = {
     statusAlreadySent: "Já está na AGT",
     alreadySentHint: "Já foi enviado. Não crie outro.",
     waitingFinal: "À espera da resposta final",
+    notSentYet: "Ainda não foi enviada",
     statusInvalid: "Inválido na AGT — emita correcção com novo número",
     statusVoided: "Anulado",
     filterAll: "Todas",

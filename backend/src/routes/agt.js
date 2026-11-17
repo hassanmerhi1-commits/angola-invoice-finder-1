@@ -20,6 +20,100 @@ const {
   runAgtReconcileCycle,
   reconcileFailedTransmissions,
 } = require('../agt/agtReconcile');
+const {
+  buildRecordBranchFilter,
+  resolveBranchRow,
+  normalizeBranchIdKey,
+  normalizeBranchNameKey,
+  branchIdSqlNorm,
+} = require('../lib/branchIdMatch');
+
+function textCol(db, column) {
+  return db.engine === 'postgres' ? `${column}::text` : `CAST(${column} AS TEXT)`;
+}
+
+/** One city only: id, dashless id, or that city's name. No other filial, and no blank branch. */
+async function transmissionBranchSql(db, branchId, startParamIdx) {
+  const row = await resolveBranchRow(db, branchId);
+  const resolved = row?.id;
+  if (!resolved) return { sql: '', params: [] };
+  const key = normalizeBranchIdKey(resolved);
+  const nameKey = normalizeBranchNameKey(row?.name || '');
+  const params = [resolved];
+  let idx = startParamIdx;
+  const idParam = `$${idx++}`;
+  let keyParam = '';
+  if (key) {
+    params.push(key);
+    keyParam = `$${idx++}`;
+  }
+  let nameParam = '';
+  if (nameKey) {
+    params.push(nameKey);
+    nameParam = `$${idx++}`;
+  }
+  const idCols = ['s.branch_id', 'cn.branch_id', 'dn.branch_id'];
+  const nameCols = ['cn.branch_name', 'dn.branch_name'];
+  const clauses = [];
+  for (const col of idCols) {
+    clauses.push(`${textCol(db, col)} = ${idParam}`);
+    if (keyParam) clauses.push(`${branchIdSqlNorm(col, db)} = ${keyParam}`);
+  }
+  if (nameParam) {
+    for (const col of nameCols) {
+      clauses.push(`LOWER(TRIM(COALESCE(${col}, ''))) = ${nameParam}`);
+    }
+  }
+  return { sql: ` AND (${clauses.join(' OR ')})`, params };
+}
+
+async function listUnsentFiscalNotes(db, kind, branchId) {
+  const table = kind === 'credit_note' ? 'credit_notes' : 'debit_notes';
+  const idMatch = db.engine === 'postgres'
+    ? `t.entity_id::text = ${table}.id::text`
+    : `CAST(t.entity_id AS TEXT) = CAST(${table}.id AS TEXT)`;
+  const params = [kind];
+  let branchSql = '';
+  const city = String(branchId || '').trim();
+  if (city && city !== 'all') {
+    const branchFilter = await buildRecordBranchFilter(db, city, params.length + 1);
+    if (branchFilter.sql) {
+      branchSql = branchFilter.sql;
+      params.push(...branchFilter.params);
+    }
+  }
+  const res = await db.query(
+    `SELECT id, document_number, original_invoice_id, customer_name, agt_status, agt_code, issued_at
+     FROM ${table}
+     WHERE status IN ('issued', 'transmitted')
+       AND NOT EXISTS (
+         SELECT 1 FROM agt_transmissions t
+         WHERE t.entity_type = $1 AND ${idMatch}
+           AND COALESCE(t.transmission_type, '') != 'void'
+       )
+       ${branchSql}
+     ORDER BY issued_at DESC
+     LIMIT 30`,
+    params,
+  );
+  return (res.rows || []).map((row) => ({
+    id: `unsent-${kind}-${row.id}`,
+    invoice_id: row.original_invoice_id,
+    invoice_number: row.document_number,
+    transmission_type: kind,
+    entity_type: kind,
+    entity_id: row.id,
+    agt_status: row.agt_status && String(row.agt_status).trim() ? row.agt_status : 'pending',
+    agt_code: row.agt_code,
+    error_message: null,
+    retry_count: 0,
+    transmitted_at: row.issued_at,
+    document_number: row.document_number,
+    sale_total: null,
+    customer_name: row.customer_name,
+    pending_send: true,
+  }));
+}
 
 module.exports = function(broadcastTable) {
   const router = express.Router();
@@ -533,11 +627,11 @@ module.exports = function(broadcastTable) {
 
       const branch = String(branchId || '').trim();
       if (branch && branch !== 'all') {
-        params.push(branch);
-        where.push(`(
-          COALESCE(s.branch_id, cn.branch_id, dn.branch_id) = $${params.length}
-          OR COALESCE(s.branch_id, cn.branch_id, dn.branch_id) IS NULL
-        )`);
+        const branchFilter = await transmissionBranchSql(db, branch, params.length + 1);
+        if (branchFilter.sql) {
+          where.push(branchFilter.sql.replace(/^\s*AND\s+/i, ''));
+          params.push(...branchFilter.params);
+        }
       }
 
       params.push(Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100));
@@ -565,8 +659,8 @@ module.exports = function(broadcastTable) {
           (latest.entity_type = 'sale' AND latest.entity_id = s.id)
           OR ((latest.entity_type IS NULL OR latest.entity_type IN ('invoice', 'sale')) AND latest.invoice_id = s.id)
         )
-        LEFT JOIN credit_notes cn ON latest.entity_type = 'credit_note' AND latest.entity_id = cn.id
-        LEFT JOIN debit_notes dn ON latest.entity_type = 'debit_note' AND latest.entity_id = dn.id
+        LEFT JOIN credit_notes cn ON latest.entity_type = 'credit_note' AND ${textCol(db, 'latest.entity_id')} = ${textCol(db, 'cn.id')}
+        LEFT JOIN debit_notes dn ON latest.entity_type = 'debit_note' AND ${textCol(db, 'latest.entity_id')} = ${textCol(db, 'dn.id')}
         WHERE ${where.join(' AND ')}
         ORDER BY latest.transmitted_at DESC NULLS LAST
         LIMIT $${params.length - 1}
@@ -574,7 +668,22 @@ module.exports = function(broadcastTable) {
       `;
 
       const result = await db.query(query, params);
-      res.json(result.rows);
+      let rows = result.rows || [];
+      const pageOffset = Math.max(parseInt(offset, 10) || 0, 0);
+      if (pageOffset === 0 && (!status || status === 'pending')) {
+        try {
+          const unsent = [
+            ...(await listUnsentFiscalNotes(db, 'credit_note', branch)),
+            ...(await listUnsentFiscalNotes(db, 'debit_note', branch)),
+          ];
+          const seen = new Set(rows.map((row) => String(row.document_number || '')));
+          const extra = unsent.filter((row) => row.document_number && !seen.has(String(row.document_number)));
+          rows = [...extra, ...rows];
+        } catch (unsentErr) {
+          console.warn('[AGT] unsent fiscal notes', unsentErr.message);
+        }
+      }
+      res.json(rows);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
