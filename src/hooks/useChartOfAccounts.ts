@@ -195,9 +195,11 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
       })();
       return;
     }
+    const userRefresh = !!opts?.liveBalances;
     try {
       // Never blank the tree when we already have local/cache rows.
-      if (!hasRowsRef.current) setIsLoading(true);
+      // A press of Refresh still shows the spinner over the chart that is open.
+      if (!hasRowsRef.current || userRefresh) setIsLoading(true);
       // Stored balances by default (fast). liveBalances joins journals for ledger parity.
       const response = await api.chartOfAccounts.list(
         opts?.liveBalances ? { liveBalances: true } : undefined,
@@ -210,6 +212,8 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
         if (!hasRowsRef.current) {
           const local = loadLocalAccounts(t);
           if (local.length > 0) remoteAccounts = local;
+        } else if (userRefresh) {
+          throw new Error('Failed to fetch accounts');
         } else {
           return;
         }
@@ -221,8 +225,11 @@ export function useChartOfAccounts(opts?: { enabled?: boolean }) {
     } catch (err: any) {
       // Keep last good server data — don't flash zeroed seed over live balances.
       if (hasRowsRef.current) {
-        setError(null);
-        console.warn('[useChartOfAccounts] Refresh failed; keeping cached accounts:', err?.message || err);
+        const message = err?.message || 'Failed to fetch accounts';
+        if (userRefresh) setError(message);
+        else setError(null);
+        console.warn('[useChartOfAccounts] Refresh failed; keeping cached accounts:', message);
+        if (userRefresh) throw err instanceof Error ? err : new Error(message);
       } else {
         const local = loadLocalAccounts(t);
         if (local.length > 0) {

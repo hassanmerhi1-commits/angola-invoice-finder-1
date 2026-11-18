@@ -1121,7 +1121,21 @@ export default function ChartOfAccounts() {
             if (file) void handleImportTemplateFile(file);
           }}
         />
-        <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => void refetch({ force: true, liveBalances: true })}><RefreshCw className="w-3 h-3" /></Button>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-7 w-7"
+          disabled={isLoading}
+          title={t.common.refresh}
+          onClick={() => {
+            void refetch({ force: true, liveBalances: true }).catch((error: unknown) => {
+              const raw = error instanceof Error ? error.message : '';
+              toast.error(isAuthFailureMessage(raw) ? t.auth.sessionExpired : (raw || t.common.loadFailed));
+            });
+          }}
+        >
+          <RefreshCw className={cn('w-3 h-3', isLoading && 'animate-spin')} />
+        </Button>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
