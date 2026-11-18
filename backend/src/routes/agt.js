@@ -76,7 +76,9 @@ async function listUnsentFiscalNotes(db, kind, branchId) {
   let branchSql = '';
   const city = String(branchId || '').trim();
   if (city && city !== 'all') {
-    const branchFilter = await buildRecordBranchFilter(db, city, params.length + 1);
+    const branchFilter = await buildRecordBranchFilter(db, city, params.length + 1, {
+      saleIdColumn: 'original_invoice_id',
+    });
     if (branchFilter.sql) {
       branchSql = branchFilter.sql;
       params.push(...branchFilter.params);

@@ -471,9 +471,9 @@ export default function Invoices() {
     const load = async () => {
       try {
         setListLoadError(null);
-        const cityName = branches.find((b) => b.id === listBranchId)?.name || currentBranch?.name || '';
+        const city = branches.find((b) => b.id === listBranchId) || currentBranch;
         const onThisCity = (note: { branchId?: string; branchName?: string }) =>
-          belongsToBranch(note, listBranchId, cityName);
+          belongsToBranch(note, listBranchId, city?.name || '', city?.code || '');
         if (type === 'nota_credito') {
           const cnRes = await api.fiscalDocuments.listCreditNotes(listBranchId, listOpts);
           const mapped = (cnRes.data || []).filter(onThisCity).map((cn: CreditNote) =>

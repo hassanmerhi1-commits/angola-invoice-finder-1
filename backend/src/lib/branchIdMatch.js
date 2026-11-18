@@ -157,6 +157,10 @@ function castText(columnExpr) {
  * Optional saleIdColumn also keeps a note whose own branch id is stale
  * when the original invoice belongs to that filial.
  */
+function compactBranchLabel(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function recordBranchMatchSql(db, resolved, branchName, startParamIdx, options = {}) {
   const idColumn = options.idColumn || 'branch_id';
   const nameColumn = options.nameColumn || 'branch_name';
@@ -179,6 +183,15 @@ function recordBranchMatchSql(db, resolved, branchName, startParamIdx, options =
     params.push(nameKey);
     clauses.push(`LOWER(TRIM(COALESCE(${nameColumn}, ''))) = $${idx++}`);
   }
+  const compactLabels = new Set(
+    [compactBranchLabel(branchName), compactBranchLabel(options.code)].filter(Boolean),
+  );
+  for (const label of compactLabels) {
+    params.push(label);
+    clauses.push(
+      `REPLACE(REPLACE(REPLACE(LOWER(TRIM(COALESCE(${nameColumn}, ''))), ' ', ''), '-', ''), '_', '') = $${idx++}`,
+    );
+  }
   if (saleIdColumn && keyParam) {
     const saleText = castText('s.branch_id')(db);
     const saleNorm = branchIdSqlNorm('s.branch_id', db);
@@ -196,7 +209,10 @@ async function buildRecordBranchFilter(db, branchId, startParamIdx, options = {}
   const resolved = await resolveBranchFilterId(db, branchId);
   if (!resolved) return { sql: '', params: [] };
   const row = await resolveBranchRow(db, resolved);
-  return recordBranchMatchSql(db, row?.id || resolved, row?.name || '', startParamIdx, options);
+  return recordBranchMatchSql(db, row?.id || resolved, row?.name || '', startParamIdx, {
+    ...options,
+    code: options.code || row?.code || '',
+  });
 }
 
 /**
@@ -302,6 +318,7 @@ module.exports = {
   resolveBranchRow,
   buildPurchaseInvoiceBranchFilter,
   buildJournalBranchFilter,
+  compactBranchLabel,
   recordBranchMatchSql,
   buildRecordBranchFilter,
 };

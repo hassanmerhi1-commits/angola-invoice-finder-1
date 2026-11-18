@@ -163,7 +163,9 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       let query = 'SELECT * FROM credit_notes WHERE 1=1';
       const params = [];
       if (scopedBranchId) {
-        const branchFilter = await buildRecordBranchFilter(db, scopedBranchId, params.length + 1);
+        const branchFilter = await buildRecordBranchFilter(db, scopedBranchId, params.length + 1, {
+          saleIdColumn: 'original_invoice_id',
+        });
         if (branchFilter.sql) {
           query += branchFilter.sql;
           params.push(...branchFilter.params);
@@ -296,7 +298,9 @@ module.exports = function fiscalDocumentsRouter(broadcastTable) {
       let query = 'SELECT * FROM debit_notes WHERE 1=1';
       const params = [];
       if (scopedBranchId) {
-        const branchFilter = await buildRecordBranchFilter(db, scopedBranchId, params.length + 1);
+        const branchFilter = await buildRecordBranchFilter(db, scopedBranchId, params.length + 1, {
+          saleIdColumn: 'original_invoice_id',
+        });
         if (branchFilter.sql) {
           query += branchFilter.sql;
           params.push(...branchFilter.params);

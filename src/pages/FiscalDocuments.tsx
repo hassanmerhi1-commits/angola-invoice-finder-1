@@ -61,6 +61,11 @@ export default function FiscalDocuments() {
   const fd = t.fiscalDocumentsUi;
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const dfLocale = language === 'pt' ? pt : enUS;
+  const formatNoteWhen = (value?: string) => {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return '—';
+    return format(date, 'dd/MM/yyyy HH:mm', { locale: dfLocale });
+  };
   const { user } = useAuth();
   const { hasPermission } = usePermissions(user?.id);
   const canCreateCreditNote = hasPermission('credit_note_create');
@@ -814,7 +819,7 @@ export default function FiscalDocuments() {
                           className="cursor-pointer"
                           onClick={() => setViewCreditNote(note)}
                         >
-                          {format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}
+                          {formatNoteWhen(note.issuedAt || note.createdAt)}
                         </TableCell>
                         <TableCell
                           className="cursor-pointer"
@@ -953,7 +958,7 @@ export default function FiscalDocuments() {
                         className={cn(viewDebitNote?.id === note.id && 'nexor-row-selected')}
                       >
                         <TableCell className="font-medium">{note.documentNumber}</TableCell>
-                        <TableCell>{format(new Date(note.createdAt), 'dd/MM/yyyy HH:mm', { locale: dfLocale })}</TableCell>
+                        <TableCell>{formatNoteWhen(note.issuedAt || note.createdAt)}</TableCell>
                         <TableCell>{note.originalInvoiceNumber || '-'}</TableCell>
                         <TableCell>
                           <Badge variant="outline">

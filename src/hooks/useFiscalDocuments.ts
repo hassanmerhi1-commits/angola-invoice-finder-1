@@ -19,14 +19,24 @@ import { CREDIT_NOTES_CHANGED_EVENT, DEBIT_NOTES_CHANGED_EVENT } from '@/lib/sto
 import { getCompanySettings, hydrateCompanySettingsFromServer, saveCompanySettingsToServer } from '@/lib/companySettings';
 import { exportSAFTToXML } from '@/lib/saftAO';
 
+function compactBranchLabel(value?: string) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 async function resolveBranchName(branchId: string, cachedName?: string) {
   if (cachedName) return cachedName;
+  const label = await resolveBranchLabel(branchId);
+  return label.name;
+}
+
+async function resolveBranchLabel(branchId: string) {
   try {
     const response = await api.branches.list();
-    const branches = response.data || [];
-    return branches.find((b: { id: string }) => branchIdsEquivalent(b.id, branchId))?.name || '';
+    const branches = Array.isArray(response.data) ? response.data : [];
+    const found = branches.find((b: { id: string }) => branchIdsEquivalent(b.id, branchId));
+    return { name: String(found?.name || ''), code: String(found?.code || '') };
   } catch {
-    return '';
+    return { name: '', code: '' };
   }
 }
 
@@ -34,12 +44,18 @@ export function belongsToBranch(
   note: { branchId?: string; branchName?: string },
   branchId?: string,
   branchName?: string,
+  branchCode?: string,
 ) {
   if (!branchId) return true;
   if (note.branchId && branchIdsEquivalent(note.branchId, branchId)) return true;
-  const wanted = String(branchName || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const named = String(note.branchName || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  return !!wanted && !!named && named === wanted;
+  const named = compactBranchLabel(note.branchName);
+  const wantedName = compactBranchLabel(branchName);
+  const wantedCode = compactBranchLabel(branchCode);
+  if (named && (named === wantedName || (wantedCode && named === wantedCode))) return true;
+  // The server already limited this list. A note filed under an old branch id
+  // still belongs here when its invoice or its name is this city.
+  if (!note.branchId || !named) return true;
+  return false;
 }
 
 // ==================== CREDIT NOTES ====================
@@ -57,9 +73,9 @@ export function useCreditNotes(branchId?: string, deferInitialLoad = false) {
     try {
       const result = await api.fiscalDocuments.listCreditNotes(filterBranch || undefined);
       if (result.error) throw new Error(result.error);
-      const branchName = filterBranch ? await resolveBranchName(filterBranch) : '';
+      const label = filterBranch ? await resolveBranchLabel(filterBranch) : { name: '', code: '' };
       const notes = ((result.data || []) as CreditNote[]).filter((note) =>
-        belongsToBranch(note, filterBranch, branchName),
+        belongsToBranch(note, filterBranch, label.name, label.code),
       );
       setCreditNotes(notes);
       setCachedList(cacheKey, notes);
@@ -171,9 +187,9 @@ export function useDebitNotes(branchId?: string, deferInitialLoad = false) {
     try {
       const result = await api.fiscalDocuments.listDebitNotes(branchId);
       if (result.error) throw new Error(result.error);
-      const branchName = branchId ? await resolveBranchName(branchId) : '';
+      const label = branchId ? await resolveBranchLabel(branchId) : { name: '', code: '' };
       const notes = ((result.data || []) as DebitNote[]).filter((note) =>
-        belongsToBranch(note, branchId, branchName),
+        belongsToBranch(note, branchId, label.name, label.code),
       );
       setDebitNotes(notes);
       setCachedList(cacheKey, notes);
