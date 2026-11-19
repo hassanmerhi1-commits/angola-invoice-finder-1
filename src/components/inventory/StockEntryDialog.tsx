@@ -91,6 +91,7 @@ export type StockEntryReason =
   | 'correction';
 
 export interface EntryItem {
+  rowId?: string;
   productId: string;
   sku: string;
   name: string;
@@ -399,10 +400,14 @@ export function StockEntryDialog({
     void loadImportCatalog();
   }, [open, entryBranchId, loadImportCatalog]);
 
-  const productsById = useMemo(
-    () => new Map(catalogProducts.map((p) => [p.id, p])),
-    [catalogProducts],
-  );
+  const productsById = useMemo(() => {
+    const map = new Map<string, Product>();
+    for (const product of [...catalogProducts, ...importLookupProducts]) {
+      if (!product?.id || product.isActive === false) continue;
+      map.set(product.id, product);
+    }
+    return map;
+  }, [catalogProducts, importLookupProducts]);
 
   const branchNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -682,6 +687,7 @@ export function StockEntryDialog({
       const product = resolveProductForEntry(picked);
       const branchId = entryBranchId;
       items.push({
+        rowId: line.rowId,
         productId: product.id,
         sku: product.sku,
         name: product.name,
@@ -869,12 +875,15 @@ export function StockEntryDialog({
       }>();
 
       for (const row of data) {
-        const catalogProduct = findProductForStockEntryImport(
+        const matched = findProductForStockEntryImport(
           catalog,
           row.codigo,
           entryBranchId,
           row.descricao,
         );
+        const catalogProduct = matched
+          ? (findProductForBranchSku(catalog, matched.sku, entryBranchId) ?? matched)
+          : undefined;
         const skuKey = normalizeSearchText(catalogProduct?.sku || row.codigo);
         if (!skuKey) continue;
 
@@ -1063,9 +1072,10 @@ export function StockEntryDialog({
     if (itemsValue === 0 || totalLandingCosts === 0) return {};
     const allocations: Record<string, number> = {};
     fulfilledItems.forEach((item) => {
+      if (!item.rowId || item.quantity <= 0) return;
       const itemValue = item.quantity * item.cost;
       const proportion = itemValue / itemsValue;
-      allocations[item.productId] = (totalLandingCosts * proportion) / item.quantity;
+      allocations[item.rowId] = (totalLandingCosts * proportion) / item.quantity;
     });
     return allocations;
   }, [fulfilledItems, itemsValue, totalLandingCosts]);
@@ -1150,8 +1160,8 @@ export function StockEntryDialog({
 
     const itemsWithFreight = fulfilledItems.map((item) => ({
       ...item,
-      freightAllocation: freightAllocations[item.productId] || 0,
-      effectiveCost: item.cost + (freightAllocations[item.productId] || 0),
+      freightAllocation: (item.rowId && freightAllocations[item.rowId]) || 0,
+      effectiveCost: item.cost + ((item.rowId && freightAllocations[item.rowId]) || 0),
     }));
 
     setSubmitting(true);
@@ -1508,9 +1518,7 @@ export function StockEntryDialog({
                   const product = line.productId ? productsById.get(line.productId) : undefined;
                   const stock = stockAtEntryBranch(product);
                   const stockAfter = product ? stock + line.quantity : null;
-                  const freightPerUnit = line.productId
-                    ? freightAllocations[line.productId] || 0
-                    : 0;
+                  const freightPerUnit = freightAllocations[line.rowId] || 0;
                   const effectiveCost = (line.cost || 0) + freightPerUnit;
                   const lineTotal = product ? line.quantity * effectiveCost : 0;
 
