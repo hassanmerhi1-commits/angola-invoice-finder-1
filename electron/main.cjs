@@ -3861,7 +3861,7 @@ function confirmMessage(parentWindow, copy, confirmLabel) {
       ? parentWindow
       : BrowserWindow.getFocusedWindow() ||
         (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
-  const response = dialog.showMessageBoxSync(win, {
+  const options = {
     type: 'warning',
     buttons: [copy.cancel, confirmLabel],
     defaultId: 0,
@@ -3870,8 +3870,13 @@ function confirmMessage(parentWindow, copy, confirmLabel) {
     title: copy.title,
     message: copy.message,
     detail: copy.detail,
-  });
-  return response === 1;
+  };
+  // Async on purpose. A blocking dialog inside the close event made Windows
+  // quit every NEXOR window when the first one was closed.
+  const pending = win
+    ? dialog.showMessageBox(win, options)
+    : dialog.showMessageBox(options);
+  return pending.then((result) => result.response === 1);
 }
 
 function confirmAppExit(parentWindow) {
@@ -3884,28 +3889,43 @@ function confirmCloseWindow(parentWindow) {
   return confirmMessage(parentWindow, copy, copy.close);
 }
 
-function hasOtherUserWindows(except) {
-  return BrowserWindow.getAllWindows().some((win) =>
+function otherUserWindows(except) {
+  return BrowserWindow.getAllWindows().filter((win) =>
     win
+    && win.__nexorUserWindow
     && !win.isDestroyed()
     && win !== except
-    && win !== splashWindow
-    && win.isVisible(),
+    && win !== splashWindow,
   );
 }
 
 /** Every close asks first. One window closing leaves the others open. The last window quits the app. */
 function attachUserWindowClose(win) {
+  win.__nexorUserWindow = true;
   win.on('close', (event) => {
     if (quitConfirmed || quittingForUpdate || win.__nexorAllowClose) return;
     event.preventDefault();
-    if (hasOtherUserWindows(win)) {
-      if (!confirmCloseWindow(win)) return;
-      win.__nexorAllowClose = true;
-      win.close();
-      return;
-    }
-    requestAppExit(win);
+    if (win.__nexorClosePrompt) return;
+    const closingOneOfMany = otherUserWindows(win).length > 0;
+    win.__nexorClosePrompt = true;
+    const ask = closingOneOfMany ? confirmCloseWindow(win) : confirmAppExit(win);
+    void ask.then((ok) => {
+      win.__nexorClosePrompt = false;
+      if (!ok || win.isDestroyed()) return;
+      if (otherUserWindows(win).length > 0) {
+        win.__nexorAllowClose = true;
+        if (win === mainWindow) {
+          mainWindow = otherUserWindows(win)[0] || null;
+        }
+        // destroy skips the close event, so this cannot turn into a full quit.
+        win.destroy();
+        return;
+      }
+      quitConfirmed = true;
+      app.quit();
+    }).catch(() => {
+      win.__nexorClosePrompt = false;
+    });
   });
 }
 
@@ -3917,10 +3937,11 @@ function requestAppExit(parentWindow) {
   const parent = parentWindow && !parentWindow.isDestroyed()
     ? parentWindow
     : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
-  if (confirmAppExit(parent)) {
+  void confirmAppExit(parent).then((ok) => {
+    if (!ok || quitConfirmed) return;
     quitConfirmed = true;
     app.quit();
-  }
+  }).catch(() => {});
 }
 
 const WINDOW_CHROME = {
@@ -4062,7 +4083,9 @@ function createWindow() {
 
   attachUserWindowClose(mainWindow);
 
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    if (mainWindow && mainWindow.isDestroyed()) mainWindow = otherUserWindows()[0] || null;
+  });
 }
 
 /**
@@ -4298,6 +4321,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (quittingForUpdate) return;
+  if (otherUserWindows().length > 0) return;
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
@@ -4331,7 +4355,8 @@ let isQuittingCleanly = false;
 app.on('before-quit', async (event) => {
   if (!quitConfirmed && !quittingForUpdate) {
     event.preventDefault();
-    requestAppExit();
+    // A single window already asked. Do not ask again here — that quit every window.
+    if (otherUserWindows().length === 0) requestAppExit();
     return;
   }
   if (isQuittingCleanly) return; // second pass after we re-trigger app.quit()
