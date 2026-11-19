@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { getCompanySettings } from '@/lib/companySettings';
 
 export function useCompanyLogo() {
-  const [logo, setLogo] = useState<string | null>(null);
-  const [companyName, setCompanyName] = useState('NEXOR ERP');
+  const cached = getCompanySettings();
+  const [logo, setLogo] = useState<string | null>(cached.logo || null);
+  const [companyName, setCompanyName] = useState(cached.tradeName || cached.name || 'NEXOR ERP');
 
   useEffect(() => {
     const loadSettings = () => {

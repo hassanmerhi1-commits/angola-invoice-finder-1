@@ -291,6 +291,8 @@ const CONNECTION_SEED_KEYS = [
   'kwanza_setup_complete',
   'nexor_installation_role',
   'nexor_offline_first',
+  'kwanza_company_settings',
+  'kwanzaerp_branches',
 ];
 
 ipcMain.on('nexor:connectionSeed', (event) => {
@@ -3836,8 +3838,24 @@ function loadUiLanguageFromDisk() {
   }
 }
 
-function confirmAppExit(parentWindow) {
-  const copy = APP_EXIT_DIALOG[cachedUiLanguage] || APP_EXIT_DIALOG.pt;
+const WINDOW_CLOSE_DIALOG = {
+  en: {
+    title: 'NEXOR ERP',
+    message: 'Close this window?',
+    detail: 'Are you sure? The other NEXOR windows stay open.',
+    cancel: 'Cancel',
+    close: 'Close',
+  },
+  pt: {
+    title: 'NEXOR ERP',
+    message: 'Fechar esta janela?',
+    detail: 'Tem a certeza? As outras janelas do NEXOR ficam abertas.',
+    cancel: 'Cancelar',
+    close: 'Fechar',
+  },
+};
+
+function confirmMessage(parentWindow, copy, confirmLabel) {
   const win =
     parentWindow && !parentWindow.isDestroyed()
       ? parentWindow
@@ -3845,7 +3863,7 @@ function confirmAppExit(parentWindow) {
         (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
   const response = dialog.showMessageBoxSync(win, {
     type: 'warning',
-    buttons: [copy.cancel, copy.quit],
+    buttons: [copy.cancel, confirmLabel],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -3854,6 +3872,16 @@ function confirmAppExit(parentWindow) {
     detail: copy.detail,
   });
   return response === 1;
+}
+
+function confirmAppExit(parentWindow) {
+  const copy = APP_EXIT_DIALOG[cachedUiLanguage] || APP_EXIT_DIALOG.pt;
+  return confirmMessage(parentWindow, copy, copy.quit);
+}
+
+function confirmCloseWindow(parentWindow) {
+  const copy = WINDOW_CLOSE_DIALOG[cachedUiLanguage] || WINDOW_CLOSE_DIALOG.pt;
+  return confirmMessage(parentWindow, copy, copy.close);
 }
 
 function hasOtherUserWindows(except) {
@@ -3866,12 +3894,17 @@ function hasOtherUserWindows(except) {
   );
 }
 
-/** Closing one window leaves the others open. The exit question is only for the last window. */
+/** Every close asks first. One window closing leaves the others open. The last window quits the app. */
 function attachUserWindowClose(win) {
   win.on('close', (event) => {
-    if (quitConfirmed || quittingForUpdate) return;
-    if (hasOtherUserWindows(win)) return;
+    if (quitConfirmed || quittingForUpdate || win.__nexorAllowClose) return;
     event.preventDefault();
+    if (hasOtherUserWindows(win)) {
+      if (!confirmCloseWindow(win)) return;
+      win.__nexorAllowClose = true;
+      win.close();
+      return;
+    }
     requestAppExit(win);
   });
 }
@@ -4047,14 +4080,6 @@ function originFromHttpUrl(raw) {
   }
 }
 
-async function originHasDatabase(origin) {
-  let parsed;
-  try { parsed = new URL(origin); } catch (_) { return false; }
-  const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
-  if (!Number.isFinite(port) || port <= 0) return false;
-  return probeRemoteExpressHealth(parsed.hostname, port, 1500);
-}
-
 async function hintApiOriginFromWindow(win) {
   if (!win || win.isDestroyed()) return '';
   try {
@@ -4110,11 +4135,8 @@ async function resolveLiveDatabaseAppUrl() {
     if (origin && !candidates.includes(origin)) candidates.push(origin);
   } catch (_) {}
 
-  for (const origin of candidates) {
-    try {
-      if (await originHasDatabase(origin)) return `${origin}/app/#/`;
-    } catch (_) {}
-  }
+  // The window already on screen knows the database. Open that at once.
+  if (candidates[0]) return `${candidates[0]}/app/#/`;
   return '';
 }
 

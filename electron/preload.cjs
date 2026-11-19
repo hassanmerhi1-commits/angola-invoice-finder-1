@@ -76,6 +76,8 @@ const CONNECTION_SEED_KEYS = [
   'kwanza_setup_complete',
   'nexor_installation_role',
   'nexor_offline_first',
+  'kwanza_company_settings',
+  'kwanzaerp_branches',
 ];
 try {
   const raw = ipcRenderer.sendSync('nexor:connectionSeed');
