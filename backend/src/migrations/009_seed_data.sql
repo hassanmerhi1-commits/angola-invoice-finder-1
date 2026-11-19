@@ -36,21 +36,47 @@ VALUES (
   true
 ) ON CONFLICT (email) DO NOTHING;
 
--- Sample categories
+-- Default categories (AFRIBEST list). Existing databases skip this file.
 INSERT INTO categories (name, description, color, is_active) VALUES
-  ('Alimentação', 'Produtos alimentares', '#22c55e', true),
-  ('Bebidas', 'Bebidas alcoólicas e não-alcoólicas', '#3b82f6', true),
-  ('Limpeza', 'Produtos de limpeza', '#f59e0b', true),
-  ('Electrónica', 'Equipamentos electrónicos', '#8b5cf6', true)
+  ('ACUCAR E SAL', '', '#6b7280', true),
+  ('AGUA', '', '#6b7280', true),
+  ('ANTISEPTICOS', '', '#6b7280', true),
+  ('APERITIVOS', '', '#6b7280', true),
+  ('ARROZ', '', '#6b7280', true),
+  ('AZEITONAS E PICKLES', '', '#6b7280', true),
+  ('BOLACHA', '', '#6b7280', true),
+  ('CAFE E CHA', '', '#6b7280', true),
+  ('CALDOS', '', '#6b7280', true),
+  ('CHOCOLATE', '', '#6b7280', true),
+  ('CONSERVA DE CARNE', '', '#6b7280', true),
+  ('CONSERVA DE LEGUMES', '', '#6b7280', true),
+  ('CONSERVA DE PEIXE', '', '#6b7280', true),
+  ('DETERGENTE', '', '#6b7280', true),
+  ('DISCARTAVEIS', '', '#6b7280', true),
+  ('DIVERSOS', '', '#6b7280', true),
+  ('FARINHA', '', '#6b7280', true),
+  ('FRALDAS', '', '#6b7280', true),
+  ('GUARDNAPOS E PH', '', '#6b7280', true),
+  ('LEITE', '', '#6b7280', true),
+  ('MAIONESE E KETCHUP', '', '#6b7280', true),
+  ('MASSAS', '', '#6b7280', true),
+  ('MATERIAL DE ESCRITORIO', '', '#6b7280', true),
+  ('OLEO E AZEITE', '', '#6b7280', true),
+  ('PASTA DENETE E ESCOVA DENTE', '', '#6b7280', true),
+  ('PERFUMS', '', '#6b7280', true),
+  ('PLASTICO', '', '#6b7280', true),
+  ('REBUCADOS', '', '#6b7280', true),
+  ('SABONETE', '', '#6b7280', true),
+  ('SUMOS', '', '#6b7280', true)
 ON CONFLICT DO NOTHING;
 
 -- Sample products
 INSERT INTO products (name, sku, barcode, category, price, cost, stock, unit, tax_rate, branch_id, is_active) VALUES
-  ('Arroz 1kg', 'ARR001', '5601234000001', 'Alimentação', 850.00, 600.00, 100, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
-  ('Óleo Alimentar 1L', 'OLE001', '5601234000002', 'Alimentação', 1200.00, 900.00, 50, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
-  ('Água Mineral 1.5L', 'AGU001', '5601234000003', 'Bebidas', 350.00, 200.00, 200, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
-  ('Coca-Cola 330ml', 'COC001', '5601234000004', 'Bebidas', 450.00, 300.00, 150, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
-  ('Detergente Omo 1kg', 'DET001', '5601234000005', 'Limpeza', 2500.00, 1800.00, 75, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true)
+  ('Arroz 1kg', 'ARR001', '5601234000001', 'ARROZ', 850.00, 600.00, 100, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
+  ('Óleo Alimentar 1L', 'OLE001', '5601234000002', 'OLEO E AZEITE', 1200.00, 900.00, 50, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
+  ('Água Mineral 1.5L', 'AGU001', '5601234000003', 'AGUA', 350.00, 200.00, 200, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
+  ('Coca-Cola 330ml', 'COC001', '5601234000004', 'SUMOS', 450.00, 300.00, 150, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true),
+  ('Detergente Omo 1kg', 'DET001', '5601234000005', 'DETERGENTE', 2500.00, 1800.00, 75, 'un', 5.00, 'b0000000-0000-0000-0000-000000000001', true)
 ON CONFLICT DO NOTHING;
 
 -- Sample clients

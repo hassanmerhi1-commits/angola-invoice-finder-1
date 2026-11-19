@@ -17,6 +17,7 @@ import {
   mapBranchRow,
   resolveEffectiveUserBranch,
 } from '@/lib/branchAccess';
+import { INVENTORY_FOOD_CATEGORY_NAMES } from '@/lib/inventoryFoodCategories';
 
 // ============= MODE DETECTION =============
 export function isElectronMode(): boolean {
@@ -1670,22 +1671,13 @@ function getDefaultUsers(): User[] {
 
 function getDefaultCategories(): Category[] {
   const ts = new Date().toISOString();
-  return [
-    // Root families
-    { id: 'cat-001', name: 'Alimentação', description: 'Produtos alimentares', parentId: null, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-002', name: 'Bebidas', description: 'Bebidas e sumos', parentId: null, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-003', name: 'Limpeza', description: 'Produtos de limpeza', parentId: null, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-004', name: 'Higiene', description: 'Higiene pessoal', parentId: null, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-005', name: 'Electrónicos', description: 'Electrónicos e acessórios', parentId: null, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-006', name: 'Outros', description: 'Outros produtos', parentId: null, isActive: true, createdAt: ts, updatedAt: ts },
-    // Sub-categories
-    { id: 'cat-101', name: 'Arroz', description: '', parentId: 'cat-001', isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-102', name: 'Açúcar', description: '', parentId: 'cat-001', isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-103', name: 'Farinha', description: '', parentId: 'cat-001', isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-104', name: 'Óleo', description: '', parentId: 'cat-001', isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-201', name: 'Água', description: '', parentId: 'cat-002', isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-202', name: 'Gasosa', description: '', parentId: 'cat-002', isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-203', name: 'Sumos', description: '', parentId: 'cat-002', isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'cat-204', name: 'Cerveja', description: '', parentId: 'cat-002', isActive: true, createdAt: ts, updatedAt: ts },
-  ];
+  return INVENTORY_FOOD_CATEGORY_NAMES.map((name, index) => ({
+    id: `cat-${String(index + 1).padStart(3, '0')}`,
+    name,
+    description: '',
+    parentId: null,
+    isActive: true,
+    createdAt: ts,
+    updatedAt: ts,
+  }));
 }

@@ -1398,6 +1398,26 @@ async function ensureClientsUniqueNif(db) {
   }
 }
 
+/** A brand-new database with no category rows gets the AFRIBEST list. A database that already has categories is left alone. */
+async function ensureDefaultCategories(db) {
+  const { DEFAULT_CATEGORY_NAMES } = require('./defaultCategoryNames');
+  try {
+    const count = await db.query('SELECT COUNT(*) AS n FROM categories');
+    const n = Number(count.rows?.[0]?.n || 0);
+    if (n > 0) return;
+    const active = db.engine === 'postgres' ? true : 1;
+    for (const name of DEFAULT_CATEGORY_NAMES) {
+      await db.query(
+        'INSERT INTO categories (name, description, color, is_active) VALUES ($1, $2, $3, $4)',
+        [name, '', '#6b7280', active],
+      );
+    }
+    console.log(`[SCHEMA] Seeded ${DEFAULT_CATEGORY_NAMES.length} default categories`);
+  } catch (err) {
+    console.warn('[SCHEMA] default categories:', err.message);
+  }
+}
+
 async function ensurePhaseSchema(db) {
   if (db.engine === 'postgres') {
     await ensureDocumentSequencesBranchScope(db);
@@ -1482,6 +1502,7 @@ async function ensurePhaseSchema(db) {
       console.warn('[SCHEMA] caixa COA sync:', e.message);
     }
     await repairCreditNoteCaixaGlAccounts(db);
+    await ensureDefaultCategories(db);
     try {
       const { repairShiftedPurchaseJournalDates } = require('./purchaseInvoicePosting');
       const shifted = await repairShiftedPurchaseJournalDates(db);
@@ -1555,6 +1576,7 @@ async function ensurePhaseSchema(db) {
       console.log(`[SCHEMA] Created ${caixaEnsure.created} branch caixa account(s)`);
     }
     await repairCreditNoteCaixaGlAccounts(db);
+    await ensureDefaultCategories(db);
     console.log('[SCHEMA] SQLite phase column patches applied');
   }
 }
