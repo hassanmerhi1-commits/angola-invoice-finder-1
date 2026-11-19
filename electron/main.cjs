@@ -297,6 +297,12 @@ ipcMain.on('nexor:connectionSeed', (event) => {
   event.returnValue = connectionSeedJson || '{}';
 });
 
+/** Real API origin for an extra window. A static /app cache on another port has no database. */
+let liveApiOrigin = '';
+ipcMain.on('nexor:liveApiOrigin', (event) => {
+  event.returnValue = liveApiOrigin || '';
+});
+
 function liveAppEntryUrl(win) {
   if (!win || win.isDestroyed()) return '';
   let raw = '';
@@ -3850,12 +3856,34 @@ function confirmAppExit(parentWindow) {
   return response === 1;
 }
 
-function requestAppExit() {
+function hasOtherUserWindows(except) {
+  return BrowserWindow.getAllWindows().some((win) =>
+    win
+    && !win.isDestroyed()
+    && win !== except
+    && win !== splashWindow
+    && win.isVisible(),
+  );
+}
+
+/** Closing one window leaves the others open. The exit question is only for the last window. */
+function attachUserWindowClose(win) {
+  win.on('close', (event) => {
+    if (quitConfirmed || quittingForUpdate) return;
+    if (hasOtherUserWindows(win)) return;
+    event.preventDefault();
+    requestAppExit(win);
+  });
+}
+
+function requestAppExit(parentWindow) {
   if (quitConfirmed) {
     app.quit();
     return;
   }
-  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const parent = parentWindow && !parentWindow.isDestroyed()
+    ? parentWindow
+    : (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
   if (confirmAppExit(parent)) {
     quitConfirmed = true;
     app.quit();
@@ -3999,11 +4027,7 @@ function createWindow() {
   // If the renderer hangs before ready-to-show, don't leave a blank splash forever.
   setTimeout(revealMainWindow, isDev ? 10000 : 20000);
 
-  mainWindow.on('close', (event) => {
-    if (quitConfirmed) return;
-    event.preventDefault();
-    requestAppExit();
-  });
+  attachUserWindowClose(mainWindow);
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -4013,6 +4037,87 @@ function createWindow() {
  * its own isolated session, so a different user/branch can be logged in at the same time.
  * Closing this window only closes the window (it does not quit the app).
  */
+function originFromHttpUrl(raw) {
+  try {
+    const parsed = new URL(String(raw || '').trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    return parsed.origin;
+  } catch (_) {
+    return '';
+  }
+}
+
+async function originHasDatabase(origin) {
+  let parsed;
+  try { parsed = new URL(origin); } catch (_) { return false; }
+  const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
+  if (!Number.isFinite(port) || port <= 0) return false;
+  return probeRemoteExpressHealth(parsed.hostname, port, 1500);
+}
+
+async function hintApiOriginFromWindow(win) {
+  if (!win || win.isDestroyed()) return '';
+  try {
+    const raw = await win.webContents.executeJavaScript(
+      `(() => {
+        const clean = (value) => String(value || '').replace(/\\/$/, '');
+        try {
+          const saved = localStorage.getItem('kwanza_api_url');
+          if (saved && /^https?:\\/\\//i.test(saved)) return clean(saved);
+          const cfg = JSON.parse(localStorage.getItem('kwanza_client_config') || 'null');
+          if (cfg && cfg.serverIp) {
+            const host = String(cfg.serverIp).replace(/^https?:\\/\\//i, '').split('/')[0].split(':')[0];
+            const port = Number(cfg.httpPort || cfg.apiPort || 3000);
+            if (host) return 'http://' + host + ':' + port;
+          }
+        } catch (e) {}
+        const path = location.pathname || '';
+        const onApp = path === '/app' || path.startsWith('/app/');
+        const host = String(location.hostname || '').toLowerCase();
+        const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+        if (onApp && (!loopback || String(location.port || '') === '3000')) return location.origin;
+        const port = window.__KWANZA_BACKEND_PORT__;
+        if (typeof port === 'number' && port > 0) return 'http://127.0.0.1:' + port;
+        return '';
+      })()`,
+      true,
+    );
+    return originFromHttpUrl(raw);
+  } catch (_) {
+    return '';
+  }
+}
+
+/** Extra windows must open the database the current window is already using. */
+async function resolveLiveDatabaseAppUrl() {
+  const ordered = [];
+  if (mainWindow && !mainWindow.isDestroyed()) ordered.push(mainWindow);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win && !win.isDestroyed() && win !== splashWindow && !ordered.includes(win)) ordered.push(win);
+  }
+  const candidates = [];
+  for (const win of ordered) {
+    const hinted = await hintApiOriginFromWindow(win);
+    if (hinted && !candidates.includes(hinted)) candidates.push(hinted);
+  }
+  if (isServerMode) {
+    const local = `http://127.0.0.1:${readServerListenPort()}`;
+    if (!candidates.includes(local)) candidates.push(local);
+  }
+  try {
+    const city = resolveCityServerUrl();
+    const origin = originFromHttpUrl(city);
+    if (origin && !candidates.includes(origin)) candidates.push(origin);
+  } catch (_) {}
+
+  for (const origin of candidates) {
+    try {
+      if (await originHasDatabase(origin)) return `${origin}/app/#/`;
+    } catch (_) {}
+  }
+  return '';
+}
+
 async function rememberConnectionSeed() {
   const source = (mainWindow && !mainWindow.isDestroyed())
     ? mainWindow
@@ -4038,9 +4143,8 @@ function createSecondaryWindow() {
 
 async function openSecondaryWindow() {
   await rememberConnectionSeed();
-  const entry = liveAppEntryUrl(mainWindow)
-    || BrowserWindow.getAllWindows().map(liveAppEntryUrl).find(Boolean)
-    || '';
+  const entry = await resolveLiveDatabaseAppUrl();
+  liveApiOrigin = originFromHttpUrl(entry);
   // Ephemeral, unique session partition → independent login/storage per window.
   const partition = `nexor-login-${++secondaryWindowSeq}-${Date.now()}`;
   const chrome = chromeForTheme(readStoredColorTheme());
@@ -4090,6 +4194,7 @@ async function openSecondaryWindow() {
   win.webContents.on('dom-ready', inject);
   win.webContents.on('did-finish-load', inject);
 
+  attachUserWindowClose(win);
   win.once('ready-to-show', () => { if (!win.isDestroyed()) { win.show(); win.focus(); } });
   // Safety reveal if the renderer stalls before ready-to-show.
   setTimeout(() => { if (!win.isDestroyed() && !win.isVisible()) win.show(); }, isDev ? 10000 : 20000);

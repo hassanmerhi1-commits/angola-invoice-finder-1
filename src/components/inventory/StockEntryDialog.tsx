@@ -243,6 +243,10 @@ export function StockEntryDialog({
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importLookupProducts, setImportLookupProducts] = useState<Product[]>([]);
   const [importCatalogLoading, setImportCatalogLoading] = useState(false);
+  const importCatalogBranchRef = useRef('');
+  const importCatalogRowsRef = useRef<Product[]>([]);
+  const importCatalogInflightRef = useRef<Promise<Product[]> | null>(null);
+  const importMatchCountRef = useRef(0);
 
   const catalogProducts = useMemo(() => {
     const base = searchProducts && searchProducts.length > 0 ? searchProducts : products;
@@ -368,35 +372,46 @@ export function StockEntryDialog({
     return Array.from(byId.values());
   }, [searchableProducts, importLookupProducts]);
 
-  const loadImportCatalog = useCallback(async () => {
+  importMatchCountRef.current = searchableProducts.length + importLookupProducts.length;
+
+  const loadImportCatalog = useCallback(async (force = false) => {
     if (!entryBranchId) return [] as Product[];
-    setImportCatalogLoading(true);
-    try {
-      // Light list only — import matching needs sku/name/barcode/cost, not full stock rows.
-      // Branch list already includes company-wide catalog masters (0 stock) for filials.
-      const branchRes = await api.products.list(entryBranchId, { light: true });
-      const merged = new Map<string, Product>();
-      for (const row of branchRes.data || []) {
-        const product = mapApiProductRow(row as Record<string, unknown>);
-        if (product.isActive !== false) merged.set(product.id, product);
-      }
-      const rows = Array.from(merged.values());
-      setImportLookupProducts(rows);
-      return rows;
-    } catch {
-      setImportLookupProducts([]);
-      return [];
-    } finally {
-      setImportCatalogLoading(false);
+    if (!force && importCatalogBranchRef.current === entryBranchId) {
+      return importCatalogRowsRef.current;
     }
+    if (!force && importCatalogInflightRef.current) return importCatalogInflightRef.current;
+
+    const branchId = entryBranchId;
+    const task = (async () => {
+      // The inventory list is enough to pick a file. Only block when it is empty.
+      if (importMatchCountRef.current === 0) setImportCatalogLoading(true);
+      try {
+        // Light list only — import matching needs sku/name/barcode/cost, not full stock rows.
+        // Branch list already includes company-wide catalog masters (0 stock) for filials.
+        const branchRes = await api.products.list(branchId, { light: true });
+        const merged = new Map<string, Product>();
+        for (const row of branchRes.data || []) {
+          const product = mapApiProductRow(row as Record<string, unknown>);
+          if (product.isActive !== false) merged.set(product.id, product);
+        }
+        const rows = Array.from(merged.values());
+        importCatalogRowsRef.current = rows;
+        importCatalogBranchRef.current = branchId;
+        setImportLookupProducts(rows);
+        return rows;
+      } catch {
+        return importCatalogRowsRef.current;
+      } finally {
+        importCatalogInflightRef.current = null;
+        setImportCatalogLoading(false);
+      }
+    })();
+    importCatalogInflightRef.current = task;
+    return task;
   }, [entryBranchId]);
 
   useEffect(() => {
-    if (!open || !entryBranchId) {
-      setImportLookupProducts([]);
-      setImportCatalogLoading(false);
-      return;
-    }
+    if (!open || !entryBranchId) return;
     void loadImportCatalog();
   }, [open, entryBranchId, loadImportCatalog]);
 
@@ -862,7 +877,7 @@ export function StockEntryDialog({
         const batch = await api.products.batchImport(payload);
         createdCount = Number(batch.data?.imported || 0);
         // Refresh light catalog so new SKUs resolve for line fill.
-        const refreshed = await loadImportCatalog();
+        const refreshed = await loadImportCatalog(true);
         if (refreshed.length > 0) catalog = refreshed;
       }
 
@@ -979,10 +994,10 @@ export function StockEntryDialog({
       });
       return;
     }
-    // Open immediately, but block file pick until the light catalog finishes —
-    // otherwise every row fails as "Product not found" and Import is hidden.
+    // The product list already on screen is enough to choose the file.
+    // A fuller list loads in the background and does not block this click.
     setImportDialogOpen(true);
-    void loadImportCatalog();
+    if (importCatalogBranchRef.current !== entryBranchId) void loadImportCatalog();
   }, [entryBranchId, loadImportCatalog, toast, t.stockEntryUi]);
 
   const handleProductKeyDown = (
@@ -1778,7 +1793,7 @@ export function StockEntryDialog({
         validateData={validateStockEntryImport}
         onImport={handleImportFromExcel}
         downloadTemplate={downloadStockEntryImportTemplate}
-        catalogLoading={importCatalogLoading}
+        catalogLoading={importCatalogLoading && productsForImport.length === 0}
         catalogSize={productsForImport.length}
         columns={[
           { key: 'codigo', label: t.stockEntryUi.colCode },

@@ -259,6 +259,11 @@ function isLiveAppPath(pathname: string): boolean {
 export function apiBaseFromWindowOrigin(): string | null {
   if (typeof window === 'undefined') return null;
   try {
+    const pinned = (window as any).__NEXOR_API_ORIGIN__;
+    if (typeof pinned === 'string' && /^https?:\/\//i.test(pinned)) {
+      const origin = pinned.replace(/\/$/, '');
+      if (window.location.origin.replace(/\/$/, '') === origin) return origin;
+    }
     const proto = window.location.protocol;
     if (proto !== 'http:' && proto !== 'https:') return null;
     const host = window.location.hostname.toLowerCase();

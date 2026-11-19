@@ -10,6 +10,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 let backendHttpOrigin = null;
 let backendPortSync = 0;
+let liveApiOrigin = '';
 try {
   const o = ipcRenderer.sendSync('backend:getHttpOriginSync');
   if (typeof o === 'string' && /^https?:\/\//i.test(o)) backendHttpOrigin = o;
@@ -22,6 +23,23 @@ try {
 } catch (_) {
   /* ipc not ready */
 }
+try {
+  const origin = ipcRenderer.sendSync('nexor:liveApiOrigin');
+  if (typeof origin === 'string' && /^https?:\/\//i.test(origin)) {
+    liveApiOrigin = origin.replace(/\/$/, '');
+  }
+} catch (_) {
+  /* first window */
+}
+
+function pageOriginMatchesLiveApi() {
+  try {
+    if (!liveApiOrigin || !pageIsLiveApp()) return false;
+    return window.location.origin.replace(/\/$/, '') === liveApiOrigin;
+  } catch (_) {
+    return false;
+  }
+}
 
 function pageIsLiveApp() {
   try {
@@ -32,9 +50,17 @@ function pageIsLiveApp() {
   }
 }
 
-// A window opened on /app already knows its server. Injecting the embedded
-// port here sent a second login at a local SQLite file.
-if (backendPortSync > 0 && !pageIsLiveApp()) {
+// A window opened on the real /app already knows its server. Injecting the
+// embedded port here sent a second login at a local SQLite file.
+// The static /app cache on another port has no database, so only trust the
+// origin the main process checked.
+if (pageOriginMatchesLiveApi()) {
+  try {
+    contextBridge.exposeInMainWorld('__NEXOR_API_ORIGIN__', liveApiOrigin);
+  } catch (_) {
+    /* hot-reload / second preload */
+  }
+} else if (backendPortSync > 0 && !pageIsLiveApp()) {
   try {
     contextBridge.exposeInMainWorld('__KWANZA_BACKEND_PORT__', backendPortSync);
   } catch (_) {
