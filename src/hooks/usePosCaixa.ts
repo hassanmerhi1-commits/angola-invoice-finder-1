@@ -298,13 +298,22 @@ async function syncOpenSessionToCity(
   branchName: string,
 ): Promise<CaixaSession | null> {
   try {
-    await api.caixa.ensureRegister({
+    let caixaId = sess.caixaId;
+    const ensureRes = await api.caixa.ensureRegister({
       branchId: sess.branchId,
       branchName: branchName || sess.branchId,
     });
+    if (!ensureRes.error && ensureRes.data) {
+      const body = ensureRes.data as Record<string, unknown>;
+      const row = (body.data && typeof body.data === 'object')
+        ? body.data as Record<string, unknown>
+        : body;
+      const id = String(row.id || '').trim();
+      if (id) caixaId = id;
+    }
     const openRes = await api.caixa.openSession({
       id: sess.id,
-      caixaId: sess.caixaId,
+      caixaId,
       branchId: sess.branchId,
       branchName: branchName || sess.branchId,
       openingBalance: sess.openingBalance,
@@ -314,9 +323,11 @@ async function syncOpenSessionToCity(
       forceNew: true,
     });
     if (openRes.error) {
-      // HTTP rejection is a real answer (permission, validation, SQL). Surface it.
-      // No status means the city was never reached — keep the offline shift.
-      if (openRes.status != null && openRes.status >= 400) {
+      // 400/401/403/409/422 are a real answer. Timeouts, 5xx, and status 0 mean
+      // the city was not reached — the shift already opened on this PC stays.
+      const status = openRes.status;
+      const cityRefused = status === 400 || status === 401 || status === 403 || status === 409 || status === 422;
+      if (cityRefused) {
         const rejected = new Error(String(openRes.error));
         rejected.name = 'CaixaOpenRejected';
         throw rejected;
@@ -436,6 +447,10 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
             live?.status === 'open'
             && liveOpenedMs(live) >= probeStartedAt - 2000;
           if (openedDuringProbe) return;
+          if (live?.status === 'open' && live.pendingCitySync) {
+            writePosCaixaCache(branchId, live);
+            return;
+          }
           if (sticky.pendingCitySync) {
             writePosCaixaCache(branchId, sticky);
             void syncOpenSessionToCity(sticky, branchName || branchId).then((adopted) => {
@@ -559,7 +574,8 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       }
       const live = sessionRef.current;
       const liveOpenedMs = new Date(live?.openedAt || live?.createdAt || 0).getTime();
-      if (live?.status === 'open' && liveOpenedMs >= probeStartedAt - 2000) {
+      if (live?.status === 'open' && (live.pendingCitySync || liveOpenedMs >= probeStartedAt - 2000)) {
+        if (live.pendingCitySync) writePosCaixaCache(branchId, live);
         setLoading(false);
         return;
       }
@@ -646,6 +662,7 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
         try {
           cx = await ensureBranchCaixa(branchId, branchName || branchId, {
             ensureIfEmpty: true,
+            localOnly: true,
           });
         } catch (err) {
           // Missing caixa_open must not block the shift. Session open creates
@@ -656,19 +673,29 @@ export function usePosCaixa(branchId?: string, branchName?: string) {
       if (cx) setCaixa(cx);
 
       const sess = await openCaixaSession(cx?.id || '', branchId, openingCash, openedBy);
-
-      const adopted = await syncOpenSessionToCity(sess, branchName || branchId);
-      if (adopted) {
-        patchLocalCaixaSession(adopted.id, { pendingCitySync: false });
-        setSession(adopted);
-        writePosCaixaCache(branchId, adopted);
-        return adopted;
-      }
-
+      // Show the till now. Waiting for the city left this screen up while offline.
       const offlineOpen = { ...sess, pendingCitySync: true };
       patchLocalCaixaSession(sess.id, { pendingCitySync: true });
       setSession(offlineOpen);
       writePosCaixaCache(branchId, offlineOpen);
+
+      try {
+        const adopted = await syncOpenSessionToCity(sess, branchName || branchId);
+        if (adopted) {
+          patchLocalCaixaSession(adopted.id, { pendingCitySync: false });
+          setSession(adopted);
+          writePosCaixaCache(branchId, adopted);
+          return adopted;
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === 'CaixaOpenRejected') {
+          setSession(null);
+          clearPosCaixaCache(branchId);
+          await sealLocalAfterCityClosed(branchId);
+          throw err;
+        }
+      }
+
       return offlineOpen;
     },
     [branchId, branchName, caixa],

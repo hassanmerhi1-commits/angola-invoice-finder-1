@@ -178,6 +178,8 @@ export interface Client {
   nif: string;
   email?: string;
   phone?: string;
+  /** Phone of the client's accountant. `phone` is the account manager. */
+  accountantPhone?: string;
   address?: string;
   city?: string;
   country: string;
@@ -293,6 +295,8 @@ export interface Supplier {
   nif: string;
   email?: string;
   phone?: string;
+  /** Phone of the supplier's accountant. `phone` is the account manager. */
+  accountantPhone?: string;
   address?: string;
   city?: string;
   country: string;

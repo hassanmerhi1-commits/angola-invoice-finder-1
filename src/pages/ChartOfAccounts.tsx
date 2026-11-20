@@ -43,6 +43,7 @@ import { SupplierFormDialog } from '@/components/suppliers/SupplierFormDialog';
 import { chartNewActionTab, type ChartNewAction } from '@/lib/chartOfAccountsNewActions';
 import { accountingForTab, COA_DISPLAY_TABS, resolveDisplayTab, type CoaDisplayTab } from '@/lib/coaDisplayTab';
 import { useBranchContext } from '@/contexts/BranchContext';
+import { useClients, useSuppliers } from '@/hooks/useERP';
 import {
   CASH_PARENT_CODE,
   defaultBranchCaixaName,
@@ -58,6 +59,45 @@ import { isCashCategoryParent, isCompactCategoryParent, isEightDigitAccountCode,
 // Class 2 Existências stays an asset on the books; the Custos tab shows it for daily use.
 const isExistenciasAccount = (account: Pick<Account, 'code'>) =>
   String(account.code || '').startsWith('2');
+
+type PartyContact = { nif: string; phone: string };
+
+function partyKey(value: string) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function partyPhone(phone?: string, accountantPhone?: string) {
+  const manager = String(phone || '').trim();
+  const accountant = String(accountantPhone || '').trim();
+  if (manager && accountant && manager !== accountant) return `${manager} · ${accountant}`;
+  return manager || accountant;
+}
+
+function buildPartyIndex(rows: { name?: string; nif?: string; phone?: string; accountantPhone?: string }[]) {
+  const byName = new Map<string, PartyContact>();
+  const byNif = new Map<string, PartyContact>();
+  for (const row of rows) {
+    const contact = {
+      nif: String(row.nif || '').trim(),
+      phone: partyPhone(row.phone, row.accountantPhone),
+    };
+    const name = partyKey(row.name || '');
+    if (name) byName.set(name, contact);
+    const nif = partyKey(row.nif || '').replace(/\s/g, '');
+    if (nif) byNif.set(nif, contact);
+  }
+  return { byName, byNif };
+}
+
+function contactForAccount(
+  account: Account,
+  index: { byName: Map<string, PartyContact>; byNif: Map<string, PartyContact> } | null,
+): PartyContact | null {
+  if (!index || !isEightDigitAccountCode(String(account.code || ''))) return null;
+  const nif = (String(account.description || '').match(/NIF:\s*([0-9A-Za-z]+)/i)?.[1] || '').toLowerCase();
+  if (nif && index.byNif.has(nif)) return index.byNif.get(nif) || null;
+  return index.byName.get(partyKey(account.name)) || null;
+}
 
 const CATEGORY_TABS = [
   { key: 'clientes', labelKey: 'tabCustomers', filter: (a: Account) => String(a.code || '').startsWith('31') },
@@ -152,6 +192,8 @@ export default function ChartOfAccounts() {
   const uiLocale = language === 'pt' ? 'pt-AO' : 'en-US';
   const { accounts, isLoading, refetch, createAccount, updateAccount, deleteAccount } = useChartOfAccounts();
   const { branches } = useBranchContext();
+  const { clients } = useClients();
+  const { suppliers } = useSuppliers();
 
   const [activeTab, setActiveTab] = useState('todos');
   const [searchTerm, setSearchTerm] = useState('');
@@ -306,6 +348,12 @@ export default function ChartOfAccounts() {
 
   // Filter accounts by tab + search
   const currentTabConfig = CATEGORY_TABS.find(t => t.key === activeTab) || CATEGORY_TABS[CATEGORY_TABS.length - 1];
+  const showPartyColumns = activeTab === 'clientes' || activeTab === 'fornecedores';
+  const partyIndex = useMemo(() => {
+    if (activeTab === 'clientes') return buildPartyIndex(clients);
+    if (activeTab === 'fornecedores') return buildPartyIndex(suppliers);
+    return null;
+  }, [activeTab, clients, suppliers]);
   
   const searchQuery = searchTerm.trim().toLowerCase();
 
@@ -1185,6 +1233,12 @@ export default function ChartOfAccounts() {
               <tr>
                 <th className="px-3 py-2 text-left font-semibold w-32">{t.chartOfAccountsUi.colAccountNo}</th>
                 <th className="px-3 py-2 text-left font-semibold">{t.common.name}</th>
+                {showPartyColumns && (
+                  <>
+                    <th className="px-3 py-2 text-left font-semibold w-36">{t.suppliersUi.colNif}</th>
+                    <th className="px-3 py-2 text-left font-semibold w-40">{t.common.phone}</th>
+                  </>
+                )}
                 <th className="px-3 py-2 text-center font-semibold w-16">{t.chartOfAccountsUi.colCurrency}</th>
                 <th className="px-3 py-2 text-right font-semibold w-28">{t.chartOfAccountsUi.colDebit}</th>
                 <th className="px-3 py-2 text-right font-semibold w-28">{t.chartOfAccountsUi.colCredit}</th>
@@ -1204,6 +1258,7 @@ export default function ChartOfAccounts() {
                   onOpenLedger={openLedger}
                   childrenByParent={childrenByParent}
                   rolledBalanceById={rolledBalanceById}
+                  partyIndex={partyIndex}
                   expandedIds={expandedIds}
                   selectedAccountId={selectedAccountId}
                   language={language}
@@ -1214,7 +1269,7 @@ export default function ChartOfAccounts() {
             {/* Totals footer */}
             <tfoot className="bg-muted/80 border-t-2 border-primary/30">
               <tr className="font-bold text-xs">
-                <td className="px-3 py-2" colSpan={3}>
+                <td className="px-3 py-2" colSpan={showPartyColumns ? 5 : 3}>
                   {t.chartOfAccountsUi.totalAccounts
                     .replace('{count}', String(
                       // While searching, count the hits — not the ancestor rows carried
@@ -1610,6 +1665,7 @@ interface AccountTreeRowProps {
   onOpenLedger: (account: Account) => void;
   childrenByParent: Map<string, Account[]>;
   rolledBalanceById: Map<string, number>;
+  partyIndex: { byName: Map<string, PartyContact>; byNif: Map<string, PartyContact> } | null;
   expandedIds: Set<string>;
   selectedAccountId: string | null;
   language: 'en' | 'pt';
@@ -1626,6 +1682,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
   onOpenLedger,
   childrenByParent,
   rolledBalanceById,
+  partyIndex,
   expandedIds,
   selectedAccountId,
   language,
@@ -1655,6 +1712,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
   const creditCol = isCreditNature && displayBalance > 0
     ? displayBalance
     : (!isCreditNature && displayBalance < 0 ? Math.abs(displayBalance) : 0);
+  const contact = contactForAccount(account, partyIndex);
 
   return (
     <>
@@ -1693,6 +1751,12 @@ const AccountTreeRow = memo(function AccountTreeRow({
             </span>
           )}
         </td>
+        {partyIndex && (
+          <>
+            <td className="px-3 py-1.5 font-mono text-muted-foreground">{contact?.nif || ''}</td>
+            <td className="px-3 py-1.5">{contact?.phone || ''}</td>
+          </>
+        )}
         <td className="px-3 py-1.5 text-center text-muted-foreground">AOA</td>
         <td className="px-3 py-1.5 text-right font-mono">
           {debitCol > 0 ? `${debitCol.toLocaleString(uiLocale)}` : ''}
@@ -1716,6 +1780,7 @@ const AccountTreeRow = memo(function AccountTreeRow({
           onOpenLedger={onOpenLedger}
           childrenByParent={childrenByParent}
           rolledBalanceById={rolledBalanceById}
+          partyIndex={partyIndex}
           expandedIds={expandedIds}
           selectedAccountId={selectedAccountId}
           language={language}

@@ -56,6 +56,8 @@ export const en = {
     name: "Name",
     email: "Email",
     phone: "Phone",
+    accountManagerPhone: "Account manager phone",
+    accountantPhone: "Accountant phone",
     address: "Address",
     notes: "Notes",
     product: "Product",

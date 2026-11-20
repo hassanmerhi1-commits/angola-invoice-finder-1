@@ -42,6 +42,7 @@ const EMPTY_FORM = {
   nif: '',
   email: '',
   phone: '',
+  accountantPhone: '',
   address: '',
   city: '',
   country: 'Angola',
@@ -156,6 +157,7 @@ export function ClientFormDialog({
         nif: client.nif,
         email: client.email || '',
         phone: client.phone || '',
+        accountantPhone: client.accountantPhone || '',
         address: client.address || '',
         city: client.city || '',
         country: client.country,
@@ -334,11 +336,20 @@ export function ClientFormDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="coa-client-phone">{t.common.phone}</Label>
+              <Label htmlFor="coa-client-phone">{t.common.accountManagerPhone}</Label>
               <Input
                 id="coa-client-phone"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                placeholder="+244 9XX XXX XXX"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="coa-client-accountant-phone">{t.common.accountantPhone}</Label>
+              <Input
+                id="coa-client-accountant-phone"
+                value={formData.accountantPhone}
+                onChange={(e) => setFormData({ ...formData, accountantPhone: e.target.value })}
                 placeholder="+244 9XX XXX XXX"
               />
             </div>

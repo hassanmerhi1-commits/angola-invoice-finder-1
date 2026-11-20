@@ -58,8 +58,9 @@ module.exports = function(broadcastTable) {
 
   // Create client (idempotent by NIF — retry after network error must not duplicate)
   router.post('/', requirePermission('client_manage', 'invoice_create'), async (req, res) => {
-    const { name, nif, email, phone, address, city, country, creditLimit, credit_limit, currentBalance, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays, accountParentCode } = req.body;
+    const { name, nif, email, phone, accountantPhone, accountant_phone, address, city, country, creditLimit, credit_limit, currentBalance, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays, accountParentCode } = req.body;
     const resolvedCreditLimit = creditLimit ?? credit_limit;
+    const accountantPhoneValue = String(accountantPhone ?? accountant_phone ?? '').trim();
 
     if (!String(name || '').trim()) {
       return res.status(400).json({ error: 'Name is required' });
@@ -91,14 +92,15 @@ module.exports = function(broadcastTable) {
           const revived = await conn.query(
             `UPDATE clients
              SET is_active = true, name = $1, email = COALESCE($2, email), phone = COALESCE($3, phone),
-                 address = COALESCE($4, address), city = COALESCE($5, city),
-                 country = COALESCE($6, country), credit_limit = COALESCE($7, credit_limit),
-                 default_price_level = $8, price_adjustment_pct = $9, payment_terms_days = $10,
+                 accountant_phone = COALESCE($4, accountant_phone),
+                 address = COALESCE($5, address), city = COALESCE($6, city),
+                 country = COALESCE($7, country), credit_limit = COALESCE($8, credit_limit),
+                 default_price_level = $9, price_adjustment_pct = $10, payment_terms_days = $11,
                  updated_at = CURRENT_TIMESTAMP
-             WHERE id = $11
+             WHERE id = $12
              RETURNING *`,
             [
-              name.trim(), email || null, phone || null, address || null, city || null,
+              name.trim(), email || null, phone || null, accountantPhoneValue || null, address || null, city || null,
               country || 'Angola', resolvedCreditLimit ?? null, priceLevel, adjustment, termsDays, existing.id,
             ],
           );
@@ -122,10 +124,10 @@ module.exports = function(broadcastTable) {
       let created;
       try {
         const result = await conn.query(
-          `INSERT INTO clients (name, nif, email, phone, address, city, country, credit_limit, current_balance, default_price_level, price_adjustment_pct, payment_terms_days)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          `INSERT INTO clients (name, nif, email, phone, accountant_phone, address, city, country, credit_limit, current_balance, default_price_level, price_adjustment_pct, payment_terms_days)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *`,
-          [name.trim(), normalizedNif, email, phone, address, city, country || 'Angola', resolvedCreditLimit || 0, currentBalance || 0, priceLevel, adjustment, termsDays]
+          [name.trim(), normalizedNif, email, phone, accountantPhoneValue, address, city, country || 'Angola', resolvedCreditLimit || 0, currentBalance || 0, priceLevel, adjustment, termsDays]
         );
         created = result.rows[0];
       } catch (insertErr) {
@@ -178,7 +180,8 @@ module.exports = function(broadcastTable) {
   router.put('/:id', requirePermission('client_manage', 'invoice_create'), async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, nif, email, phone, address, city, country, creditLimit, currentBalance, isActive, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays } = req.body;
+      const { name, nif, email, phone, accountantPhone, accountant_phone, address, city, country, creditLimit, currentBalance, isActive, defaultPriceLevel, priceAdjustmentPct, paymentTermsDays } = req.body;
+      const accountantPhoneValue = String(accountantPhone ?? accountant_phone ?? '').trim();
 
       if (!String(name || '').trim()) {
         return res.status(400).json({ error: 'Name is required' });
@@ -208,13 +211,13 @@ module.exports = function(broadcastTable) {
 
       const result = await db.query(
         `UPDATE clients 
-         SET name = $1, nif = $2, email = $3, phone = $4, address = $5, city = $6, 
-             country = $7, credit_limit = $8, current_balance = $9, is_active = $10,
-             default_price_level = $11, price_adjustment_pct = $12, payment_terms_days = $13,
+         SET name = $1, nif = $2, email = $3, phone = $4, accountant_phone = $5, address = $6, city = $7, 
+             country = $8, credit_limit = $9, current_balance = $10, is_active = $11,
+             default_price_level = $12, price_adjustment_pct = $13, payment_terms_days = $14,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $14
+         WHERE id = $15
          RETURNING *`,
-        [name.trim(), normalizedNif, email, phone, address, city, country, creditLimit, currentBalance, isActive, priceLevel, adjustment, termsDays, id]
+        [name.trim(), normalizedNif, email, phone, accountantPhoneValue, address, city, country, creditLimit, currentBalance, isActive, priceLevel, adjustment, termsDays, id]
       );
       
       await broadcastTable('clients');

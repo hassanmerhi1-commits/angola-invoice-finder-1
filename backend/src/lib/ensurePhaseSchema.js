@@ -97,6 +97,37 @@ async function ensureClientPricingColumns(db) {
   }
 }
 
+/** Account-manager phone stays in `phone`. Accountant phone is a second number. */
+async function ensureContactPhoneColumns(db) {
+  const tables = ['clients', 'suppliers'];
+  if (db.engine === 'postgres') {
+    for (const table of tables) {
+      try {
+        await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS accountant_phone TEXT DEFAULT ''`);
+      } catch (err) {
+        if (err.code !== '42701') console.warn(`[SCHEMA] ${table} accountant_phone:`, err.message);
+      }
+    }
+    return;
+  }
+  if (!db.sqlite) return;
+  for (const table of tables) {
+    let cols = [];
+    try {
+      cols = db.sqlite.pragma(`table_info(${table})`);
+    } catch (_) {
+      continue;
+    }
+    if (!cols.length) continue;
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has('accountant_phone')) {
+      try {
+        db.sqlite.exec(`ALTER TABLE ${table} ADD COLUMN accountant_phone TEXT DEFAULT ''`);
+      } catch (_) {}
+    }
+  }
+}
+
 /** Allow `credit` (on-account) sales in payment_method CHECK constraints. Returns true when DB allows credit. */
 async function ensureSalesCreditPaymentMethod(db) {
   const allowedList = "('cash', 'card', 'transfer', 'cheque', 'mixed', 'credit')";
@@ -1436,6 +1467,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureContactPhoneColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureBranchPostingColumns(db);
@@ -1533,6 +1565,7 @@ async function ensurePhaseSchema(db) {
     } catch (_) {}
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
+    await ensureContactPhoneColumns(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureBranchPostingColumns(db);

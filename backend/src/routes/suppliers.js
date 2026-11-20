@@ -58,16 +58,17 @@ module.exports = function(broadcastTable) {
     try {
       await client.query('BEGIN');
 
-      const { name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, accountParentCode } = req.body;
+      const { name, nif, email, phone, accountantPhone, accountant_phone, address, city, country, contactPerson, paymentTerms, notes, accountParentCode } = req.body;
+      const accountantPhoneValue = cleanText(accountantPhone ?? accountant_phone);
       const normalizedName = cleanText(name);
       const normalizedNif = normalizeSupplierNif(nif);
       if (!normalizedName) {
         throw new Error('Nome do fornecedor é obrigatório');
       }
       const result = await client.query(
-        `INSERT INTO suppliers (name, nif, email, phone, address, city, country, contact_person, payment_terms, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        [normalizedName, normalizedNif, cleanText(email), cleanText(phone), cleanText(address), cleanText(city), cleanText(country) || 'Angola', cleanText(contactPerson), paymentTerms || '30_days', cleanText(notes)]
+        `INSERT INTO suppliers (name, nif, email, phone, accountant_phone, address, city, country, contact_person, payment_terms, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [normalizedName, normalizedNif, cleanText(email), cleanText(phone), accountantPhoneValue, cleanText(address), cleanText(city), cleanText(country) || 'Angola', cleanText(contactPerson), paymentTerms || '30_days', cleanText(notes)]
       );
 
       const supplier = result.rows[0];
@@ -213,13 +214,14 @@ module.exports = function(broadcastTable) {
   router.put('/:id', requirePermission('purchase_create', 'admin_settings'), async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, isActive, accountParentCode } = req.body;
+      const { name, nif, email, phone, accountantPhone, accountant_phone, address, city, country, contactPerson, paymentTerms, notes, isActive, accountParentCode } = req.body;
+      const accountantPhoneValue = cleanText(accountantPhone ?? accountant_phone);
       const result = await db.query(
         `UPDATE suppliers 
-         SET name = $1, nif = $2, email = $3, phone = $4, address = $5, city = $6, 
-             country = $7, contact_person = $8, payment_terms = $9, notes = $10, is_active = $11, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $12 RETURNING *`,
-        [name, nif, email, phone, address, city, country, contactPerson, paymentTerms, notes, isActive, id]
+         SET name = $1, nif = $2, email = $3, phone = $4, accountant_phone = $5, address = $6, city = $7, 
+             country = $8, contact_person = $9, payment_terms = $10, notes = $11, is_active = $12, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $13 RETURNING *`,
+        [name, nif, email, phone, accountantPhoneValue, address, city, country, contactPerson, paymentTerms, notes, isActive, id]
       );
       let movedAccount = null;
       const parentCode = String(accountParentCode || '').trim();

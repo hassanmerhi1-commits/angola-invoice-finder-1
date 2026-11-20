@@ -1511,7 +1511,7 @@ function mapUserToDb(user: User): any {
 function mapClientFromDb(row: any): Client {
   return {
     id: row.id, name: row.name, nif: row.nif || '',
-    email: row.email, phone: row.phone, address: row.address,
+    email: row.email, phone: row.phone, accountantPhone: row.accountant_phone ?? row.accountantPhone, address: row.address,
     city: row.city, country: row.country ?? row.province ?? 'Angola',
     creditLimit: Number(row.credit_limit ?? row.creditLimit ?? 0),
     currentBalance: Number(row.balance ?? row.current_balance ?? row.currentBalance ?? 0),
@@ -1525,6 +1525,7 @@ function mapClientToDb(client: Client): any {
   return {
     id: client.id, name: client.name, nif: client.nif,
     email: client.email || '', phone: client.phone || '',
+    accountant_phone: client.accountantPhone || '',
     address: client.address || '', city: client.city || '',
     province: client.country || 'Angola',
     credit_limit: client.creditLimit, balance: client.currentBalance,
@@ -1535,7 +1536,7 @@ function mapClientToDb(client: Client): any {
 function mapSupplierFromDb(row: any): Supplier {
   return {
     id: row.id, name: row.name, nif: row.nif || '',
-    email: row.email, phone: row.phone, address: row.address,
+    email: row.email, phone: row.phone, accountantPhone: row.accountant_phone ?? row.accountantPhone, address: row.address,
     city: row.city, country: row.country ?? row.province ?? 'Angola',
     contactPerson: row.contact_person ?? row.contactPerson,
     paymentTerms: row.payment_terms ?? row.paymentTerms ?? '30_days',
@@ -1551,6 +1552,7 @@ function mapSupplierToDb(supplier: Supplier): any {
   return {
     id: supplier.id, name: supplier.name, nif: supplier.nif,
     email: supplier.email || '', phone: supplier.phone || '',
+    accountant_phone: supplier.accountantPhone || '',
     address: supplier.address || '', city: supplier.city || '',
     country: supplier.country || 'Angola',
     contact_person: supplier.contactPerson || '',

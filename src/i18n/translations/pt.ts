@@ -58,6 +58,8 @@ export const pt: TranslationKeys = {
     name: "Nome",
     email: "Email",
     phone: "Telefone",
+    accountManagerPhone: "Telefone do gestor de conta",
+    accountantPhone: "Telefone do contabilista",
     address: "Endereço",
     notes: "Notas",
     product: "Produto",

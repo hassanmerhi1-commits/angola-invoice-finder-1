@@ -699,9 +699,9 @@ export async function ensureBranchCaixa(
   if (existing.length > 0) {
     return existing[0];
   }
-  if (opts?.localOnly && canPersistTreasuryLocally()) {
-    // Offline LAN till / preview — city register not reachable on this PC.
-    const caixa: Caixa = {
+  if (opts?.localOnly) {
+    // No local register yet. Do not wait on the city, and do not invent a saved row.
+    return {
       id: newUuid(),
       branchId,
       branchName,
@@ -711,8 +711,6 @@ export async function ensureBranchCaixa(
       status: 'closed',
       createdAt: new Date().toISOString(),
     };
-    await saveCaixa(caixa);
-    return caixa;
   }
   const withEnsure = await getCaixas(branchId, branchName, {
     ensureIfEmpty: opts?.ensureIfEmpty ?? true,
@@ -1044,19 +1042,18 @@ export async function openCaixaSession(
     }
   }
   
-  const caixa = await getCaixaById(resolvedCaixaId);
+  const localCaixas = await getCaixas(branchId, undefined, { localOnly: true });
+  const caixa = localCaixas.find((c) => c.id === resolvedCaixaId);
   if (caixa) {
     caixa.status = 'open';
     caixa.openedAt = session.openedAt;
     caixa.openedBy = openedBy;
-    try {
-      await saveCaixa(caixa);
-    } catch (err) {
+    void saveCaixa(caixa).catch((err) => {
       // PUT /registers/:id is a settings write (caixa_open). Cashiers only have
       // pos_access. A 403 here must not abort the shift — POST /sessions/open
       // is the write that actually opens the drawer, including a zero float.
       console.warn('[accountingStorage] caixa mirror on open failed:', err);
-    }
+    });
   }
 
   return session;

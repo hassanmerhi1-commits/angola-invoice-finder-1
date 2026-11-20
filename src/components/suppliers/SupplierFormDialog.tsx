@@ -45,6 +45,7 @@ const EMPTY_FORM = {
   nif: '',
   email: '',
   phone: '',
+  accountantPhone: '',
   address: '',
   city: '',
   country: 'Angola',
@@ -160,6 +161,7 @@ export function SupplierFormDialog({
         nif: supplier.nif,
         email: supplier.email || '',
         phone: supplier.phone || '',
+        accountantPhone: supplier.accountantPhone || '',
         address: supplier.address || '',
         city: supplier.city || '',
         country: supplier.country,
@@ -294,7 +296,7 @@ export function SupplierFormDialog({
               onUseName={(name) => setFormData((prev) => ({ ...prev, name }))}
             />
           </div>
-          <div className="space-y-2">
+          <div className="col-span-2 space-y-2">
             <Label htmlFor="coa-supplier-nif">{t.suppliersUi.colNif}</Label>
             <Input
               id="coa-supplier-nif"
@@ -304,11 +306,21 @@ export function SupplierFormDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="coa-supplier-phone">{t.common.phone}</Label>
+            <Label htmlFor="coa-supplier-phone">{t.common.accountManagerPhone}</Label>
             <Input
               id="coa-supplier-phone"
               value={formData.phone}
               onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              placeholder="+244 9XX XXX XXX"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="coa-supplier-accountant-phone">{t.common.accountantPhone}</Label>
+            <Input
+              id="coa-supplier-accountant-phone"
+              value={formData.accountantPhone}
+              onChange={(e) => setFormData({ ...formData, accountantPhone: e.target.value })}
+              placeholder="+244 9XX XXX XXX"
             />
           </div>
           <div className="col-span-2 space-y-2">
