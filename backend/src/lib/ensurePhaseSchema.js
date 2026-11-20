@@ -128,6 +128,37 @@ async function ensureContactPhoneColumns(db) {
   }
 }
 
+/** Users.role must accept every role the User Management screen can create. */
+async function ensureUserRoleValues(db) {
+  if (db.engine !== 'postgres') return;
+  try {
+    await db.query(`
+      DO $$
+      DECLARE r record;
+      BEGIN
+        FOR r IN
+          SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t ON c.conrelid = t.oid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname = 'public'
+            AND t.relname = 'users'
+            AND c.contype = 'c'
+            AND pg_get_constraintdef(c.oid) ILIKE '%role%'
+        LOOP
+          EXECUTE format('ALTER TABLE users DROP CONSTRAINT %I', r.conname);
+        END LOOP;
+      END $$;
+    `);
+    await db.query(
+      `ALTER TABLE users ADD CONSTRAINT users_role_check
+       CHECK (role IN ('admin', 'manager', 'stock_manager', 'accountant', 'cashier', 'viewer'))`,
+    );
+  } catch (err) {
+    console.warn('[SCHEMA] users role check:', err.message);
+  }
+}
+
 /** Allow `credit` (on-account) sales in payment_method CHECK constraints. Returns true when DB allows credit. */
 async function ensureSalesCreditPaymentMethod(db) {
   const allowedList = "('cash', 'card', 'transfer', 'cheque', 'mixed', 'credit')";
@@ -1468,6 +1499,7 @@ async function ensurePhaseSchema(db) {
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
     await ensureContactPhoneColumns(db);
+    await ensureUserRoleValues(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureBranchPostingColumns(db);
@@ -1566,6 +1598,7 @@ async function ensurePhaseSchema(db) {
     await ensureCreditNoteRestoreStockColumn(db);
     await ensureClientPricingColumns(db);
     await ensureContactPhoneColumns(db);
+    await ensureUserRoleValues(db);
     await ensureClientsUniqueNif(db);
     await ensureBranchPricingColumn(db);
     await ensureBranchPostingColumns(db);

@@ -11,7 +11,7 @@ type BranchAccessUser = { branchId?: string; role?: string } | null | undefined;
 
 function isHeadOfficeRole(role: unknown): boolean {
   const r = String(role || '').toLowerCase();
-  return r === 'admin' || r === 'manager';
+  return r === 'admin' || r === 'manager' || r === 'stock_manager' || r === 'accountant';
 }
 
 /** SQLite/API may return 1, 0, '1', true, etc. */
@@ -111,7 +111,7 @@ export function looksLikeHeadOfficeBranch(branch: Branch | null | undefined): bo
  */
 export function canUserSwitchBranch(user: BranchAccessUser, userBranch: Branch | null): boolean {
   const role = String(user?.role || '').toLowerCase();
-  if (role !== 'admin' && role !== 'manager') return false;
+  if (!isHeadOfficeRole(role)) return false;
   if (!userBranch) return true;
   return looksLikeHeadOfficeBranch(userBranch);
 }

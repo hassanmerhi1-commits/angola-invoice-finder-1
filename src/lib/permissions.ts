@@ -1,7 +1,7 @@
 // NEXOR ERP - User Roles & Permissions System
 // Every button, every tab, every action is permission-controlled
 
-export type UserRole = 'admin' | 'manager' | 'cashier' | 'viewer';
+export type UserRole = 'admin' | 'manager' | 'stock_manager' | 'accountant' | 'cashier' | 'viewer';
 
 export interface Permission {
   id: string;
@@ -111,6 +111,29 @@ export const DEFAULT_ROLE_PERMISSIONS: RolePermissions[] = [
     ],
   },
   {
+    role: 'stock_manager',
+    permissions: [
+      'inventory_view', 'inventory_create', 'inventory_edit', 'inventory_adjust', 'inventory_transfer',
+      'inventory_import', 'inventory_export', 'price_view', 'price_edit',
+      'purchase_create', 'purchase_receive',
+      'reports_stock', 'reports_supplier_statement',
+    ],
+  },
+  {
+    role: 'accountant',
+    permissions: [
+      'invoice_create', 'invoice_view', 'invoice_print',
+      'credit_note_create', 'debit_note_create', 'receipt_create', 'agt_send', 'saft_export',
+      'accounting_view', 'accounting_create', 'accounting_journal',
+      'accounting_payment', 'accounting_receipt',
+      'bank_manage', 'expense_create', 'expense_approve', 'client_manage',
+      'inventory_view', 'price_view',
+      'purchase_create', 'purchase_invoice_confirm',
+      'reports_daily', 'reports_financial', 'reports_stock', 'reports_audit',
+      'reports_client_statement', 'reports_supplier_statement',
+    ],
+  },
+  {
     role: 'cashier',
     // POS + petty-cash expenses (taxi, materials) from the open till.
     // Everything else is granted per-user via permission overrides in User Management.
@@ -126,7 +149,13 @@ export const DEFAULT_ROLE_PERMISSIONS: RolePermissions[] = [
       'invoice_view',
       'accounting_view',
       'inventory_view',
+      'price_view',
       'reports_daily',
+      'reports_financial',
+      'reports_stock',
+      'reports_audit',
+      'reports_client_statement',
+      'reports_supplier_statement',
     ],
   },
 ];
@@ -135,14 +164,17 @@ export const DEFAULT_ROLE_PERMISSIONS: RolePermissions[] = [
 export const ROLE_NAMES: Record<UserRole, string> = {
   admin: 'Administrator',
   manager: 'Manager',
+  stock_manager: 'Stock Manager',
+  accountant: 'Accountant',
   cashier: 'Cashier',
-  viewer: 'Viewer',
+  viewer: 'Viewer (Read-only)',
 };
 
-// Role colors
 export const ROLE_COLORS: Record<UserRole, string> = {
   admin: 'bg-destructive text-destructive-foreground',
   manager: 'bg-primary text-primary-foreground',
+  stock_manager: 'bg-amber-700 text-white',
+  accountant: 'bg-sky-800 text-white',
   cashier: 'bg-secondary text-secondary-foreground',
   viewer: 'bg-muted text-muted-foreground',
 };

@@ -16,7 +16,7 @@ const {
   verifyPasswordWithDummyFallback,
 } = require('../lib/passwordAuth');
 const { findUserForLogin } = require('../lib/loginUserLookup');
-const { parsePermissionOverrides } = require('../lib/rolePermissions');
+const { parsePermissionOverrides, isKnownRole } = require('../lib/rolePermissions');
 const { resolveAndPersistUserBranchId } = require('../middleware/branchScope');
 const { startSession, endSession } = require('../lib/sessionLog');
 const {
@@ -424,6 +424,9 @@ router.post('/users', requireAdmin, async (req, res) => {
     if (!email || !name || !role) {
       return res.status(400).json({ error: 'Email, name and role are required' });
     }
+    if (!isKnownRole(role)) {
+      return res.status(400).json({ error: 'Unknown role' });
+    }
 
     const { email: normalizedEmail, username: normalizedUsername } = normalizeUserIdentity(email, username);
     const plainPassword = password != null && String(password).length > 0 ? String(password) : null;
@@ -499,6 +502,9 @@ router.put('/users/:id', requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     const before = existingRes.rows[0];
+    if (role != null && String(role).trim() !== '' && !isKnownRole(role)) {
+      return res.status(400).json({ error: 'Unknown role' });
+    }
 
     let normalizedEmail = null;
     let normalizedUsername = null;

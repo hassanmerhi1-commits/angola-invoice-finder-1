@@ -6247,8 +6247,10 @@ export const pt: TranslationKeys = {
     roles: {
       admin: "Administrador",
       manager: "Gestor",
+      stock_manager: "Gestor de stock",
+      accountant: "Contabilista",
       cashier: "Caixa",
-      viewer: "Visualizador",
+      viewer: "Visualizador (só leitura)",
     },
   },
 

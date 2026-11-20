@@ -10,7 +10,7 @@ function normalizeIsMain(value) {
 
 function isHeadOfficeRole(role) {
   const r = String(role || '').toLowerCase();
-  return r === 'admin' || r === 'manager';
+  return r === 'admin' || r === 'manager' || r === 'stock_manager' || r === 'accountant';
 }
 
 /** Match UI looksLikeHeadOfficeBranch: is_main, code MAIN/SEDE*, or name contains "sede". */

@@ -6245,8 +6245,10 @@ export const en = {
     roles: {
       admin: "Administrator",
       manager: "Manager",
+      stock_manager: "Stock Manager",
+      accountant: "Accountant",
       cashier: "Cashier",
-      viewer: "Viewer",
+      viewer: "Viewer (Read-only)",
     },
   },
 

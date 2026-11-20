@@ -143,7 +143,7 @@ export interface User {
   email: string;
   name: string;
   username?: string;
-  role: 'admin' | 'manager' | 'cashier' | 'viewer';
+  role: 'admin' | 'manager' | 'stock_manager' | 'accountant' | 'cashier' | 'viewer';
   branchId: string;
   isActive: boolean;
   createdAt: string;

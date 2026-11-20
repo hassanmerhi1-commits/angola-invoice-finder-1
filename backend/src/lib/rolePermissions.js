@@ -16,6 +16,23 @@ const ROLE_PERMISSIONS = {
     'reports_daily', 'reports_close', 'reports_financial', 'reports_stock', 'reports_audit',
     'reports_client_statement', 'reports_supplier_statement',
   ],
+  stock_manager: [
+    'inventory_view', 'inventory_create', 'inventory_edit', 'inventory_adjust', 'inventory_transfer',
+    'inventory_import', 'inventory_export', 'price_view', 'price_edit',
+    'purchase_create', 'purchase_receive',
+    'reports_stock', 'reports_supplier_statement',
+  ],
+  accountant: [
+    'invoice_create', 'invoice_view', 'invoice_print',
+    'credit_note_create', 'debit_note_create', 'receipt_create', 'agt_send', 'saft_export',
+    'accounting_view', 'accounting_create', 'accounting_journal',
+    'accounting_payment', 'accounting_receipt',
+    'bank_manage', 'expense_create', 'expense_approve', 'client_manage',
+    'inventory_view', 'price_view',
+    'purchase_create', 'purchase_invoice_confirm',
+    'reports_daily', 'reports_financial', 'reports_stock', 'reports_audit',
+    'reports_client_statement', 'reports_supplier_statement',
+  ],
   // POS + petty-cash expenses (taxi, materials) from the open till.
   cashier: [
     'pos_access', 'pos_discount',
@@ -26,8 +43,13 @@ const ROLE_PERMISSIONS = {
     'invoice_view',
     'accounting_view',
     'inventory_view',
+    'price_view',
     'reports_daily',
+    'reports_financial',
+    'reports_stock',
     'reports_audit',
+    'reports_client_statement',
+    'reports_supplier_statement',
   ],
 };
 
@@ -56,6 +78,11 @@ function allKnownPermissionIds() {
     }
   }
   return [...all];
+}
+
+function isKnownRole(role) {
+  const key = String(role || '').trim().toLowerCase();
+  return key === 'admin' || Object.prototype.hasOwnProperty.call(ROLE_PERMISSIONS, key);
 }
 
 function roleBaseline(role) {
@@ -122,6 +149,7 @@ module.exports = {
   userHasPermission,
   getEffectivePermissions,
   parsePermissionOverrides,
+  isKnownRole,
   ROLE_PERMISSIONS,
   roleBaseline,
 };
