@@ -62,15 +62,37 @@ const isExistenciasAccount = (account: Pick<Account, 'code'>) =>
 
 type PartyContact = { nif: string; phone: string };
 
-function partyKey(value: string) {
-  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
 function partyPhone(phone?: string, accountantPhone?: string) {
   const manager = String(phone || '').trim();
   const accountant = String(accountantPhone || '').trim();
   if (manager && accountant && manager !== accountant) return `${manager} · ${accountant}`;
   return manager || accountant;
+}
+
+/** Same company if the only difference is a comma, an accent, or LDA / SA. */
+function partyNameKey(value: string) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.,]/g, ' ')
+    .replace(/\b(lda|ltda|limitada|sa|sarl|llc|inc|co)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function nifKey(value: string) {
+  return String(value || '').replace(/[^0-9a-z]/gi, '').toLowerCase();
+}
+
+function labeledNif(value: string) {
+  return String(value || '').match(/NIF\s*:?\s*([0-9A-Za-z]+)/i)?.[1]?.trim() || '';
+}
+
+function preferContact(current: PartyContact | undefined, next: PartyContact) {
+  if (!current) return next;
+  const score = (row: PartyContact) => (row.nif ? 2 : 0) + (row.phone ? 1 : 0);
+  return score(next) >= score(current) ? next : current;
 }
 
 function buildPartyIndex(rows: { name?: string; nif?: string; phone?: string; accountantPhone?: string }[]) {
@@ -81,10 +103,10 @@ function buildPartyIndex(rows: { name?: string; nif?: string; phone?: string; ac
       nif: String(row.nif || '').trim(),
       phone: partyPhone(row.phone, row.accountantPhone),
     };
-    const name = partyKey(row.name || '');
-    if (name) byName.set(name, contact);
-    const nif = partyKey(row.nif || '').replace(/\s/g, '');
-    if (nif) byNif.set(nif, contact);
+    const name = partyNameKey(row.name || '');
+    if (name) byName.set(name, preferContact(byName.get(name), contact));
+    const nif = nifKey(row.nif || '');
+    if (nif) byNif.set(nif, preferContact(byNif.get(nif), contact));
   }
   return { byName, byNif };
 }
@@ -93,10 +115,15 @@ function contactForAccount(
   account: Account,
   index: { byName: Map<string, PartyContact>; byNif: Map<string, PartyContact> } | null,
 ): PartyContact | null {
-  if (!index || !isEightDigitAccountCode(String(account.code || ''))) return null;
-  const nif = (String(account.description || '').match(/NIF:\s*([0-9A-Za-z]+)/i)?.[1] || '').toLowerCase();
-  if (nif && index.byNif.has(nif)) return index.byNif.get(nif) || null;
-  return index.byName.get(partyKey(account.name)) || null;
+  const code = String(account.code || '');
+  if (!index || !/^(31|32)/.test(code) || !isEightDigitAccountCode(code)) return null;
+  const writtenNif = labeledNif(account.description || '');
+  const nif = nifKey(writtenNif);
+  const matched = (nif && index.byNif.get(nif)) || index.byName.get(partyNameKey(account.name)) || null;
+  const shownNif = matched?.nif || writtenNif;
+  const phone = matched?.phone || '';
+  if (!shownNif && !phone) return null;
+  return { nif: shownNif, phone };
 }
 
 const CATEGORY_TABS = [
@@ -348,10 +375,11 @@ export default function ChartOfAccounts() {
 
   // Filter accounts by tab + search
   const currentTabConfig = CATEGORY_TABS.find(t => t.key === activeTab) || CATEGORY_TABS[CATEGORY_TABS.length - 1];
-  const showPartyColumns = activeTab === 'clientes' || activeTab === 'fornecedores';
+  const showPartyColumns = activeTab === 'clientes' || activeTab === 'fornecedores' || activeTab === 'todos';
   const partyIndex = useMemo(() => {
     if (activeTab === 'clientes') return buildPartyIndex(clients);
     if (activeTab === 'fornecedores') return buildPartyIndex(suppliers);
+    if (activeTab === 'todos') return buildPartyIndex([...clients, ...suppliers]);
     return null;
   }, [activeTab, clients, suppliers]);
   

@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { useTranslation } from '@/i18n';
 import { readFocusId, scrollToNexorRow } from '@/lib/searchFocus';
 import { api } from '@/lib/api/client';
+import { useChartOfAccounts } from '@/hooks/useChartOfAccounts';
 import { WarehousesCard } from '@/components/branches/WarehousesCard';
 
 export default function Branches() {
@@ -44,19 +45,13 @@ export default function Branches() {
     name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1,
     salesAccountCode: '', purchaseAccountCode: '',
   });
-  const [chartAccounts, setChartAccounts] = useState<Array<{
-    code: string; name: string; account_type?: string; is_header?: boolean | number; is_active?: boolean | number;
-  }>>([]);
-
-  useEffect(() => {
-    api.chartOfAccounts.list().then((response) => {
-      if (Array.isArray(response.data)) setChartAccounts(response.data);
-    }).catch(() => {});
-  }, []);
+  const { accounts: chartAccounts } = useChartOfAccounts();
 
   const leafAccounts = (kind: 'revenue' | 'purchase') => chartAccounts.filter((account) => {
-    const header = account.is_header === true || account.is_header === 1;
-    const inactive = account.is_active === false || account.is_active === 0;
+    const headerFlag = account.is_header as boolean | number | string | null | undefined;
+    const header = headerFlag === true || headerFlag === 1 || headerFlag === '1' || headerFlag === 't' || headerFlag === 'true';
+    const activeFlag = account.is_active as boolean | number | string | null | undefined;
+    const inactive = activeFlag === false || activeFlag === 0 || activeFlag === '0' || activeFlag === 'f' || activeFlag === 'false';
     if (header || inactive || !account.code) return false;
     if (kind === 'revenue') return account.account_type === 'revenue';
     const code = String(account.code);

@@ -1393,6 +1393,12 @@ function purchaseListCacheKey(branchId: string | undefined, from: string, to: st
   return `purchaseInvoices:${branchId ?? 'all'}:${from}:${to}`;
 }
 
+/** The books use the city's purchase account. An empty setting stays on 212. */
+function cityPurchaseAccount(branch?: { purchaseAccountCode?: string } | null): string {
+  const code = String(branch?.purchaseAccountCode || '').trim();
+  return code || '212';
+}
+
 // ═══════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════
@@ -1867,6 +1873,7 @@ export default function PurchaseInvoices() {
       ...prev,
       warehouseId: branch.id,
       warehouseName: branch.name,
+      purchaseAccountCode: cityPurchaseAccount(branch),
     }));
     setPoForm((prev) => ({ ...prev, branchId: branch.id }));
   }, [listBranchId, currentBranch, branches]);
@@ -1991,7 +1998,7 @@ export default function PurchaseInvoices() {
       warehouseId: wid,
       warehouseName: wname,
       priceType: 'last_price',
-      purchaseAccountCode: '212',
+      purchaseAccountCode: cityPurchaseAccount(defaultBranch),
       ivaAccountCode: '3451',
       transactionType: 'ALL',
       currencyRate: 1,
@@ -2126,7 +2133,10 @@ export default function PurchaseInvoices() {
       warehouseId: full.warehouseId,
       warehouseName: full.warehouseName,
       priceType: full.priceType || 'last_price',
-      purchaseAccountCode: full.purchaseAccountCode || '212',
+      purchaseAccountCode: cityPurchaseAccount(
+        branches.find((b) => branchIdsEquivalent(b.id, full.warehouseId || full.branchId))
+        || branches.find((b) => branchIdsEquivalent(b.id, full.branchId)),
+      ),
       ivaAccountCode: full.ivaAccountCode || '3451',
       transactionType: full.transactionType || 'ALL',
       currencyRate: full.currencyRate ?? 1,
@@ -2169,7 +2179,7 @@ export default function PurchaseInvoices() {
     setSaveError(null);
     setSelectedListInvoiceId(full.id);
     setMode('create');
-  }, [canWorkOnInvoice, purchaseEditDeniedText, toast]);
+  }, [branches, canWorkOnInvoice, purchaseEditDeniedText, toast]);
 
   const handleMarkAsPaid = useCallback(async (inv: PurchaseInvoice) => {
     if (!inv.isPending) return;
@@ -4457,6 +4467,7 @@ export default function PurchaseInvoices() {
                   ...p,
                   warehouseId,
                   warehouseName,
+                  purchaseAccountCode: cityPurchaseAccount(br),
                 }));
                 applyWarehouseToLines(warehouseId, warehouseName);
               }}
@@ -4497,7 +4508,12 @@ export default function PurchaseInvoices() {
       {/* ═══ ACCOUNTING ROW (compact) ═══ */}
       <div className="flex items-center gap-3 px-3 py-1 bg-muted/30 border-b border-border shrink-0 text-[10px]">
         <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelPurchaseAccount}</span>
-        <Input value={form.purchaseAccountCode || ''} onChange={e => setForm(p => ({ ...p, purchaseAccountCode: e.target.value }))} className="h-6 w-16 text-[10px] font-mono px-1" />
+        <Input
+          readOnly
+          value={form.purchaseAccountCode || '212'}
+          title={t.branchesUi.purchaseAccountHint}
+          className="h-6 w-16 text-[10px] font-mono px-1 bg-muted/60"
+        />
         <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelVatAcct}</span>
         <Input value={form.ivaAccountCode || ''} onChange={e => setForm(p => ({ ...p, ivaAccountCode: e.target.value }))} className="h-6 w-16 text-[10px] font-mono px-1" />
         <span className="text-muted-foreground">{t.purchaseInvoicesUi.labelTx}</span>
