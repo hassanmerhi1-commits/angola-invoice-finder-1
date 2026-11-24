@@ -53,6 +53,8 @@ export default function Branches() {
     const activeFlag = account.is_active as boolean | number | string | null | undefined;
     const inactive = activeFlag === false || activeFlag === 0 || activeFlag === '0' || activeFlag === 'f' || activeFlag === 'false';
     if (header || inactive || !account.code) return false;
+    // The offline copy of the chart flashes, then the real chart replaces it.
+    if (String(account.id || '').startsWith('local-coa-')) return false;
     if (kind === 'revenue') return account.account_type === 'revenue';
     const code = String(account.code);
     return (account.account_type === 'expense' || account.account_type === 'asset') && code.startsWith('21');

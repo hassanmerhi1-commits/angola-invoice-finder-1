@@ -1549,6 +1549,8 @@ async function ensurePhaseSchema(db) {
     await ensureAccount75Detail(db);
     const { ensureLeafCodeGapsClosed } = require('./entityCoaAccounts');
     await ensureLeafCodeGapsClosed(db);
+    const { ensurePurchaseGoodsLeaves } = require('./ensurePurchaseGoodsLeaves');
+    await ensurePurchaseGoodsLeaves(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
       console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);
@@ -1633,6 +1635,8 @@ async function ensurePhaseSchema(db) {
     await ensureAccount75Detail(db);
     const { ensureLeafCodeGapsClosed } = require('./entityCoaAccounts');
     await ensureLeafCodeGapsClosed(db);
+    const { ensurePurchaseGoodsLeaves } = require('./ensurePurchaseGoodsLeaves');
+    await ensurePurchaseGoodsLeaves(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
       console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);
