@@ -798,6 +798,8 @@ export const api = {
           phone: data.phone || '',
           isMain: !!data.isMain,
           priceLevel: data.priceLevel ?? 1,
+          salesAccountCode: data.salesAccountCode ?? '',
+          purchaseAccountCode: data.purchaseAccountCode ?? '',
         };
         const apiResult = await apiFetch<any>('/branches', {
           method: 'POST',
@@ -828,6 +830,8 @@ export const api = {
           phone: data.phone || '',
           isMain: !!data.isMain,
           priceLevel: data.priceLevel ?? 1,
+          salesAccountCode: data.salesAccountCode ?? '',
+          purchaseAccountCode: data.purchaseAccountCode ?? '',
         };
         const apiResult = await apiFetch<any>(`/branches/${encodeURIComponent(id)}`, {
           method: 'PUT',
