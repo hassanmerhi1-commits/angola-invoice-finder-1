@@ -768,6 +768,13 @@ async function rewriteStoredSupplierAccountCode(client, oldCode, newCode) {
       WHERE CAST(purchase_account_code AS TEXT) = CAST($2 AS TEXT)`,
     [newCode, oldCode],
   );
+  await runRewrite(
+    client,
+    `UPDATE branches
+        SET return_account_code = $1
+      WHERE CAST(return_account_code AS TEXT) = CAST($2 AS TEXT)`,
+    [newCode, oldCode],
+  );
 }
 
 function retiredLeafCode(id) {

@@ -4510,6 +4510,8 @@ export const pt: TranslationKeys = {
     salesAccountHint: "Onde ficam as vendas desta cidade. Se ficar na conta padrão, continuam na 613.",
     purchaseAccountLabel: "Conta de compras",
     purchaseAccountHint: "Onde ficam as compras de mercadoria desta cidade. Se ficar na conta padrão, continuam na 212.",
+    returnAccountLabel: "Conta de devoluções",
+    returnAccountHint: "Onde ficam as devoluções de compra desta cidade. Se ficar na conta padrão, a devolução volta à conta de compras.",
     postingAccountDefault: "Conta padrão",
     mainBranchLabel: "Filial Principal (Sede)",
 

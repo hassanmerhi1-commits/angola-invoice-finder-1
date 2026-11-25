@@ -43,11 +43,11 @@ export default function Branches() {
 
   const [formData, setFormData] = useState({
     name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1,
-    salesAccountCode: '', purchaseAccountCode: '',
+    salesAccountCode: '', purchaseAccountCode: '', returnAccountCode: '',
   });
   const { accounts: chartAccounts } = useChartOfAccounts();
 
-  const leafAccounts = (kind: 'revenue' | 'purchase') => chartAccounts.filter((account) => {
+  const leafAccounts = (kind: 'revenue' | 'purchase' | 'return') => chartAccounts.filter((account) => {
     const headerFlag = account.is_header as boolean | number | string | null | undefined;
     const header = headerFlag === true || headerFlag === 1 || headerFlag === '1' || headerFlag === 't' || headerFlag === 'true';
     const activeFlag = account.is_active as boolean | number | string | null | undefined;
@@ -57,13 +57,15 @@ export default function Branches() {
     if (String(account.id || '').startsWith('local-coa-')) return false;
     if (kind === 'revenue') return account.account_type === 'revenue';
     const code = String(account.code);
-    return (account.account_type === 'expense' || account.account_type === 'asset') && code.startsWith('21');
+    const postable = account.account_type === 'expense' || account.account_type === 'asset';
+    if (kind === 'return') return postable && code.startsWith('217');
+    return postable && code.startsWith('21') && !code.startsWith('217') && !code.startsWith('218');
   }).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 
   const resetForm = () => {
     setFormData({
       name: '', code: '', address: '', phone: '', isMain: false, priceLevel: 1,
-      salesAccountCode: '', purchaseAccountCode: '',
+      salesAccountCode: '', purchaseAccountCode: '', returnAccountCode: '',
     });
     setEditingBranch(null);
   };
@@ -78,6 +80,7 @@ export default function Branches() {
       priceLevel: normalizePriceLevel(branch.priceLevel ?? 1),
       salesAccountCode: branch.salesAccountCode || '',
       purchaseAccountCode: branch.purchaseAccountCode || '',
+      returnAccountCode: branch.returnAccountCode || '',
     });
     setDialogOpen(true);
   };
@@ -254,6 +257,7 @@ export default function Branches() {
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {(branch.salesAccountCode || '613')} / {(branch.purchaseAccountCode || '212')}
+                      {branch.returnAccountCode ? ` / ${branch.returnAccountCode}` : ''}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
@@ -351,6 +355,24 @@ export default function Branches() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{t.branchesUi.purchaseAccountHint}</p>
+            </div>
+            <div className="space-y-2">
+              <Label>{t.branchesUi.returnAccountLabel}</Label>
+              <Select
+                value={formData.returnAccountCode || '__default__'}
+                onValueChange={(value) => setFormData({ ...formData, returnAccountCode: value === '__default__' ? '' : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default__">{t.branchesUi.postingAccountDefault}</SelectItem>
+                  {leafAccounts('return').map((account) => (
+                    <SelectItem key={account.code} value={account.code}>{account.code} — {account.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.branchesUi.returnAccountHint}</p>
             </div>
             <div className="flex items-center justify-between">
               <Label htmlFor="isMain">{t.branchesUi.mainBranchLabel}</Label>

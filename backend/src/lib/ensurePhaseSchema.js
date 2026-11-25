@@ -377,6 +377,7 @@ async function ensureBranchPostingColumns(db) {
     const statements = [
       'ALTER TABLE branches ADD COLUMN IF NOT EXISTS sales_account_code TEXT',
       'ALTER TABLE branches ADD COLUMN IF NOT EXISTS purchase_account_code TEXT',
+      'ALTER TABLE branches ADD COLUMN IF NOT EXISTS return_account_code TEXT',
       'ALTER TABLE caixas ADD COLUMN IF NOT EXISTS gl_account_code TEXT',
     ];
     for (const statement of statements) {
@@ -391,6 +392,7 @@ async function ensureBranchPostingColumns(db) {
 
   addSqlite('branches', 'sales_account_code', 'ALTER TABLE branches ADD COLUMN sales_account_code TEXT');
   addSqlite('branches', 'purchase_account_code', 'ALTER TABLE branches ADD COLUMN purchase_account_code TEXT');
+  addSqlite('branches', 'return_account_code', 'ALTER TABLE branches ADD COLUMN return_account_code TEXT');
   addSqlite('caixas', 'gl_account_code', 'ALTER TABLE caixas ADD COLUMN gl_account_code TEXT');
 }
 
@@ -1549,8 +1551,9 @@ async function ensurePhaseSchema(db) {
     await ensureAccount75Detail(db);
     const { ensureLeafCodeGapsClosed } = require('./entityCoaAccounts');
     await ensureLeafCodeGapsClosed(db);
-    const { ensurePurchaseGoodsLeaves } = require('./ensurePurchaseGoodsLeaves');
+    const { ensurePurchaseGoodsLeaves, ensurePurchaseReturnLeaves } = require('./ensurePurchaseGoodsLeaves');
     await ensurePurchaseGoodsLeaves(db);
+    await ensurePurchaseReturnLeaves(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
       console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);
@@ -1635,8 +1638,9 @@ async function ensurePhaseSchema(db) {
     await ensureAccount75Detail(db);
     const { ensureLeafCodeGapsClosed } = require('./entityCoaAccounts');
     await ensureLeafCodeGapsClosed(db);
-    const { ensurePurchaseGoodsLeaves } = require('./ensurePurchaseGoodsLeaves');
+    const { ensurePurchaseGoodsLeaves, ensurePurchaseReturnLeaves } = require('./ensurePurchaseGoodsLeaves');
     await ensurePurchaseGoodsLeaves(db);
+    await ensurePurchaseReturnLeaves(db);
     const linkResult = await linkOrphanBranchCaixaAccounts(db);
     if (linkResult.linked > 0) {
       console.log(`[SCHEMA] Linked ${linkResult.linked} orphan branch caixa account(s)`);

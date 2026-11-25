@@ -32,6 +32,7 @@ export function mapBranchRow(b: Record<string, unknown>): Branch {
     priceLevel: Number(b.priceLevel ?? b.price_level ?? 1),
     salesAccountCode: String(b.salesAccountCode ?? b.sales_account_code ?? '').trim(),
     purchaseAccountCode: String(b.purchaseAccountCode ?? b.purchase_account_code ?? '').trim(),
+    returnAccountCode: String(b.returnAccountCode ?? b.return_account_code ?? '').trim(),
     createdAt: String(b.createdAt || b.created_at || ''),
   };
 }

@@ -15,10 +15,25 @@ const {
 } = require('./transactionEngine');
 const { isUniqueSkuBranchError } = require('./lib/productSkuResolve');
 const { alignEntityJournalAccounts } = require('./lib/entityJournalGuard');
+const { resolveBranchReturnAccountCode } = require('./lib/branchPostingAccounts');
 const { coalesceActiveNotZero } = require('./lib/sqlDialect');
 const {
   createJournalEntry,
 } = require('./accounting');
+
+async function applyCityReturnAccount(client, journalLines, branchId, transactionType, openItem) {
+  const supplierReturn = String(transactionType || '').toLowerCase() === 'credit_note'
+    && String(openItem?.entityType || '').toLowerCase() === 'supplier';
+  if (!supplierReturn) return journalLines;
+  const code = await resolveBranchReturnAccountCode(client, branchId);
+  if (!code) return journalLines;
+  return journalLines.map((line) => {
+    if ((Number(line.credit) || 0) <= 0) return line;
+    const account = String(line.accountCode || '').trim();
+    if (account.startsWith('32') || account.startsWith('34')) return line;
+    return { ...line, accountCode: code };
+  });
+}
 
 async function ensureFreightExpenseAccount(client) {
   const existing = await client.query(
@@ -375,14 +390,21 @@ async function processTransactionBody(client, body) {
 
       // Phase 3: Journal Entry (through accounting engine — validates balance)
       if (journalLines && journalLines.length > 0) {
-        if (journalLines.some((line) => line.accountCode === '752')) {
+        const postingLines = await applyCityReturnAccount(
+          client,
+          journalLines,
+          branchId,
+          transactionType,
+          openItem,
+        );
+        if (postingLines.some((line) => line.accountCode === '752')) {
           await ensureFreightExpenseAccount(client);
         }
         // Runs first: correct a party account code before the helpers below create it.
         const guardWarnings = [];
         await alignEntityJournalAccounts(
           client,
-          journalLines,
+          postingLines,
           {
             entityType: entityBalanceUpdate?.entityType || openItem?.entityType,
             entityId: entityBalanceUpdate?.entityId || openItem?.entityId,
@@ -394,8 +416,8 @@ async function processTransactionBody(client, body) {
           console.warn(`[TX API] ${documentNumber || documentId}: ${warning}`);
         }
 
-        await ensureJournalLineAccounts(client, journalLines, entityBalanceUpdate, openItem);
-        await ensureSupplierJournalAccounts(client, journalLines, entityBalanceUpdate, openItem);
+        await ensureJournalLineAccounts(client, postingLines, entityBalanceUpdate, openItem);
+        await ensureSupplierJournalAccounts(client, postingLines, entityBalanceUpdate, openItem);
 
         const entry = await createJournalEntry(client, {
           description,
@@ -404,7 +426,7 @@ async function processTransactionBody(client, body) {
           branchId,
           createdBy: userId,
           entryDate: date,
-          lines: journalLines.map(l => ({
+          lines: postingLines.map(l => ({
             accountCode: l.accountCode,
             description: l.description || l.note || description,
             debit: l.debit || 0,

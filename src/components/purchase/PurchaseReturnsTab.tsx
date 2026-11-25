@@ -512,7 +512,9 @@ export function PurchaseReturnsTab({
       };
 
       // Reverse accounting — debit supplier (reduce payable), credit purchase account + IVA
-      const purchaseAccountCode = selectedInvoice.purchaseAccountCode || '212';
+      const purchaseAccountCode = String(selectedBranch.returnAccountCode || '').trim()
+        || selectedInvoice.purchaseAccountCode
+        || '212';
       const ivaAccountCode = selectedInvoice.ivaAccountCode || '3451';
       const supplierAccountCode = selectedInvoice.supplierAccountCode || '321';
 

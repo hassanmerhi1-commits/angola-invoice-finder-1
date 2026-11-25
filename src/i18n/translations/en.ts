@@ -4507,6 +4507,8 @@ export const en = {
     salesAccountHint: "Where this city's sales are recorded. Leave the standard account and they stay on 613.",
     purchaseAccountLabel: "Purchase account",
     purchaseAccountHint: "Where this city's purchases of goods are recorded. Leave the standard account and they stay on 212.",
+    returnAccountLabel: "Return account",
+    returnAccountHint: "Where this city's purchase returns are recorded. Leave the standard account and the return goes back to the purchase account.",
     postingAccountDefault: "Standard account",
     mainBranchLabel: "Main branch (Head Office)",
 

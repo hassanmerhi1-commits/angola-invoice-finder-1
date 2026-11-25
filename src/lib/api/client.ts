@@ -800,6 +800,7 @@ export const api = {
           priceLevel: data.priceLevel ?? 1,
           salesAccountCode: data.salesAccountCode ?? '',
           purchaseAccountCode: data.purchaseAccountCode ?? '',
+          returnAccountCode: data.returnAccountCode ?? '',
         };
         const apiResult = await apiFetch<any>('/branches', {
           method: 'POST',
@@ -832,6 +833,7 @@ export const api = {
           priceLevel: data.priceLevel ?? 1,
           salesAccountCode: data.salesAccountCode ?? '',
           purchaseAccountCode: data.purchaseAccountCode ?? '',
+          returnAccountCode: data.returnAccountCode ?? '',
         };
         const apiResult = await apiFetch<any>(`/branches/${encodeURIComponent(id)}`, {
           method: 'PUT',

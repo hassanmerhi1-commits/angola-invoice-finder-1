@@ -21,6 +21,7 @@ function mapBranch(row) {
     priceLevel: clampPriceLevel(row.price_level),
     salesAccountCode: String(row.sales_account_code || '').trim(),
     purchaseAccountCode: String(row.purchase_account_code || '').trim(),
+    returnAccountCode: String(row.return_account_code || '').trim(),
     cityId: row.city_id,
     parentBranchId: row.parent_branch_id,
     nodeRole: row.node_role || (row.is_main ? 'main' : 'shop'),
@@ -32,15 +33,21 @@ async function postingCodesFromBody(body, previous = {}) {
     || Object.prototype.hasOwnProperty.call(body, 'sales_account_code');
   const hasPurchase = Object.prototype.hasOwnProperty.call(body, 'purchaseAccountCode')
     || Object.prototype.hasOwnProperty.call(body, 'purchase_account_code');
+  const hasReturn = Object.prototype.hasOwnProperty.call(body, 'returnAccountCode')
+    || Object.prototype.hasOwnProperty.call(body, 'return_account_code');
   const salesRaw = hasSales
     ? (body.salesAccountCode ?? body.sales_account_code ?? '')
     : (previous.sales_account_code || '');
   const purchaseRaw = hasPurchase
     ? (body.purchaseAccountCode ?? body.purchase_account_code ?? '')
     : (previous.purchase_account_code || '');
+  const returnRaw = hasReturn
+    ? (body.returnAccountCode ?? body.return_account_code ?? '')
+    : (previous.return_account_code || '');
   return {
     salesAccountCode: await requireLeafAccount(db, salesRaw, 'revenue'),
     purchaseAccountCode: await requireLeafAccount(db, purchaseRaw, 'purchase'),
+    returnAccountCode: await requireLeafAccount(db, returnRaw, 'purchase'),
   };
 }
 
@@ -98,8 +105,8 @@ module.exports = function(broadcastTable) {
       }
       
       const result = await client.query(
-        `INSERT INTO branches (name, code, address, phone, is_main, price_level, sales_account_code, purchase_account_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO branches (name, code, address, phone, is_main, price_level, sales_account_code, purchase_account_code, return_account_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
          [
            normalizedName,
@@ -110,6 +117,7 @@ module.exports = function(broadcastTable) {
            normalizedPriceLevel,
            posting.salesAccountCode,
            posting.purchaseAccountCode,
+           posting.returnAccountCode,
          ]
       );
 
@@ -189,7 +197,7 @@ module.exports = function(broadcastTable) {
       const { id } = req.params;
       const { name, code, address, phone, isMain, priceLevel } = req.body;
       const previous = await db.query(
-        'SELECT sales_account_code, purchase_account_code FROM branches WHERE id = $1',
+        'SELECT sales_account_code, purchase_account_code, return_account_code FROM branches WHERE id = $1',
         [id],
       );
       const posting = await postingCodesFromBody(req.body, previous.rows[0] || {});
@@ -210,8 +218,8 @@ module.exports = function(broadcastTable) {
       const result = await db.query(
         `UPDATE branches SET name = $1, code = $2, address = $3, phone = $4, is_main = $5,
             price_level = COALESCE($6, price_level),
-            sales_account_code = $7, purchase_account_code = $8
-         WHERE id = $9 RETURNING *`,
+            sales_account_code = $7, purchase_account_code = $8, return_account_code = $9
+         WHERE id = $10 RETURNING *`,
          [
            normalizedName,
            normalizedCode,
@@ -221,6 +229,7 @@ module.exports = function(broadcastTable) {
            normalizedPriceLevel,
            posting.salesAccountCode,
            posting.purchaseAccountCode,
+           posting.returnAccountCode,
            id,
          ]
       );

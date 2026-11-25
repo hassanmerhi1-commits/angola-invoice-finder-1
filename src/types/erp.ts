@@ -23,6 +23,8 @@ export interface Branch {
   salesAccountCode?: string;
   /** Leaf purchase account for this city's goods. Empty keeps 212. */
   purchaseAccountCode?: string;
+  /** Leaf account for this city's purchase returns. Empty credits the purchase account. */
+  returnAccountCode?: string;
   createdAt: string;
 }
 

@@ -98,6 +98,12 @@ async function resolveBranchPurchaseAccountCode(client, branchId) {
   return leaf || DEFAULT_PURCHASE_ACCOUNT;
 }
 
+/** Empty means the return credits the same account as the purchase. */
+async function resolveBranchReturnAccountCode(client, branchId) {
+  const stored = await readBranchColumn(client, branchId, 'return_account_code');
+  return storedLeafOrEmpty(client, stored, 'purchase');
+}
+
 async function postedSaleLines(client, saleId) {
   const id = cleanCode(saleId);
   if (!id) return [];
@@ -153,6 +159,7 @@ module.exports = {
   requireLeafAccount,
   resolveBranchSalesAccountCode,
   resolveBranchPurchaseAccountCode,
+  resolveBranchReturnAccountCode,
   postedSaleRevenueAccount,
   postedSaleSettlementAccount,
   resolveRevenueAccountForDocument,

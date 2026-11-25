@@ -7,17 +7,33 @@ const crypto = require('crypto');
 const { PGC_ACCOUNTS } = require('./pgcChartOfAccounts');
 
 const PURCHASE_GOODS_CODES = new Set(['2121', '2122', '21210001', '21220001']);
+const PURCHASE_RETURN_CODES = new Set(['217', '2171', '2172', '21710001', '21720001']);
 
-function purchaseGoodsRows() {
+function rowsFor(codes) {
   return PGC_ACCOUNTS
-    .filter((account) => PURCHASE_GOODS_CODES.has(account.code))
+    .filter((account) => codes.has(account.code))
     .slice()
     .sort((a, b) => a.code.length - b.code.length || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
 }
 
+function purchaseGoodsRows() {
+  return rowsFor(PURCHASE_GOODS_CODES);
+}
+
+function purchaseReturnRows() {
+  return rowsFor(PURCHASE_RETURN_CODES);
+}
+
 async function ensurePurchaseGoodsLeaves(db) {
+  return ensureChartRows(db, purchaseGoodsRows(), ['212', '2121', '2122'], 'Purchase goods accounts added');
+}
+
+async function ensurePurchaseReturnLeaves(db) {
+  return ensureChartRows(db, purchaseReturnRows(), ['217', '2171', '2172'], 'Purchase return accounts added');
+}
+
+async function ensureChartRows(db, rows, countCodes, logLabel) {
   if (!db || typeof db.query !== 'function') return { created: 0, linked: 0 };
-  const rows = purchaseGoodsRows();
   let created = 0;
 
   for (const account of rows) {
@@ -72,19 +88,23 @@ async function ensurePurchaseGoodsLeaves(db) {
         WHERE child.parent_id = chart_of_accounts.id
           AND (child.is_active = true OR child.is_active = 1)
       )
-      WHERE code IN ('212', '2121', '2122')
-    `);
+      WHERE code IN (${countCodes.map((_, i) => `$${i + 1}`).join(', ')})
+    `,
+      countCodes,
+    );
   } catch (err) {
-    console.warn('[SCHEMA] purchase goods children_count:', err.message);
+    console.warn(`[SCHEMA] ${logLabel}:`, err.message);
   }
 
   if (created > 0) {
-    console.log(`[SCHEMA] Purchase goods accounts added — ${created} account(s)`);
+    console.log(`[SCHEMA] ${logLabel} — ${created} account(s)`);
   }
   return { created, linked };
 }
 
 module.exports = {
   purchaseGoodsRows,
+  purchaseReturnRows,
   ensurePurchaseGoodsLeaves,
+  ensurePurchaseReturnLeaves,
 };
