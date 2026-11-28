@@ -1899,17 +1899,25 @@ export default function PurchaseInvoices() {
 
   useEffect(() => {
     if (listTab !== 'devolucoes') return;
-    void (async () => {
-      try {
-        await syncAllPurchaseInvoiceReturnStatuses(listBranchId);
-        const returns = await getSupplierReturns(listBranchId);
-        setReturnCount(returns.length);
-      } catch {
-        setReturnCount(0);
-      }
-      scheduleLoadInvoiceList();
-    })();
-  }, [listTab, listBranchId, scheduleLoadInvoiceList]);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (cancelled) return;
+        try {
+          await syncAllPurchaseInvoiceReturnStatuses(listBranchId);
+          const returns = await getSupplierReturns(listBranchId);
+          if (!cancelled) setReturnCount(returns.length);
+        } catch {
+          if (!cancelled) setReturnCount(0);
+        }
+        if (!cancelled) scheduleLoadInvoiceList();
+      })();
+    }, returnPreselectInvoiceId ? 2500 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [listTab, listBranchId, scheduleLoadInvoiceList, returnPreselectInvoiceId]);
 
   useTableRefreshListener('purchase_invoices', () => {
     scheduleLoadInvoiceList({ delayMs: 1200 });

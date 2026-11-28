@@ -166,13 +166,7 @@ export function PurchaseReturnsTab({
     [branches, currentBranch, selectedInvoice?.branchId]
   );
 
-  useEffect(() => {
-    if (openCreateSignal > 0 && openCreateSignal !== openCreateRef.current) {
-      resetForm();
-      setCreateOpen(true);
-      openCreateRef.current = openCreateSignal;
-    }
-  }, [openCreateSignal]);
+  const stockAdviceRef = useRef(0);
 
   const getAlreadyReturnedQty = useCallback((invoiceId: string, sourceLineId: string, productId: string) => {
     return returns
@@ -199,7 +193,13 @@ export function PurchaseReturnsTab({
     );
   }, [branchId, isAllBranches, branches]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    if (preselectInvoiceId) {
+      const timer = window.setTimeout(() => { void loadData(); }, 2000);
+      return () => window.clearTimeout(timer);
+    }
+    void loadData();
+  }, [loadData, preselectInvoiceId]);
 
   const returnableInvoices = useMemo(() => {
     return invoices.filter((inv) => {
@@ -237,21 +237,43 @@ export function PurchaseReturnsTab({
   }, [returns, search, filterStatus]);
 
   const buildReturnLinesForInvoice = useCallback(async (inv: PurchaseInvoice): Promise<ReturnLineForm[]> => {
+    const lines = Array.isArray(inv.lines) ? inv.lines : [];
+    return lines.map((line) => {
+      const purchased = invoiceLineQty(line);
+      const invoiceRemainingQty = Math.max(
+        purchased - getAlreadyReturnedQty(inv.id, line.id, line.productId),
+        0,
+      );
+      const maxQty = invoiceRemainingQty;
+      return {
+        sourceLineId: line.id,
+        productId: line.productId,
+        productName: line.description,
+        sku: line.productCode,
+        invoiceRemainingQty,
+        stockOnHand: invoiceRemainingQty,
+        maxQty,
+        quantity: maxQty > 0 ? maxQty : 0,
+        unitCost: line.unitPrice,
+        taxRate: line.ivaRate,
+        selected: maxQty > 0,
+      };
+    }).filter((l) => l.invoiceRemainingQty > 0);
+  }, [getAlreadyReturnedQty]);
+
+  const refreshStockAdvice = useCallback(async (inv: PurchaseInvoice) => {
+    const token = ++stockAdviceRef.current;
+    const warehouseId = inv.warehouseId || inv.branchId;
     const stockBySku = new Map<string, number>();
     const stockByProductId = new Map<string, number>();
-    const warehouseId = inv.warehouseId || inv.branchId;
-
     const ingestRows = (rows: any[]) => {
       for (const p of rows) {
         const stock = Number(p.stock ?? p.ledger_stock ?? p.ledgerStock ?? 0) || 0;
         if (p.id) stockByProductId.set(String(p.id), stock);
         const skuKey = normalizeProductSkuKey(p.sku || p.productCode);
-        if (skuKey) {
-          stockBySku.set(skuKey, Math.max(stockBySku.get(skuKey) || 0, stock));
-        }
+        if (skuKey) stockBySku.set(skuKey, Math.max(stockBySku.get(skuKey) || 0, stock));
       }
     };
-
     try {
       const grid = await api.products.inventoryGrid({ branchId: warehouseId });
       const rows = Array.isArray(grid.data?.rows)
@@ -261,47 +283,19 @@ export function PurchaseReturnsTab({
           : [];
       if (rows.length > 0) ingestRows(rows);
     } catch {
-      try {
-        const resp = await api.products.list(warehouseId);
-        const rows = Array.isArray(resp.data) ? resp.data : [];
-        if (rows.length > 0) ingestRows(rows);
-      } catch {
-        /* stock optional for line selection */
-      }
+      return;
     }
-
-    const lines = Array.isArray(inv.lines) ? inv.lines : [];
-    return lines.map((line) => {
-      const purchased = invoiceLineQty(line);
-      const invoiceRemainingQty = Math.max(
-        purchased - getAlreadyReturnedQty(inv.id, line.id, line.productId),
-        0,
-      );
-      const skuKey = normalizeProductSkuKey(line.productCode);
-      const hasSkuStock = skuKey ? stockBySku.has(skuKey) : false;
-      const hasIdStock = !!line.productId && stockByProductId.has(line.productId);
-      const stockOnHand = hasSkuStock
+    if (token !== stockAdviceRef.current) return;
+    setReturnLines((prev) => prev.map((line) => {
+      const skuKey = normalizeProductSkuKey(line.sku);
+      const stock = (skuKey && stockBySku.has(skuKey))
         ? (stockBySku.get(skuKey) || 0)
-        : hasIdStock
+        : (line.productId && stockByProductId.has(line.productId))
           ? (stockByProductId.get(line.productId) || 0)
-          : invoiceRemainingQty;
-      // Cap by invoice remaining so the user can always choose lines; stock is advisory.
-      const maxQty = invoiceRemainingQty;
-      return {
-        sourceLineId: line.id,
-        productId: line.productId,
-        productName: line.description,
-        sku: line.productCode,
-        invoiceRemainingQty,
-        stockOnHand,
-        maxQty,
-        quantity: maxQty > 0 ? maxQty : 0,
-        unitCost: line.unitPrice,
-        taxRate: line.ivaRate,
-        selected: maxQty > 0,
-      };
-    }).filter((l) => l.invoiceRemainingQty > 0);
-  }, [getAlreadyReturnedQty]);
+          : line.stockOnHand;
+      return stock === line.stockOnHand ? line : { ...line, stockOnHand: stock };
+    }));
+  }, []);
 
   // Select invoice → load full document (list omits lines) → populate return lines
   const handleSelectInvoice = useCallback(async (inv: PurchaseInvoice) => {
@@ -312,6 +306,7 @@ export function PurchaseReturnsTab({
       const full = (await getPurchaseInvoiceById(inv.id)) || inv;
       setSelectedInvoice(full);
       setReturnLines(await buildReturnLinesForInvoice(full));
+      void refreshStockAdvice(full);
     } catch (err) {
       console.warn('[PurchaseReturns] load invoice lines failed:', err);
       setSelectedInvoice(inv);
@@ -319,20 +314,51 @@ export function PurchaseReturnsTab({
     } finally {
       setLoadingLines(false);
     }
-  }, [buildReturnLinesForInvoice]);
+  }, [buildReturnLinesForInvoice, refreshStockAdvice]);
+
+  const handleSelectInvoiceRef = useRef(handleSelectInvoice);
+  handleSelectInvoiceRef.current = handleSelectInvoice;
+
+  // Open once per Return press. A later invoice refresh must not open it again.
+  useEffect(() => {
+    if (openCreateSignal <= 0 || openCreateSignal === openCreateRef.current) return;
+    openCreateRef.current = openCreateSignal;
+    if (!preselectInvoiceId) {
+      resetForm();
+      setCreateOpen(true);
+      return;
+    }
+    const id = preselectInvoiceId;
+    resetForm();
+    setCreateOpen(true);
+    void handleSelectInvoiceRef.current({ id } as PurchaseInvoice);
+  }, [openCreateSignal, preselectInvoiceId]);
 
   useEffect(() => {
-    if (!preselectInvoiceId || invoices.length === 0) return;
-    const inv = invoices.find((i) => i.id === preselectInvoiceId);
-    if (
-      inv
-      && String(inv.status || 'confirmed').toLowerCase() === 'confirmed'
-      && inv.purchaseReturnsStatus !== 'full'
-    ) {
-      void handleSelectInvoice(inv);
-      setCreateOpen(true);
-    }
-  }, [preselectInvoiceId, invoices, handleSelectInvoice]);
+    if (!createOpen || !selectedInvoice) return;
+    setReturnLines((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((line) => {
+        const invoiceLine = selectedInvoice.lines.find((item) => item.id === line.sourceLineId);
+        if (!invoiceLine) return line;
+        const remaining = Math.max(
+          invoiceLineQty(invoiceLine) - getAlreadyReturnedQty(selectedInvoice.id, line.sourceLineId, line.productId),
+          0,
+        );
+        if (remaining === line.maxQty) return line;
+        changed = true;
+        return {
+          ...line,
+          invoiceRemainingQty: remaining,
+          maxQty: remaining,
+          quantity: Math.min(line.quantity, remaining),
+          selected: remaining > 0 && line.selected,
+        };
+      }).filter((line) => line.maxQty > 0 || line.quantity > 0);
+      return changed ? next : prev;
+    });
+  }, [createOpen, selectedInvoice, returns, getAlreadyReturnedQty]);
 
   // Refresh invoice list when opening the picker (same branch scope as Compras).
   useEffect(() => {

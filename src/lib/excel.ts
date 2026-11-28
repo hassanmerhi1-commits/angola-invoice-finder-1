@@ -506,6 +506,13 @@ function pickSpreadsheetField(row: Record<string, unknown>, aliases: string[]): 
   return undefined;
 }
 
+/** A price, cost, or line total must not be read as a quantity. */
+function isMoneyHeader(header: string): boolean {
+  const nk = normalizeSpreadsheetHeader(header);
+  if (/(quantidade|quantity|qtd|qty|contagem|contado)/.test(nk)) return false;
+  return /(preco|price|pvp|custo|cost|valor|venda|total|unitario)/.test(nk);
+}
+
 /** Quantity column priority: explicit qty → count sheet count/diff → system stock. */
 function pickSpreadsheetQuantity(row: Record<string, unknown>): number {
   const priorityGroups = [
@@ -518,6 +525,7 @@ function pickSpreadsheetQuantity(row: Record<string, unknown>): number {
   for (const group of priorityGroups) {
     for (const [key, val] of Object.entries(row)) {
       if (val === undefined || val === null || String(val).trim() === '') continue;
+      if (isMoneyHeader(key)) continue;
       const nk = normalizeSpreadsheetHeader(key);
       if (group.some((g) => nk === g || nk.startsWith(`${g} `) || nk.endsWith(` ${g}`))) {
         const n = parseSpreadsheetNumber(val);
@@ -526,7 +534,10 @@ function pickSpreadsheetQuantity(row: Record<string, unknown>): number {
     }
   }
 
-  const fallback = pickSpreadsheetField(row, [
+  const qtyRow = Object.fromEntries(
+    Object.entries(row).filter(([key]) => !isMoneyHeader(key)),
+  );
+  const fallback = pickSpreadsheetField(qtyRow, [
     'Quantidade', 'quantidade', 'Quantity', 'quantity',
     'Contagem', 'contagem', 'Count', 'count',
     'Diff', 'diff', 'Dif', 'Diferença', 'Diferenca',
@@ -559,24 +570,11 @@ function parseStockEntryRow(row: Record<string, unknown>): ExcelStockEntryLine {
 
 function parseHeaderlessStockEntryRow(cells: unknown[]): ExcelStockEntryLine {
   const colCount = cells.length;
-  // Count sheet layout: code | description | [barcode] | system qty | count | diff
-  let qtyCell: unknown;
-  if (colCount >= 6) {
-    qtyCell = cells[5] ?? cells[4] ?? cells[3];
-  } else if (colCount >= 5) {
-    qtyCell = cells[4] ?? cells[3] ?? cells[2];
-  } else if (colCount >= 4) {
-    qtyCell = cells[3] ?? cells[2];
-  } else if (colCount >= 3) {
-    qtyCell = cells[2];
-  }
-  // 2 columns = code + description only (quantity entered manually after import)
-
+  // No column titles, so a later number may be a price. Do not guess.
+  // Quantity stays blank (the screen uses 1) and the cost stays the product's cost.
   return parseStockEntryRow({
     Código: formatSpreadsheetCode(cells[0]),
     Descrição: colCount >= 2 ? cells[1] : undefined,
-    Quantidade: qtyCell,
-    'Preço Custo': colCount >= 5 ? cells[colCount - 1] : undefined,
   });
 }
 
