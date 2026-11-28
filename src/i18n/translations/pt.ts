@@ -1816,6 +1816,11 @@ export const pt: TranslationKeys = {
 
     customMapping: "Mapeamento personalizado",
     mapColumns: "Mapear Colunas",
+    columnInFile: "Coluna no ficheiro",
+    goesTo: "Vai para",
+    notUsed: "Não usado",
+    columnNumber: "Coluna {n}",
+    stockMapHint: "Escolha para onde vai cada coluna antes de importar. Um preço deixado em Não usado não entra na quantidade nem no custo. Se a quantidade ficar em Não usado, cada linha entra com 1.",
     chooseOtherFile: "Escolher outro ficheiro",
     validCount: "{count} válidos",
     withErrorsCount: "{count} com erros",

@@ -1814,6 +1814,11 @@ export const en = {
 
     customMapping: "Custom mapping",
     mapColumns: "Map columns",
+    columnInFile: "Column in the file",
+    goesTo: "Goes to",
+    notUsed: "Not used",
+    columnNumber: "Column {n}",
+    stockMapHint: "Choose where each column goes before you import. A price left as Not used stays out of the quantity and the cost. If quantity is Not used, each line comes in as 1.",
     chooseOtherFile: "Choose another file",
     validCount: "{count} valid",
     withErrorsCount: "{count} with errors",

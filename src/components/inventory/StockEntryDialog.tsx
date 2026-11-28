@@ -1798,7 +1798,10 @@ export function StockEntryDialog({
         columns={[
           { key: 'codigo', label: t.stockEntryUi.colCode },
           { key: 'descricao', label: t.stockEntryUi.colProduct },
+          { key: 'quantidade', label: t.stockEntryUi.colQty },
+          { key: 'custo', label: t.stockEntryUi.colCost },
         ]}
+        mappingType="stock"
       />
     </Dialog>
   );

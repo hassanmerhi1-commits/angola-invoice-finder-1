@@ -6,9 +6,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Download, X, AlertTriangle, RefreshCw, Settings2, Loader2 } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Download, X, AlertTriangle, RefreshCw, Settings2, Loader2, ArrowRight } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ColumnMappingDialog, ColumnMapping } from './ColumnMappingDialog';
-import { getExcelHeaders } from '@/lib/excel';
+import { getExcelHeaders, inspectStockEntrySheet, suggestStockEntryMappings, StockSheetColumn } from '@/lib/excel';
 import { useTranslation } from '@/i18n';
 
 interface ImportError {
@@ -37,7 +38,7 @@ interface ExcelImportDialogProps<T> {
   existingKeys?: string[]; // Array of existing keys to check against
   duplicateLabel?: string; // Label for the duplicate key (e.g., 'SKU', 'NIF')
   // Column mapping
-  mappingType?: 'products' | 'clients' | 'suppliers';
+  mappingType?: 'products' | 'clients' | 'suppliers' | 'stock';
   /** When true, block file pick until the product catalog is ready for matching. */
   catalogLoading?: boolean;
   /** Size of the in-memory catalog used for validation (shown when 0 rows match). */
@@ -75,6 +76,7 @@ export function ExcelImportDialog<T>({
   const [showMappingDialog, setShowMappingDialog] = useState(false);
   const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>([]);
   const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
+  const [sheetColumns, setSheetColumns] = useState<StockSheetColumn[]>([]);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -119,9 +121,17 @@ export function ExcelImportDialog<T>({
       // Detect headers for column mapping
       const headers = await getExcelHeaders(file);
       setDetectedHeaders(headers);
+
+      let mappings = columnMappings;
+      if (mappingType === 'stock') {
+        const sheet = await inspectStockEntrySheet(file);
+        setSheetColumns(sheet.columns);
+        mappings = suggestStockEntryMappings(sheet.columns);
+        setColumnMappings(mappings);
+      }
       
       // Parse with current mappings (if any)
-      const data = await parseFile(file, columnMappings.length > 0 ? columnMappings : undefined);
+      const data = await parseFile(file, mappings.length > 0 ? mappings : undefined);
       setParsedData(data);
       
       const { valid, errors } = validateData(data);
@@ -149,6 +159,19 @@ export function ExcelImportDialog<T>({
         console.error('Error re-parsing with mappings:', error);
       }
     }
+  };
+
+  const assignStockColumn = (columnKey: string, field: string) => {
+    const next = columnMappings.map((mapping) => {
+      if (field !== '_none' && mapping.systemField === field) {
+        return { ...mapping, excelColumn: columnKey };
+      }
+      if (mapping.excelColumn === columnKey) {
+        return { ...mapping, excelColumn: '' };
+      }
+      return mapping;
+    });
+    void handleApplyMapping(next);
   };
 
   const handleImport = async () => {
@@ -189,6 +212,7 @@ export function ExcelImportDialog<T>({
     setDuplicateAction(defaultDuplicateAction);
     setColumnMappings([]);
     setDetectedHeaders([]);
+    setSheetColumns([]);
     setCurrentFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -274,7 +298,7 @@ export function ExcelImportDialog<T>({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {mappingType && (
+                  {mappingType && mappingType !== 'stock' && (
                     <Button variant="outline" size="sm" onClick={() => setShowMappingDialog(true)}>
                       <Settings2 className="w-4 h-4 mr-1" />
                       {t.importUi.mapColumns}
@@ -392,6 +416,44 @@ export function ExcelImportDialog<T>({
                 </Alert>
               )}
 
+              {mappingType === 'stock' && sheetColumns.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">{t.importUi.stockMapHint}</p>
+                  <div className="max-h-40 overflow-auto rounded-lg border">
+                    <div className="grid grid-cols-[1fr_1.25rem_1fr] items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                      <span>{t.importUi.columnInFile}</span>
+                      <span />
+                      <span>{t.importUi.goesTo}</span>
+                    </div>
+                    {sheetColumns.map((col, index) => {
+                      const dest = columnMappings.find((m) => m.excelColumn === col.key)?.systemField || '_none';
+                      const caption = col.label || t.importUi.columnNumber.replace('{n}', String(index + 1));
+                      return (
+                        <div
+                          key={col.key}
+                          className="grid grid-cols-[1fr_1.25rem_1fr] items-center gap-2 border-b px-3 py-1.5 last:border-b-0"
+                        >
+                          <span className="truncate text-sm" title={caption}>{caption}</span>
+                          <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                          <Select value={dest} onValueChange={(value) => assignStockColumn(col.key, value)}>
+                            <SelectTrigger className="h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="z-[400]">
+                              <SelectItem value="_none">{t.importUi.notUsed}</SelectItem>
+                              <SelectItem value="codigo">{t.stockEntryUi.colCode}</SelectItem>
+                              <SelectItem value="descricao">{t.stockEntryUi.colProduct}</SelectItem>
+                              <SelectItem value="quantidade">{t.stockEntryUi.colQty}</SelectItem>
+                              <SelectItem value="custo">{t.stockEntryUi.colCost}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {validData.length > 0 && (
                 <ScrollArea className="h-[250px] border rounded-lg">
                   <Table>
@@ -468,7 +530,7 @@ export function ExcelImportDialog<T>({
       </DialogContent>
 
       {/* Column Mapping Dialog */}
-      {mappingType && (
+      {mappingType && mappingType !== 'stock' && (
         <ColumnMappingDialog
           open={showMappingDialog}
           onOpenChange={setShowMappingDialog}

@@ -578,6 +578,76 @@ function parseHeaderlessStockEntryRow(cells: unknown[]): ExcelStockEntryLine {
   });
 }
 
+export interface StockSheetColumn {
+  key: string;
+  label: string;
+}
+
+/** Column keys shared by the import screen and the parser. A price title is not a quantity. */
+export function stockEntryColumns(firstRow: unknown[], headerless: boolean): StockSheetColumn[] {
+  const seen = new Map<string, number>();
+  return (firstRow || []).map((cell, i) => {
+    const raw = headerless ? '' : String(cell ?? '').trim();
+    const base = raw || `__col_${i}`;
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return { key: count === 0 ? base : `${base}__${i}`, label: raw };
+  });
+}
+
+function isSellingPriceHeader(header: string): boolean {
+  const nk = normalizeSpreadsheetHeader(header);
+  if (/(quantidade|quantity|qtd|qty|contagem|contado|custo|cost)/.test(nk)) return false;
+  return /(preco|price|pvp|venda|total|unitario)/.test(nk);
+}
+
+/** Suggest where each file column goes. A selling price stays unused until the user picks it. */
+export function suggestStockEntryMappings(columns: StockSheetColumn[]): ColumnMapping[] {
+  const used = new Set<string>();
+  const take = (test: (header: string) => boolean): string => {
+    const hit = columns.find((col) => {
+      if (used.has(col.key) || !col.label || isSellingPriceHeader(col.label)) return false;
+      return test(normalizeSpreadsheetHeader(col.label));
+    });
+    if (hit) used.add(hit.key);
+    return hit?.key || '';
+  };
+
+  let codigo = take((nk) => /(codigo|sku|code|cod|ref|referencia|artigo)/.test(nk));
+  let descricao = take((nk) => /(descricao|description|produto|nome|name|item)/.test(nk));
+  const quantidade = take((nk) => /(quantidade|quantity|qtd|qty|contagem|contado|count)/.test(nk));
+  const custo = take((nk) => /(custo|cost)/.test(nk));
+
+  const headerless = columns.length > 0 && columns.every((col) => !col.label);
+  if (headerless) {
+    if (!codigo && columns[0]) {
+      codigo = columns[0].key;
+      used.add(codigo);
+    }
+    if (!descricao && columns[1] && !used.has(columns[1].key)) {
+      descricao = columns[1].key;
+    }
+  }
+
+  return [
+    { systemField: 'codigo', excelColumn: codigo, required: true },
+    { systemField: 'descricao', excelColumn: descricao, required: false },
+    { systemField: 'quantidade', excelColumn: quantidade, required: false },
+    { systemField: 'custo', excelColumn: custo, required: false },
+  ];
+}
+
+export async function inspectStockEntrySheet(
+  file: File,
+): Promise<{ headerless: boolean; columns: StockSheetColumn[] }> {
+  const data = await file.arrayBuffer();
+  const workbook = XLSX.read(new Uint8Array(data), { type: 'array' });
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][];
+  const headerless = detectHeaderless(firstSheet);
+  return { headerless, columns: stockEntryColumns(rawRows[0] || [], headerless) };
+}
+
 /** Parse Excel/CSV rows for stock entry (code + quantity + optional cost). */
 export async function parseStockEntryExcelFile(
   file: File,
@@ -592,20 +662,20 @@ export async function parseStockEntryExcelFile(
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
         const isHeaderless = detectHeaderless(firstSheet);
+        const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][];
+        const columns = stockEntryColumns(rawRows[0] || [], isHeaderless);
+        const dataRows = (isHeaderless ? rawRows : rawRows.slice(1))
+          .filter((r) => r.some((cell) => cell !== null && cell !== undefined && cell !== ''));
 
         let rows: ExcelStockEntryLine[] = [];
 
-        if (isHeaderless) {
-          const rawRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][];
-          rows = rawRows
-            .filter((r) => r.some((cell) => cell !== null && cell !== undefined && cell !== ''))
-            .map((r) => parseHeaderlessStockEntryRow(r));
-        } else if (columnMappings && columnMappings.length > 0) {
-          const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
-          rows = jsonRows.map((row) => {
+        if (columnMappings && columnMappings.length > 0) {
+          rows = dataRows.map((cells) => {
+            const obj: Record<string, unknown> = {};
+            columns.forEach((col, i) => { obj[col.key] = cells[i]; });
             const getMappedValue = (field: string) => {
               const mapping = columnMappings.find((m) => m.systemField === field);
-              return mapping?.excelColumn ? row[mapping.excelColumn] : undefined;
+              return mapping?.excelColumn ? obj[mapping.excelColumn] : undefined;
             };
             return parseStockEntryRow({
               Código: getMappedValue('codigo'),
@@ -614,6 +684,8 @@ export async function parseStockEntryExcelFile(
               'Preço Custo': getMappedValue('custo'),
             });
           });
+        } else if (isHeaderless) {
+          rows = dataRows.map((r) => parseHeaderlessStockEntryRow(r));
         } else {
           const jsonRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet);
           rows = jsonRows.map((row) => parseStockEntryRow(row));
@@ -653,7 +725,7 @@ export function validateImportedStockEntryLines(products: ExcelStockEntryLine[])
       valid.push({
         codigo: row.codigo.trim(),
         descricao: row.descricao,
-        quantidade: row.quantidade > 0 ? Math.round(row.quantidade) : 0,
+        quantidade: row.quantidade > 0 ? Math.round(row.quantidade) : 1,
         custo: Math.max(0, row.custo),
       });
     }
